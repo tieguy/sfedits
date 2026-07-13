@@ -388,7 +388,11 @@ async function sendStatus(account, statusData, edit) {
           name: statusData.name,
           pageUrl: statusData.pageUrl,
           userUrl: statusData.userUrl,
-          altText: capture.altText
+          diffUrl: edit.url,
+          wiki: edit.wikipedia,
+          altText: capture.altText,
+          summary: capture.summary,
+          article: capture.article
         }
 
         // Post to Bluesky
