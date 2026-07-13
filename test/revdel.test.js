@@ -4,8 +4,9 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
+const nock = require('nock')
 const { extractRevisionInfo, recordPost, loadActive, updateEntries } = require('../lib/post-log')
-const { classifyRevisions, decideActions } = require('../lib/revdel-check')
+const { classifyRevisions, decideActions, deletePosts } = require('../lib/revdel-check')
 
 describe('post-log', function() {
   let logFile
@@ -171,6 +172,53 @@ describe('revdel-check', function() {
       )
       assert.lengthOf(toDelete, 0)
       assert.lengthOf(toUpdate, 0)
+    })
+  })
+  describe('deletePosts (Discord)', function() {
+    const WEBHOOK = 'https://discord.com/api/webhooks/123/token-abc'
+    const baseEntry = {
+      host: 'en.wikipedia.org', revId: 1, page: 'Cat', status: 'active',
+      reason: 'hidden', discordMessageId: '111222333'
+    }
+
+    afterEach(function() {
+      nock.cleanAll()
+    })
+
+    it('deletes the webhook message and completes the entry', async function() {
+      nock('https://discord.com')
+        .delete('/api/webhooks/123/token-abc/messages/111222333')
+        .reply(204)
+
+      const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
+      assert.isTrue(updated.discordDeleted)
+      assert.equal(updated.status, 'deleted')
+    })
+
+    it('treats 404 (already gone) as success', async function() {
+      nock('https://discord.com')
+        .delete('/api/webhooks/123/token-abc/messages/111222333')
+        .reply(404)
+
+      const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
+      assert.isTrue(updated.discordDeleted)
+      assert.equal(updated.status, 'deleted')
+    })
+
+    it('keeps the entry active on server errors so it retries', async function() {
+      nock('https://discord.com')
+        .delete('/api/webhooks/123/token-abc/messages/111222333')
+        .reply(500)
+
+      const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
+      assert.notOk(updated.discordDeleted)
+      assert.equal(updated.status, 'active')
+    })
+
+    it('completes with a warning when no webhook is configured anymore', async function() {
+      const updated = await deletePosts({ ...baseEntry }, {})
+      assert.isTrue(updated.discordDeleted)
+      assert.equal(updated.status, 'deleted')
     })
   })
 })
