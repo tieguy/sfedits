@@ -243,6 +243,20 @@ describe('discord-platform', function() {
       assert.notInclude(embed.description, 'wikidata.org')
     })
 
+    it('surfaces a missing Wikidata item with a create link', function() {
+      const blpMeta = { ...metadata, article: { ...metadata.article, blp: { isBlp: null, reason: null, qid: null, missingItem: true } } }
+      const embed = buildDiscordEmbed(blpMeta, 'diff.png')
+      assert.include(embed.description, 'No Wikidata item')
+      assert.include(embed.description, 'Special:NewItem?label=London%20Breed')
+    })
+
+    it('stays quiet when the BLP check simply failed', function() {
+      const blpMeta = { ...metadata, article: { ...metadata.article, blp: { isBlp: null, reason: null, qid: null, missingItem: false } } }
+      const embed = buildDiscordEmbed(blpMeta, 'diff.png')
+      assert.notInclude(embed.description, 'No Wikidata item')
+      assert.notInclude(embed.description, 'BLP')
+    })
+
     it('omits the BLP badge for non-BLP articles', function() {
       const embed = buildDiscordEmbed({ ...metadata, article: { ...metadata.article, blp: { isBlp: false, reason: null } } }, 'diff.png')
       assert.notInclude(embed.description, 'BLP')
