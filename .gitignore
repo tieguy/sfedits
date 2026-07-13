@@ -15,3 +15,4 @@ data/posted-log.jsonl
 !docs/diff-rendering/*.png
 .superpowers/
 docs/superpowers/
+data/fonts/
