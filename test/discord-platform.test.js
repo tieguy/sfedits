@@ -227,13 +227,20 @@ describe('discord-platform', function() {
       assert.include(links, 'action=history')
     })
 
-    it('shows a BLP badge and BLP/N action link for living people', function() {
-      const blpMeta = { ...metadata, article: { ...metadata.article, blp: { isBlp: true, reason: 'living' } } }
+    it('shows a BLP badge, Wikidata link, and BLP/N action link for living people', function() {
+      const blpMeta = { ...metadata, article: { ...metadata.article, blp: { isBlp: true, reason: 'living', qid: 'Q6669880' } } }
       const embed = buildDiscordEmbed(blpMeta, 'diff.png')
       assert.include(embed.description, 'BLP')
       assert.include(embed.description, 'biography of a living person')
+      assert.include(embed.description, 'https://www.wikidata.org/wiki/Q6669880')
       const actions = embed.fields.find(f => f.name === 'Actions')
       assert.include(actions.value, 'Biographies_of_living_persons/Noticeboard')
+    })
+
+    it('omits the Wikidata link when the qid is unknown', function() {
+      const blpMeta = { ...metadata, article: { ...metadata.article, blp: { isBlp: true, reason: 'living', qid: null } } }
+      const embed = buildDiscordEmbed(blpMeta, 'diff.png')
+      assert.notInclude(embed.description, 'wikidata.org')
     })
 
     it('omits the BLP badge for non-BLP articles', function() {
