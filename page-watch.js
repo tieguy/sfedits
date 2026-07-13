@@ -19,6 +19,7 @@ const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
 const { recordPost } = require('./lib/post-log')
 const { startSweeper } = require('./lib/revdel-check')
+const { loadConfig } = require('./lib/config')
 
 const path = require('path')
 
@@ -38,25 +39,12 @@ function writeHeartbeat(name) {
   }
 }
 
-function getConfig(path) {
-  const config = loadJson(path)
-  // see if ranges are externally referenced as a separate .json files
-  if (config.accounts) {
-    for (let account of Array.from(config.accounts)) {
-      if (typeof account.ranges === 'string') {
-        account.ranges = loadJson(account.ranges)
-      }
-    }
-  }
-  console.log("loaded config from", path)
-  return config
-}
-
-function loadJson(path) {
-  if ((path[0] !== '/') && (path.slice(0, 2) !== './')) {
-    path = `./${path}`
-  }
-  return require(path)
+function getConfig(configPath) {
+  // The minimist default is './config.json'; only a non-default value is
+  // an explicit request for a file. Otherwise lib/config.js may take the
+  // config from the SFEDITS_CONFIG environment variable (e.g. Toolforge).
+  const explicit = configPath && configPath !== './config.json' ? configPath : null
+  return loadConfig({ path: explicit })
 }
 
 // Builds Wikipedia article URL from edit URL. Returns null if URL is malformed.
