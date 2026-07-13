@@ -11,7 +11,7 @@ const fs = require('fs')
 const path = require('path')
 
 const discordPlatform = require('../lib/discord-platform')
-const { buildDiscordEmbed } = discordPlatform
+const { buildDiscordEmbed, buildActionLinks } = discordPlatform
 const { buildDiscordText } = discordPlatform
 
 describe('discord-platform', function() {
@@ -193,6 +193,38 @@ describe('discord-platform', function() {
       const removed = embed.fields.find(f => f.name === 'Removed')
       assert.equal(added.value, '> passport')
       assert.equal(removed.value, '> mandate')
+    })
+
+    it('includes an Actions field with undo, history, editor talk, and watch links', function() {
+      const embed = buildDiscordEmbed(metadata, 'diff.png')
+      const actions = embed.fields.find(f => f.name === 'Actions')
+      assert.include(actions.value, 'action=edit&undo=1&undoafter=0')
+      assert.include(actions.value, 'action=history')
+      assert.include(actions.value, 'User_talk:AadamentAardvark')
+      assert.include(actions.value, 'action=watch')
+      // Actions come before the excerpt fields
+      assert.equal(embed.fields[0].name, 'Actions')
+    })
+
+    it('escapes parentheses in URLs used inside markdown links', function() {
+      const links = buildActionLinks({
+        diffUrl: 'https://en.wikipedia.org/w/index.php?diff=9&oldid=8',
+        page: 'Connie Chan (politician)',
+        name: 'Some User'
+      })
+      assert.notMatch(links, /\]\([^)]*\([^)]*\)[^)]*\)/) // no raw ( inside a link target
+      assert.include(links, '%28politician%29')
+      assert.include(links, 'User_talk:Some_User')
+    })
+
+    it('omits the undo link when oldid is missing but keeps the rest', function() {
+      const links = buildActionLinks({
+        diffUrl: 'https://en.wikipedia.org/w/index.php?diff=9',
+        page: 'Cat',
+        name: 'User'
+      })
+      assert.notInclude(links, 'undo=')
+      assert.include(links, 'action=history')
     })
 
     it('colors pure additions green and pure removals red', function() {
