@@ -13,6 +13,8 @@ const { buildFacets } = require('./lib/bluesky-utils')
 const { createAuthenticatedAgent } = require('./lib/bluesky-client')
 const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
+const discord = require('./lib/discord-platform')
+const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
 
@@ -406,6 +408,16 @@ async function sendStatus(account, statusData, edit) {
           })
         }
 
+        // Post to Discord
+        if (account.discord) {
+          await discord.post({
+            account: account.discord,
+            text: enrichedText,
+            screenshot,
+            metadata
+          })
+        }
+
         writeHeartbeat('post')
       } finally {
         // Always clean up screenshot, even if posting fails
@@ -421,8 +433,7 @@ async function sendStatus(account, statusData, edit) {
 
 async function inspect(account, edit) {
   if (edit.url) {
-    if (account.watchlist && account.watchlist[edit.wikipedia]
-      && account.watchlist[edit.wikipedia][edit.page]) {
+    if (isWatched(account, edit)) {
       const statusData = getStatus(edit, edit.user, account.template)
       try {
         await sendStatus(account, statusData, edit)
@@ -446,6 +457,9 @@ async function main() {
 
   // Initialize geolocation database before listening for edits
   await initializeReader()
+
+  // Fetch dynamic article lists (WikiProject task forces) before listening
+  await startWatchlistSync(config, { dataDir: HEARTBEAT_DIR })
 
   return checkConfig(config, function (err) {
     if (!err) {

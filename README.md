@@ -186,6 +186,47 @@ Create `config.json` from the template:
 
 **Important:** Never commit `config.json` - it contains credentials and is gitignored. Update it directly on the droplet when you need to change the watchlist or credentials.
 
+### Dynamic Watchlist (WikiProject task forces)
+
+Instead of (or in addition to) hard-coding articles in `watchlist`, an account
+can pull its article list from a WikiProject / task force via the
+[PageAssessments API](https://www.mediawiki.org/wiki/Extension:PageAssessments):
+
+```json
+"watchlist_source": {
+  "project": "San Francisco Bay Area",
+  "wikipedia": "English Wikipedia",
+  "importance": ["Top", "High"],
+  "refresh_hours": 24
+}
+```
+
+- `project` - the PageAssessments project name (task force banners on article
+  talk pages register articles under this name)
+- `importance` - optional filter; large task forces tag 10,000+ articles, so
+  filtering to Top/High keeps the bot from becoming a firehose. Omit to watch
+  everything.
+- `refresh_hours` - how often to re-fetch the list (default 24)
+
+The fetched list is cached to `data/watchlist-<project>.json`, so restarts and
+Wikipedia API outages fall back to the last good list. Static `watchlist`
+entries are always honored in addition to the dynamic list.
+
+### Discord Setup
+
+To post to a Discord channel, create an incoming webhook (channel settings →
+Integrations → Webhooks → New Webhook) and add it to the account:
+
+```json
+"discord": {
+  "webhook_url": "https://discord.com/api/webhooks/..."
+}
+```
+
+No bot user or OAuth setup is needed - webhooks are per-channel URLs. Posts
+include the edit screenshot as an attachment, with the article and editor as
+clickable links.
+
 ### Bluesky Setup
 
 To set up Bluesky posting and PII alert DMs:

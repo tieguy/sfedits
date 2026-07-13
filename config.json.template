@@ -10,6 +10,12 @@
           "London Breed": true
         }
       },
+      "watchlist_source": {
+        "project": "San Francisco Bay Area",
+        "wikipedia": "English Wikipedia",
+        "importance": ["Top", "High"],
+        "refresh_hours": 24
+      },
       "bluesky": {
         "identifier": "your-username.bsky.social",
         "password": "your-app-password"
@@ -17,6 +23,9 @@
       "mastodon": {
         "instance": "https://your-instance.social",
         "access_token": "your-access-token"
+      },
+      "discord": {
+        "webhook_url": "https://discord.com/api/webhooks/your-webhook-id/your-webhook-token"
       },
       "pii_alerts": {
         "bluesky_recipient": "yourpersonalhandle.bsky.social",
