@@ -227,6 +227,20 @@ describe('discord-platform', function() {
       assert.include(links, 'action=history')
     })
 
+    it('shows a BLP badge and BLP/N action link for living people', function() {
+      const blpMeta = { ...metadata, article: { ...metadata.article, blp: { isBlp: true, reason: 'living' } } }
+      const embed = buildDiscordEmbed(blpMeta, 'diff.png')
+      assert.include(embed.description, 'BLP')
+      assert.include(embed.description, 'biography of a living person')
+      const actions = embed.fields.find(f => f.name === 'Actions')
+      assert.include(actions.value, 'Biographies_of_living_persons/Noticeboard')
+    })
+
+    it('omits the BLP badge for non-BLP articles', function() {
+      const embed = buildDiscordEmbed({ ...metadata, article: { ...metadata.article, blp: { isBlp: false, reason: null } } }, 'diff.png')
+      assert.notInclude(embed.description, 'BLP')
+    })
+
     it('colors pure additions green and pure removals red', function() {
       const add = buildDiscordEmbed({ ...metadata, summary: { ...metadata.summary, counts: { added: 2, removed: 0, changed: 0, whitespace: 0 } } }, 'x.png')
       const rem = buildDiscordEmbed({ ...metadata, summary: { ...metadata.summary, counts: { added: 0, removed: 1, changed: 0, whitespace: 0 } } }, 'x.png')

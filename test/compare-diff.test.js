@@ -6,6 +6,7 @@ const {
   parseDiffParams,
   splitHighlights,
   buildAltText,
+  blpFromClaims,
   renderDiffHtml
 } = require('../lib/compare-diff')
 
@@ -261,6 +262,34 @@ describe('compare-diff', function() {
     it('includes the description in alt text', function() {
       const alt = buildAltText([{ type: 1, text: 'New.' }], 'Gavin Newsom', 'Governor of California since 2019')
       assert.include(alt, 'Diff of Wikipedia article "Gavin Newsom" (Governor of California since 2019):')
+    })
+  })
+
+  describe('blpFromClaims', function() {
+    it('flags a living human as BLP', function() {
+      assert.deepEqual(blpFromClaims(['Q5'], null), { isBlp: true, reason: 'living' })
+    })
+
+    it('flags a recently deceased human (WP:BDP window)', function() {
+      const now = new Date('2026-07-13T00:00:00Z')
+      assert.deepEqual(
+        blpFromClaims(['Q5'], '+2025-09-29T00:00:00Z', now),
+        { isBlp: true, reason: 'recently-deceased' }
+      )
+    })
+
+    it('does not flag a long-dead human', function() {
+      const now = new Date('2026-07-13T00:00:00Z')
+      assert.deepEqual(
+        blpFromClaims(['Q5'], '+1978-11-27T00:00:00Z', now),
+        { isBlp: false, reason: null }
+      )
+    })
+
+    it('does not flag non-humans', function() {
+      // e.g. San Francisco Board of Supervisors: instance of legislature
+      assert.deepEqual(blpFromClaims(['Q11204'], null), { isBlp: false, reason: null })
+      assert.deepEqual(blpFromClaims([], null), { isBlp: false, reason: null })
     })
   })
 
