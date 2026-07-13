@@ -13,6 +13,8 @@ const { buildFacets } = require('./lib/bluesky-utils')
 const { createAuthenticatedAgent } = require('./lib/bluesky-client')
 const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
+const discord = require('./lib/discord-platform')
+const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
 const { recordPost } = require('./lib/post-log')
@@ -413,9 +415,21 @@ async function sendStatus(account, statusData, edit) {
           mastodonId = result?.data?.id || null
         }
 
+        // Post to Discord
+        let discordMessageId = null
+        if (account.discord) {
+          const result = await discord.post({
+            account: account.discord,
+            text: enrichedText,
+            screenshot,
+            metadata
+          })
+          discordMessageId = result?.id || null
+        }
+
         // Record what was posted so the revdel sweeper can delete these
         // posts if the revision is later hidden on-wiki
-        recordPost({ diffUrl: edit.url, page: edit.page, blueskyUri, mastodonId })
+        recordPost({ diffUrl: edit.url, page: edit.page, blueskyUri, mastodonId, discordMessageId })
 
         writeHeartbeat('post')
       } finally {
@@ -432,8 +446,7 @@ async function sendStatus(account, statusData, edit) {
 
 async function inspect(account, edit) {
   if (edit.url) {
-    if (account.watchlist && account.watchlist[edit.wikipedia]
-      && account.watchlist[edit.wikipedia][edit.page]) {
+    if (isWatched(account, edit)) {
       const statusData = getStatus(edit, edit.user, account.template)
       try {
         await sendStatus(account, statusData, edit)
@@ -457,6 +470,9 @@ async function main() {
 
   // Initialize geolocation database before listening for edits
   await initializeReader()
+
+  // Fetch dynamic article lists (WikiProject task forces) before listening
+  await startWatchlistSync(config, { dataDir: HEARTBEAT_DIR })
 
   return checkConfig(config, function (err) {
     if (!err) {
