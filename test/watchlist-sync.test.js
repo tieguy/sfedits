@@ -213,6 +213,26 @@ describe('watchlist-sync', function() {
       assert.equal(account.dynamicWatchlist['English Wikipedia'].size, 0)
     })
 
+    it('treats a zero-article fetch as a failure (wrong project name guard)', async function() {
+      // PageAssessments returns an empty result, not an error, for unknown
+      // project names - this must never wipe a working watchlist
+      nock(API_HOST)
+        .get(API_PATH)
+        .query(true)
+        .reply(200, { query: { projects: {} } })
+
+      const account = {
+        watchlist_source: { project: 'Wrong Name' },
+        dynamicWatchlist: { 'English Wikipedia': new Set(['Existing Article']) }
+      }
+      const count = await refreshWatchlist(account, { dataDir })
+
+      assert.equal(count, 1)
+      assert.isTrue(account.dynamicWatchlist['English Wikipedia'].has('Existing Article'))
+      // And the on-disk cache must not be overwritten with an empty list
+      assert.isFalse(fs.existsSync(cachePath(dataDir, 'Wrong Name')))
+    })
+
     it('respects a custom wikipedia feed name', async function() {
       nock(API_HOST)
         .get(API_PATH)

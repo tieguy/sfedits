@@ -194,7 +194,7 @@ can pull its article list from a WikiProject / task force via the
 
 ```json
 "watchlist_source": {
-  "project": "San Francisco Bay Area",
+  "project": "California/San Francisco Bay Area task force",
   "wikipedia": "English Wikipedia",
   "importance": ["Top", "High"],
   "refresh_hours": 24
