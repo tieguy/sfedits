@@ -5,7 +5,7 @@ const async = require('async')
 const minimist = require('minimist')
 const Mastodon = require('mastodon')
 const Mustache = require('mustache')
-const { WikiChanges } = require('wikichanges')
+const { EditStream } = require('./lib/edit-stream')
 const { saveDraft } = require('./lib/draft-manager')
 const { enrichIPsInText, initializeReader } = require('./lib/geolocation')
 const { captureDiffImage } = require('./lib/diff-image')
@@ -486,8 +486,10 @@ async function main() {
         startSweeper(config.accounts[0])
       }
 
-      const wikipedia = new WikiChanges({ ircNickname: config.nick })
+      const wikipedia = new EditStream()
       return wikipedia.listen(edit => {
+        // Filename kept as 'irc' for healthcheck compatibility; the feed
+        // is EventStreams now
         writeHeartbeat('irc')
         if (argv.verbose) {
           console.log(JSON.stringify(edit))
