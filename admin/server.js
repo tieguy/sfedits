@@ -6,6 +6,7 @@ const fs = require('fs')
 const path = require('path')
 const { captureDiffImage } = require('../lib/diff-image')
 const { createAuthenticatedAgent } = require('../lib/bluesky-client')
+const { recordPost } = require('../lib/post-log')
 const bluesky = require('../lib/bluesky-platform')
 const mastodon = require('../lib/mastodon-platform')
 
@@ -232,6 +233,8 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
 
     const results = []
     const postedTo = draft.posted_to || []
+    let blueskyUri = null
+    let mastodonId = null
 
     // Render diff for posting (admin console doesn't save it in draft)
     const capture = await captureDiffImage(draft.diff_url, draft.article)
@@ -253,12 +256,13 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
       // Post to Bluesky if configured and not already posted
       if (account.bluesky && !postedTo.includes('bluesky')) {
         try {
-          await bluesky.post({
+          const result = await bluesky.post({
             account: account.bluesky,
             text: draft.text,
             screenshot,
             metadata
           })
+          blueskyUri = result?.uri || null
 
           console.log(`✓ Posted to Bluesky`)
           postedTo.push('bluesky')
@@ -274,12 +278,13 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
       // Post to Mastodon if configured and not already posted
       if (account.mastodon && !postedTo.includes('mastodon')) {
         try {
-          await mastodon.post({
+          const result = await mastodon.post({
             account: account.mastodon,
             text: draft.text,
             screenshot,
             metadata
           })
+          mastodonId = result?.data?.id || null
 
           console.log(`✓ Posted to Mastodon`)
           postedTo.push('mastodon')
@@ -296,6 +301,12 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
       if (screenshot && fs.existsSync(screenshot)) {
         fs.unlinkSync(screenshot)
       }
+    }
+
+    // Record what was posted so the bot's revdel sweeper can delete
+    // these posts if the revision is later hidden on-wiki
+    if (blueskyUri || mastodonId) {
+      recordPost({ diffUrl: draft.diff_url, page: draft.article, blueskyUri, mastodonId })
     }
 
     // Update draft with posted platforms

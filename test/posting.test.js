@@ -260,6 +260,9 @@ describe('posting flow', function() {
         './lib/geolocation': {
           enrichIPsInText: async (text) => text, // Pass through without enrichment
           initializeReader: async () => null
+        },
+        './lib/post-log': {
+          recordPost: () => null
         }
       })
 
@@ -360,6 +363,9 @@ describe('posting flow', function() {
         './lib/geolocation': {
           enrichIPsInText: async (text) => text,
           initializeReader: async () => null
+        },
+        './lib/post-log': {
+          recordPost: () => null
         }
       })
 

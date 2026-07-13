@@ -10,6 +10,7 @@ docs/pii-screening/
 pii-blocks.log
 gemini-pii-checks.log
 data/heartbeat-*
+data/posted-log.jsonl
 *.png
 !docs/diff-rendering/*.png
 .superpowers/

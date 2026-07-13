@@ -15,6 +15,8 @@ const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
+const { recordPost } = require('./lib/post-log')
+const { startSweeper } = require('./lib/revdel-check')
 
 const path = require('path')
 
@@ -388,24 +390,32 @@ async function sendStatus(account, statusData, edit) {
         }
 
         // Post to Bluesky
+        let blueskyUri = null
         if (account.bluesky) {
-          await bluesky.post({
+          const result = await bluesky.post({
             account: account.bluesky,
             text: enrichedText,
             screenshot,
             metadata
           })
+          blueskyUri = result?.uri || null
         }
 
         // Post to Mastodon
+        let mastodonId = null
         if (account.mastodon) {
-          await mastodon.post({
+          const result = await mastodon.post({
             account: account.mastodon,
             text: enrichedText,
             screenshot,
             metadata
           })
+          mastodonId = result?.data?.id || null
         }
+
+        // Record what was posted so the revdel sweeper can delete these
+        // posts if the revision is later hidden on-wiki
+        recordPost({ diffUrl: edit.url, page: edit.page, blueskyUri, mastodonId })
 
         writeHeartbeat('post')
       } finally {
@@ -450,6 +460,12 @@ async function main() {
 
   return checkConfig(config, function (err) {
     if (!err) {
+      // Periodically check posted revisions and delete posts whose
+      // revision has been hidden/suppressed on-wiki
+      if (!argv.noop && config.accounts.length > 0) {
+        startSweeper(config.accounts[0])
+      }
+
       const wikipedia = new WikiChanges({ ircNickname: config.nick })
       return wikipedia.listen(edit => {
         writeHeartbeat('irc')
