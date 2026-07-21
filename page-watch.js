@@ -3,7 +3,7 @@
 const fs = require('fs')
 const async = require('async')
 const minimist = require('minimist')
-const Mastodon = require('mastodon')
+const Mastodon = require('./lib/mastodon-client')
 const Mustache = require('mustache')
 const { EditStream } = require('./lib/edit-stream')
 const { saveDraft } = require('./lib/draft-manager')
@@ -225,15 +225,15 @@ async function sendMastodonAlert(account, edit, statusData, _piiResult) {
   if (!account.pii_alerts?.mastodon_recipient) return
 
   try {
-    const M = new Mastodon({
+    const M = Mastodon.client({
       access_token: account.mastodon.access_token,
-      api_url: account.mastodon.instance + '/api/v1/'
+      instance: account.mastodon.instance
     })
 
     // Same message as regular post, just prefixed with "PII: "
     const alertText = `PII: ${statusData.text}`
 
-    await M.post('statuses', {
+    await M.postStatus({
       status: `@${account.pii_alerts.mastodon_recipient} ${alertText}`,
       visibility: 'direct'
     })
