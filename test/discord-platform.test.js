@@ -206,6 +206,23 @@ describe('discord-platform', function() {
       assert.equal(embed.fields[0].name, 'Actions')
     })
 
+    it('links Special:Thanks for the new revision', function() {
+      const embed = buildDiscordEmbed(metadata, 'diff.png')
+      const actions = embed.fields.find(f => f.name === 'Actions')
+      assert.include(actions.value, 'https://en.wikipedia.org/wiki/Special:Thanks/1')
+    })
+
+    it('omits the thank link for IP editors', function() {
+      for (const name of ['192.0.2.44', '2601:646:8080:1::1']) {
+        const links = buildActionLinks({
+          diffUrl: 'https://en.wikipedia.org/w/index.php?diff=9&oldid=8',
+          page: 'Cat',
+          name
+        })
+        assert.notInclude(links, 'Special:Thanks')
+      }
+    })
+
     it('escapes parentheses in URLs used inside markdown links', function() {
       const links = buildActionLinks({
         diffUrl: 'https://en.wikipedia.org/w/index.php?diff=9&oldid=8',

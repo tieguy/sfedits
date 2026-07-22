@@ -221,8 +221,11 @@ describe('wikidata-claim-watch', function() {
       assert.include(embed.title, 'Barry Zito')
       assert.include(embed.description, 'place of birth')
       assert.include(embed.description, 'San Francisco')
-      assert.include(embed.description, 'added')
+      assert.include(embed.description, 'Added')
       assert.equal(embed.url, edit.url)
+      // Wikidata branding: named author row with the logo as its icon
+      assert.equal(embed.author.name, 'Wikidata')
+      assert.match(embed.author.icon_url, /Wikidata-logo/)
     })
 
     it('does nothing for a non-matching claim edit', async function() {
