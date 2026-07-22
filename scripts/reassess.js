@@ -582,5 +582,5 @@ if (require.main === module) {
 
 module.exports = {
   percentileRanks, median, leadScore, scoreCohort, pickCandidates,
-  fetchPageviews, BAY_AREA_RE
+  fetchPageviews, BAY_AREA_RE, apiGet, batches, EN_API, WD_API, UA, PROJECT
 }
