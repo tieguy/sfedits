@@ -15,6 +15,7 @@ const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
 const discord = require('./lib/discord-platform')
 const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
+const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-watch')
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
 const { recordPost } = require('./lib/post-log')
@@ -437,6 +438,16 @@ async function sendStatus(account, statusData, edit) {
 }
 
 async function inspect(account, edit) {
+  // Wikidata edits are claim-watched (statement-level semantics), not
+  // page-watched; only accounts with a wikidata_claims stanza divert here
+  if (edit.wikipedia === 'Wikidata' && account.claimWatch) {
+    return handleWikidataEdit(account, edit, {
+      sets: account.claimWatch.sets,
+      rateCap: account.claimWatch.rateCap,
+      noop: Boolean(argv.noop)
+    }).catch(error => console.error('Claim-watch error:', error.message))
+  }
+
   if (edit.url) {
     if (isWatched(account, edit)) {
       const statusData = getStatus(edit, edit.user, account.template)
@@ -465,6 +476,9 @@ async function main() {
 
   // Fetch dynamic article lists (WikiProject task forces) before listening
   await startWatchlistSync(config, { dataDir: HEARTBEAT_DIR })
+
+  // Build Bay Area target sets for Wikidata claim notices before listening
+  await startClaimWatch(config, { dataDir: HEARTBEAT_DIR })
 
   return checkConfig(config, function (err) {
     if (!err) {
