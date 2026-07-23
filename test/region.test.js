@@ -43,10 +43,11 @@ describe('region', function() {
       assert.deepEqual(result, { lon: 12.5, lat: -3.25 })
     })
 
-    it('returns null for malformed coordinates (tight regex prevents parsing)', function() {
-      // "Point(1.2.3 4)" has a malformed longitude with two decimal points.
-      // The tight regex /(-?\d+(?:\.\d+)?)/ will not match "1.2.3", so the entire
-      // regex fails and we return null. This test kills the mutation of the regex alone.
+    it('returns null for a malformed coordinate', function() {
+      // "Point(1.2.3 4)" has a longitude with two decimal points. Note this does NOT
+      // isolate the tight regex: Number.isFinite catches this case too, so the test
+      // still passes if the regex is loosened back to /([-\d.]+)/. No known input
+      // distinguishes the two guards - see the comment on parsePoint.
       const result = parsePoint('Point(1.2.3 4)')
       assert.isNull(result)
     })
@@ -145,9 +146,17 @@ describe('region', function() {
       assert.equal(assertLang('pt-BR'), 'pt-BR')
     })
 
-    it('accepts Wikipedia language codes like "simple" and "tokipona"', function() {
-      assert.equal(assertLang('simple'), 'simple')
-      assert.equal(assertLang('tokipona'), 'tokipona')
+    it('accepts real wiki language codes that BCP 47 length rules would reject', function() {
+      // Every one of these is a live wiki. "simple" and "tokipona" exceed the 3-letter
+      // primary-subtag rule; "zh-classical" has a 9-character subtag. All were rejected
+      // by earlier revisions of this regex, which is why they are pinned here.
+      for (const code of [
+        'en', 'es', 'simple', 'tokipona', 'zh-classical', 'zh-hans', 'zh-yue',
+        'be-tarask', 'nds-nl', 'roa-tara', 'map-bms', 'cbk-zam', 'zh-min-nan',
+        'bat-smg', 'fiu-vro', 'crh-latn', 'pt-br', 'sr-el'
+      ]) {
+        assert.equal(assertLang(code), code, `${code} must be accepted`)
+      }
     })
 
     it('rejects SPARQL injection attempts in language codes', function() {
@@ -159,12 +168,14 @@ describe('region', function() {
       }
     })
 
-    it('rejects language codes with spaces', function() {
-      try {
-        assertLang('en ')
-        assert.fail('expected assertLang to throw')
-      } catch (error) {
-        assert.include(error.message, 'Wiki language code')
+    it('rejects language codes containing a space, leading or internal', function() {
+      for (const bad of ['en ', 'e n', ' en']) {
+        try {
+          assertLang(bad)
+          assert.fail(`expected assertLang to throw for ${JSON.stringify(bad)}`)
+        } catch (error) {
+          assert.include(error.message, 'Wiki language code')
+        }
       }
     })
 
@@ -483,17 +494,24 @@ describe('region', function() {
       }
     })
 
-    it('filters out unstrippable sub-entities and queries remaining valid anchors', async function() {
-      // Simulate subEntities returning a mix of valid QIDs and unstrippable values
+    it('never interpolates an unstrippable sub-entity into a query', async function() {
+      // This guards the boundary between WDQS output and raw SPARQL interpolation.
+      // Asserting on the returned articles is NOT sufficient: with the filter removed
+      // the genid anchor simply produces an extra request that matches no interceptor,
+      // sparqlChunked swallows it, and the article count is unchanged. So capture what
+      // was actually SENT and assert the genid never reached a query string.
+      const sent = []
+
       nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: { value: 'http://www.wikidata.org/.well-known/genid/abc123' } }, // genid, not a real entity
-        { sub: entity('Q1111') },  // valid sub-entity
-        { sub: entity('Q2222') }   // valid sub-entity
+        { sub: { value: 'http://www.wikidata.org/.well-known/genid/abc123' } }, // genid, not an entity
+        { sub: entity('Q1111') },
+        { sub: entity('Q2222') }
       ]))
-      // Queries for the two valid sub-entities
-      nock(WDQS).post('/sparql', body =>
-        body.query.includes('wd:Q1111')
-      ).reply(200, bindings([
+
+      nock(WDQS).post('/sparql', body => {
+        sent.push(body.query)
+        return true
+      }).times(3).reply(200, bindings([
         {
           item: entity('Q10'),
           cls: entity('Q515'),
@@ -501,23 +519,36 @@ describe('region', function() {
           lang: { value: 'en' }
         }
       ]))
-      nock(WDQS).post('/sparql', body =>
-        body.query.includes('wd:Q2222')
-      ).reply(200, bindings([
-        {
-          item: entity('Q20'),
-          cls: entity('Q515'),
-          article: { value: 'https://en.wikipedia.org/wiki/Beta' },
-          lang: { value: 'en' }
-        }
-      ]))
 
-      const articles = await articlesByAdmin(
-        { qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
+      await articlesByAdmin({ qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
 
-      // Both valid sub-entities should have been queried and results returned
-      assert.equal(articles.length, 2)
-      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+      assert.equal(sent.length, 2, 'exactly two closure queries, one per valid sub-entity')
+      assert.isTrue(sent.every(q => !q.includes('genid')),
+        'no query may contain the genid URI')
+      assert.isTrue(sent.some(q => q.includes('wd:Q1111')))
+      assert.isTrue(sent.some(q => q.includes('wd:Q2222')))
+    })
+
+    it('warns when every sub-entity was filtered out', async function() {
+      // Falling back to one unchunked whole-region query is exactly the timeout the
+      // chunking exists to prevent, so it must not happen silently.
+      const warnings = []
+      const originalWarn = console.warn
+      console.warn = msg => warnings.push(msg)
+
+      try {
+        nock(WDQS).post('/sparql').reply(200, bindings([
+          { sub: { value: 'http://www.wikidata.org/.well-known/genid/abc123' } }
+        ]))
+        nock(WDQS).post('/sparql').reply(200, bindings([]))
+
+        await articlesByAdmin({ qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
+
+        assert.equal(warnings.length, 1)
+        assert.include(warnings[0], 'all 1 sub-entities were unusable')
+      } finally {
+        console.warn = originalWarn
+      }
     })
   })
 })
