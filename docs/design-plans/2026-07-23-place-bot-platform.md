@@ -206,7 +206,7 @@ and is stale in several places.** Corrections, and what each implies:
 | "Add a Discord webhook delivery adapter" | `lib/discord-platform.js` exists with rich embeds | Generalize to per-subscription, don't build |
 | Static watchlist in config | `lib/watchlist-sync.js`: dynamic fetch, disk cache, outage fallback, periodic refresh, `isWatched()` | The refresh/cache/fallback pattern is proven — the topic store follows it, swapping PageAssessments for the region resolver |
 | `P131*` transitive closure is new work | `lib/wikidata-claim-watch.js` runs per-county `P131+` closures, ~12k QIDs, cached to disk | The admin strategy is a generalization of working code, including the chunking workaround for WDQS timeouts |
-| PII screening applies to every bot | Fork sets `pii_blocking.enabled: false`, relying on `lib/revdel-check.js` instead | Safety phase must re-decide this for third-party bots, not assume the gate exists |
+| PII screening applies to every bot | Fork sets `pii_blocking.enabled: false`, relying on `lib/revdel-check.js` instead | Same policy extends to third-party bots; the Presidio sidecar is not reintroduced |
 
 Patterns this design follows from existing code:
 
@@ -314,9 +314,10 @@ renames; generation bumps; new-article events emit. Tests pass.
 to many subscriptions, rendering the diff once.
 
 **Components:**
-- `lib/watchlist-sync.js` — `topicsForEdit(edit) → topicId[]` alongside the
-  existing `isWatched()`, backed by the topic store's index; generation-bump
-  reload without restart.
+- `lib/watchlist-sync.js` — `topicsForEdit(edit) → topicId[]` backed by the topic
+  store's index, with generation-bump reload without restart. The existing
+  `isWatched()` PageAssessments path stays functional in parallel; the SFBA bot
+  runs on it until a replacement closure is proven.
 - `page-watch.js` — `inspect()` fans edit → topics → subscriptions; the diff
   render happens once per edit and its result is passed to each delivery.
 - Config: a `topic_store` stanza, following the existing per-feature pattern.
@@ -426,10 +427,13 @@ broken rather than crashing the fan-out. Tests pass.
 - Auto-naming from the place (with a filter suffix when two topics share a place
   but differ by filters), sidestepping naming and squatting disputes.
 - Automated-account labeling: platform bot flags set, posts labeled as automated.
-- A decision, recorded here, on whether third-party bots re-enable the PII gate
-  (`pii_blocking`) or rely on the revdel sweeper as the fork's own bot does.
 - Tests for cap enforcement at both creation and rebuild, bot-edit skipping, and
   name collision suffixing.
+
+**Settled, not deferred:** `pii_blocking.enabled: false` applies to third-party
+bots as it does to the fork's own. The revdel sweeper (`lib/revdel-check.js`) is
+the mechanism; the Python/Presidio sidecar is not deployed and this design does
+not reintroduce it.
 
 **Dependencies:** Phases 5, 7.
 
@@ -459,11 +463,21 @@ are fork features with no upstream equivalent, and they are the regression test
 for whether generalization broke anything. Treat the SFBA config as a fixture,
 not as something to delete once topics exist.
 
-**PageAssessments as a third membership source.** The current bot's list comes
-from a WikiProject task force, not from geography. `topic_articles.source`
-accommodates this, but no phase above builds it — task-force membership is
-neither geo nor admin containment. Worth adding once the two primary strategies
-are proven; noted here so the schema is not narrowed in Phase 2.
+**PageAssessments is retained for continuity, not as a direction.** The current
+bot's list comes from a WikiProject task force, not from geography — so keeping
+it is forced by Definition of Done #10 (the SFBA bot must keep working), not
+chosen. Task-force membership is neither geo nor admin containment: it depends on
+talk-page banners maintained by hand, it has no QID identity to set-diff against,
+and it does not generalize to an arbitrary place, which is the whole premise of
+this design. It is a legacy source that the platform tolerates.
+
+Concretely: `topic_articles.source` must accommodate a `pageassessments` value so
+Phase 2's schema is not narrowed against it, and Phase 4 must keep
+`lib/watchlist-sync.js`'s PageAssessments path alive alongside the topic-store
+index. No phase invests in it further. The migration path — reproducing the SFBA
+list from an admin closure over the nine counties, then retiring the task-force
+source — is out of scope here and worth its own design once Phase 1 shows what a
+county-scale closure actually returns.
 
 **Deferred, and why.**
 - *Credential death.* Bring-your-own tokens expire or get revoked and the bot
