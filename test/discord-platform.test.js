@@ -195,6 +195,23 @@ describe('discord-platform', function() {
       assert.equal(removed.value, '> mandate')
     })
 
+    it('quotes one changed line per line, not one per highlight range', function() {
+      const embed = buildDiscordEmbed({
+        ...metadata,
+        summary: {
+          ...metadata.summary,
+          added: ['from', 'but requiring AMD to develop'],
+          removed: ['since', 'that continues to this day'],
+          addedLines: ['from … but requiring AMD to develop'],
+          removedLines: ['since … that continues to this day']
+        }
+      }, 'diff.png')
+      const added = embed.fields.find(f => f.name === 'Added')
+      const removed = embed.fields.find(f => f.name === 'Removed')
+      assert.equal(added.value, '> from … but requiring AMD to develop')
+      assert.equal(removed.value, '> since … that continues to this day')
+    })
+
     it('includes an Actions field with undo, history, editor talk, and watch links', function() {
       const embed = buildDiscordEmbed(metadata, 'diff.png')
       const actions = embed.fields.find(f => f.name === 'Actions')

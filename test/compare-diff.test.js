@@ -5,6 +5,7 @@ const path = require('path')
 const {
   parseDiffParams,
   splitHighlights,
+  summarizeDiff,
   buildAltText,
   blpFromClaims,
   renderDiffHtml
@@ -68,6 +69,43 @@ describe('compare-diff', function() {
         { text: 'a', highlight: null },
         { text: 'b', highlight: 'delete' }
       ])
+    })
+  })
+
+  describe('summarizeDiff', function() {
+    // One changed line with two separate added ranges and one removed range:
+    // "since that continues to this day" -> "from but requiring AMD to develop"
+    const twoRangeLine = [{
+      type: 3,
+      text: 'from since but requiring AMD to develop that continues to this day',
+      highlightRanges: [
+        { start: 0, length: 4, type: 0 },   // "from" added
+        { start: 5, length: 5, type: 1 },   // "since" removed
+        { start: 11, length: 28, type: 0 }, // "but requiring ... to develop" added
+        { start: 40, length: 26, type: 1 }  // "that continues to this day" removed
+      ]
+    }]
+
+    it('groups a line\'s highlight ranges into one display line', function() {
+      const summary = summarizeDiff(twoRangeLine)
+      assert.deepEqual(summary.addedLines, ['from … but requiring AMD to develop'])
+      assert.deepEqual(summary.removedLines, ['since … that continues to this day'])
+    })
+
+    it('keeps the flat per-highlight fragments for alt text', function() {
+      const summary = summarizeDiff(twoRangeLine)
+      assert.deepEqual(summary.added, ['from', 'but requiring AMD to develop'])
+      assert.deepEqual(summary.removed, ['since', 'that continues to this day'])
+    })
+
+    it('keeps separate diff lines on separate display lines', function() {
+      const summary = summarizeDiff([
+        { type: 1, text: 'first added line' },
+        { type: 1, text: 'second added line' },
+        { type: 2, text: 'a removed line' }
+      ])
+      assert.deepEqual(summary.addedLines, ['first added line', 'second added line'])
+      assert.deepEqual(summary.removedLines, ['a removed line'])
     })
   })
 
