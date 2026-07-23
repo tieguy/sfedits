@@ -1495,7 +1495,16 @@ async function regionHistogram(region, options = {}) {
     }
   }
 
-  const subs = await subEntities(region.qid)
+  // NOTE: subEntities returns { subs, filtered }, NOT a bare array. Destructuring is
+  // required - `const subs = await subEntities(...)` yields subs.length === undefined,
+  // so the guard below is false and the call degrades to one unchunked whole-region
+  // query, which is exactly the WDQS timeout the chunking exists to prevent.
+  const { subs, filtered } = await subEntities(region.qid)
+  if (subs.length === 0 && filtered > 0) {
+    console.warn(
+      `region ${region.qid}: all ${filtered} sub-entities were unusable, ` +
+      'falling back to a single unchunked query that may exceed the WDQS budget')
+  }
   const anchors = subs.length > 0 ? subs : [region.qid]
 
   let partial = false

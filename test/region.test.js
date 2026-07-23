@@ -125,7 +125,6 @@ describe('region', function() {
       }
     })
 
-
     it('rejects non-string input', function() {
       try {
         assertQid(123)
