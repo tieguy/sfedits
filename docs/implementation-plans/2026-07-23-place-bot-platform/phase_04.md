@@ -308,7 +308,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/topic-index.test.js
 ```
-Expected: PASS — 8 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -440,7 +440,7 @@ describe('fan-out', function() {
    * page-watch with its heavy dependencies stubbed out, following the
    * proxyquire pattern already used in test/posting.test.js:253-267.
    */
-  function loadPageWatch(subscriptionsByTopic) {
+  function loadPageWatch() {
     return proxyquire('../page-watch', {
       './lib/diff-image': {
         captureDiffImage: async () => {
@@ -456,13 +456,13 @@ describe('fan-out', function() {
     })
   }
 
-  function subscription(id, host) {
+  function subscription(id, path) {
     return {
       id,
       topicId: 1,
       ownerUser: `user${id}`,
       deliveryType: 'discord',
-      deliveryConfig: { webhook_url: `https://${host}/api/webhooks/1/token` },
+      deliveryConfig: { webhook_url: `https://discord.com${path}` },
       status: 'active'
     }
   }
@@ -471,11 +471,14 @@ describe('fan-out', function() {
     // THE test for this phase. It must drive sendStatus end to end - calling
     // deliverToTopics directly would never invoke the renderer, so the
     // "one render" half of the assertion would be vacuously true.
-    const hooks = ['hook-a.test', 'hook-b.test', 'hook-c.test']
-    const scopes = hooks.map(host =>
-      nock(`https://${host}`).post(/.*/).query(true).reply(200, { id: '1' }))
+    // Real Discord hosts, distinguished by path. Phase 5 adds a host allowlist
+    // to lib/subscription-delivery.js; fixtures on invented hosts would start
+    // failing there, in a file this phase owns.
+    const paths = ['/api/webhooks/1/aaa', '/api/webhooks/2/bbb', '/api/webhooks/3/ccc']
+    const scopes = paths.map(p =>
+      nock('https://discord.com').post(p).query(true).reply(200, { id: '1' }))
 
-    const pageWatch = loadPageWatch({})
+    const pageWatch = loadPageWatch()
 
     // Page-verification fetch that sendStatus does before rendering.
     nock('https://en.wikipedia.org')
@@ -485,8 +488,8 @@ describe('fan-out', function() {
 
     const stubStore = {
       subscriptionsForTopic: async (topicId) => ({
-        1: [subscription(1, hooks[0]), subscription(2, hooks[1])],
-        2: [subscription(3, hooks[2])]
+        1: [subscription(1, paths[0]), subscription(2, paths[1])],
+        2: [subscription(3, paths[2])]
       })[topicId] || []
     }
     pageWatch._setTopicStateForTest(stubStore, null)
@@ -499,7 +502,14 @@ describe('fan-out', function() {
     }
     const statusData = pageWatch.getStatus(edit, edit.user, '{{page}} edited')
 
-    await pageWatch.sendStatus({}, statusData, edit, [1, 2])
+    // pii_blocking must be present and disabled - matching this fork's real
+    // config. With no stanza at all, screenForPII cannot extract diff text from
+    // the fixture and blocks the post at page-watch.js:355, returning BEFORE
+    // captureDiffImage at :366. The render would never happen and the
+    // assertion below would fail for the wrong reason.
+    const account = { pii_blocking: { enabled: false } }
+
+    await pageWatch.sendStatus(account, statusData, edit, [1, 2])
 
     assert.equal(renderCount, 1,
       'the diff must be rendered exactly once no matter how many subscribers')
@@ -509,7 +519,7 @@ describe('fan-out', function() {
 
   it('renders nothing when no topic matched and no account platform is set',
     async function() {
-      const pageWatch = loadPageWatch({})
+      const pageWatch = loadPageWatch()
       pageWatch._setTopicStateForTest({ subscriptionsForTopic: async () => [] }, null)
 
       nock('https://en.wikipedia.org')
@@ -520,7 +530,8 @@ describe('fan-out', function() {
         wikipedia: 'en', page: 'Alpha', user: 'Editor',
         url: 'https://en.wikipedia.org/w/index.php?diff=1&oldid=2'
       }
-      await pageWatch.sendStatus({}, pageWatch.getStatus(edit, edit.user, '{{page}}'),
+      const account = { pii_blocking: { enabled: false } }
+      await pageWatch.sendStatus(account, pageWatch.getStatus(edit, edit.user, '{{page}}'),
         edit, [])
 
       assert.equal(renderCount, 1,
@@ -529,13 +540,14 @@ describe('fan-out', function() {
     })
 
   it('keeps delivering after one subscription fails', async function() {
-    nock('https://dead.test').post(/.*/).query(true).reply(500, 'gone')
-    const live = nock('https://live.test').post(/.*/).query(true).reply(200, { id: '2' })
+    nock('https://discord.com').post('/api/webhooks/9/dead').query(true).reply(500, 'gone')
+    const live = nock('https://discord.com')
+      .post('/api/webhooks/9/live').query(true).reply(200, { id: '2' })
 
     const { deliverAll } = require('../lib/subscription-delivery')
 
     const results = await deliverAll(
-      [subscription(1, 'dead.test'), subscription(2, 'live.test')],
+      [subscription(1, '/api/webhooks/9/dead'), subscription(2, '/api/webhooks/9/live')],
       { text: 'x', screenshot: screenshotPath, metadata: { page: 'Alpha' } })
 
     assert.isFalse(results[0].ok)
@@ -573,7 +585,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/fan-out.test.js
 ```
-Expected: FAIL — `pageWatch.deliverToTopics is not a function`
+Expected: FAIL — `pageWatch._setTopicStateForTest is not a function` (the seam is added in Step 4h)
 
 **Step 4: Modify `page-watch.js`**
 
@@ -747,7 +759,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/fan-out.test.js
 ```
-Expected: PASS — 4 passing
+Expected: PASS, 0 failing — every test in this file green
 
 Then the regression check that matters most:
 

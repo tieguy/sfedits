@@ -306,7 +306,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/title-resolver.test.js
 ```
-Expected: PASS — 10 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -659,7 +659,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/title-resolver.test.js
 ```
-Expected: PASS — 19 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -1028,7 +1028,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/rebuild.test.js
 ```
-Expected: PASS — 7 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Write the CLI wrapper**
 

@@ -457,6 +457,13 @@ function describeWithDb(title, fn) {
     const suite = this
 
     before(async function() {
+      // Set the timeout INSIDE the hook. mocha stamps a hook's timeout when the
+      // hook is created, and `this.timeout(30000)` in the suite body runs after
+      // this before() was registered - so without this line the probe keeps the
+      // 2000ms default and TIMES OUT rather than skipping, which is precisely
+      // the red-on-a-fresh-clone outcome this mechanism exists to prevent.
+      this.timeout(20000)
+
       const reachable = await canConnect(testDsn())
       if (reachable) return
 
@@ -479,7 +486,16 @@ function describeWithDb(title, fn) {
 async function canConnect(dsn) {
   let pool = null
   try {
-    pool = mariadb.createPool({ ...parseDsn(dsn), connectionLimit: 1 })
+    // Fail fast. The connector's default acquireTimeout is ~10s, which turns
+    // "no database" into a ten-second stall per suite instead of an instant
+    // skip. Measured: 10009ms against a refused port with the defaults.
+    pool = mariadb.createPool({
+      ...parseDsn(dsn),
+      connectionLimit: 1,
+      connectTimeout: 1000,
+      initializationTimeout: 1000,
+      acquireTimeout: 2000
+    })
     const conn = await pool.getConnection()
     conn.release()
     return true
@@ -576,7 +592,7 @@ module.exports = {
 }
 ```
 
-**Important:** `package.json`'s test glob is `test/**/*.js`, which will pick up `test/helpers/db-helper.js` as if it were a test file. It defines no tests, so mocha loads it harmlessly — but confirm this in Step 4 rather than assuming.
+**Prerequisite:** Task 1 Step 3 must already have quoted the test glob and added `--ignore 'test/helpers/**'`. If it did not, creating this file reduces `npm test` to zero tests while still reporting green. Step 4 verifies this.
 
 **Step 4: Run test to verify it fails, then passes**
 
@@ -587,7 +603,7 @@ npx mocha --colors --reporter spec --exit test/db.test.js
 ```
 Expected first run: FAIL — `Cannot find module './helpers/db-helper'` if the helper is not yet written, or migration errors if the SQL has a typo.
 
-After both files exist, expected: PASS — 4 passing.
+After both files exist, expected: PASS, 0 failing.
 
 Then confirm the helper file does not disturb the full run:
 
@@ -690,6 +706,9 @@ describe('topic-store', function() {
 
   describe('connectionOptions', function() {
     const { connectionOptions } = require('../lib/topic-store')
+    // NOTE: connectionOptions and parseJsonColumn are implemented in Task 4.
+    // These describes are written here with the rest of the pure-function
+    // tests, but they will not pass until Task 4 lands - see Step 4.
 
     it('falls back to the Toolforge build-service env vars', function() {
       const options = connectionOptions(
@@ -853,13 +872,19 @@ module.exports = {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+**Step 4: Run test to verify the hashing tests pass**
 
 Run:
 ```bash
-npx mocha --colors --reporter spec --exit test/topic-store.test.js
+npx mocha --colors --reporter spec --exit test/topic-store.test.js \
+  --grep 'normalizeFilters|filtersHash'
 ```
-Expected: PASS — 10 passing
+Expected: PASS, 0 failing.
+
+The `connectionOptions` and `parseJsonColumn` describes in this file will still
+fail — those functions arrive in Task 4. Run the full file at the end of Task 4,
+not now. This is the one place in the plan where a task deliberately leaves a
+test red; it is called out here so it is not mistaken for a mistake.
 
 **Step 5: Commit**
 
@@ -1018,6 +1043,27 @@ describeWithDb('topic-store (database)', function() {
         [topic.id])
       assert.equal(Number(live[0].n), 1)
     })
+
+    it('bumps the generation for a rename, not only for adds and removes',
+      async function() {
+        const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+        await store.setTopicArticles(topic.id, [
+          { qid: 'Q10', wikipedia: 'en', title: 'Old Name', source: 'admin' }
+        ])
+        const before = await store.getTopic(topic.id)
+
+        const diff = await store.setTopicArticles(topic.id, [
+          { qid: 'Q10', wikipedia: 'en', title: 'New Name', source: 'admin' }
+        ])
+
+        assert.deepEqual(diff.added, [], 'a rename is not an addition')
+        assert.deepEqual(diff.removed, [], 'a rename is not a removal')
+        assert.equal(diff.renamed, 1)
+
+        const after = await store.getTopic(topic.id)
+        assert.isAbove(Number(after.generation), Number(before.generation),
+          'without this bump a running bot keeps matching the dead title')
+      })
 
     it('bumps the generation on every change', async function() {
       const topic = await store.upsertTopic('Q62', { languages: ['en'] })
@@ -1288,23 +1334,34 @@ function createTopicStore({ pool: existingPool = null, config = null, env = proc
     return rows.map(rowToTopic)
   }
 
-  /** Find or create the shared article row for a (wikipedia, qid) pair. */
-  async function upsertArticle(article) {
+  /**
+   * Find or create the shared article row for a (wikipedia, qid) pair.
+   *
+   * @param {Object} article
+   * @param {Object} [options]
+   * @param {boolean} [options.reportTitleChange] - return whether the title
+   *   moved instead of the row id; callers use this to detect renames
+   * @returns {Promise<number|boolean>}
+   */
+  async function upsertArticle(article, { reportTitleChange = false } = {}) {
     const existing = await pool.query(
-      'SELECT id FROM articles WHERE wikipedia = ? AND wikidata_qid = ?',
+      'SELECT id, title FROM articles WHERE wikipedia = ? AND wikidata_qid = ?',
       [article.wikipedia, article.qid])
 
     if (existing.length > 0) {
       // Titles change; the QID is the identity, so keep the title current.
-      await pool.query('UPDATE articles SET title = ? WHERE id = ?',
-        [article.title, existing[0].id])
-      return Number(existing[0].id)
+      const changed = String(existing[0].title) !== article.title
+      if (changed) {
+        await pool.query('UPDATE articles SET title = ? WHERE id = ?',
+          [article.title, existing[0].id])
+      }
+      return reportTitleChange ? changed : Number(existing[0].id)
     }
 
     const result = await pool.query(
       'INSERT INTO articles (wikipedia, title, wikidata_qid) VALUES (?, ?, ?)',
       [article.wikipedia, article.title, article.qid])
-    return Number(result.insertId)
+    return reportTitleChange ? true : Number(result.insertId)
   }
 
   /**
@@ -1339,13 +1396,21 @@ function createTopicStore({ pool: existingPool = null, config = null, env = proc
     const added = []
     const removed = []
     let unchanged = 0
+    let renamedCount = 0
 
     for (const [key, article] of desired) {
       const existing = current.get(key)
 
       if (existing && !existing.removed) {
         unchanged++
-        await upsertArticle(article)
+        // A pure rename lands here: the (wikipedia, qid) key is unchanged, so
+        // it is neither an add nor a remove - only the title moved. It still
+        // has to bump the generation, or a running bot keeps matching the OLD
+        // title until some unrelated add/remove happens to bump the counter.
+        // Silently matching a dead title is the exact failure rename detection
+        // exists to prevent.
+        const titleChanged = await upsertArticle(article, { reportTitleChange: true })
+        if (titleChanged) renamedCount++
         continue
       }
 
@@ -1373,13 +1438,13 @@ function createTopicStore({ pool: existingPool = null, config = null, env = proc
       removed.push(key.split(':')[1])
     }
 
-    if (added.length > 0 || removed.length > 0) {
+    if (added.length > 0 || removed.length > 0 || renamedCount > 0) {
       await pool.query(
         `UPDATE topics SET generation = generation + 1, last_built_at = CURRENT_TIMESTAMP
          WHERE id = ?`, [topicId])
     }
 
-    return { added, removed, unchanged }
+    return { added, removed, unchanged, renamed: renamedCount }
   }
 
   async function addSubscription(topicId, subscription) {
@@ -1476,7 +1541,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/topic-store.test.js
 ```
-Expected: PASS — 22 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -1679,7 +1744,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/topic-store.test.js
 ```
-Expected: PASS — 27 passing
+Expected: PASS, 0 failing — every test in this file green
 
 Run:
 ```bash

@@ -264,7 +264,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/delivery-limits.test.js
 ```
-Expected: PASS — 7 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Rewire the claim watcher**
 
@@ -336,7 +336,9 @@ describe('subscription rate caps', function() {
       topicId: 1,
       ownerUser: `user${id}`,
       deliveryType: 'discord',
-      deliveryConfig: { webhook_url: 'https://capped.test/api/webhooks/1/token' },
+      // Must be a real Discord host: deliver() validates against the allowlist
+      // BEFORE consulting the limiter, so an invented host never reaches the cap.
+      deliveryConfig: { webhook_url: `https://discord.com/api/webhooks/${id}/capped` },
       status: 'active'
     }
   }
@@ -352,8 +354,8 @@ describe('subscription rate caps', function() {
     let now = 1000
     const limiter = new SubscriptionLimiter({ max: 2, windowMs: 60000, now: () => now })
 
-    const scope = nock('https://capped.test')
-      .post(/.*/).query(true).times(2).reply(200, { id: '1' })
+    const scope = nock('https://discord.com')
+      .post('/api/webhooks/1/capped').query(true).times(2).reply(200, { id: '1' })
 
     for (let i = 0; i < 5; i++) {
       await deliverAll([sub(1)], payload(), { limiter })
@@ -415,7 +417,7 @@ describe('subscription rate caps', function() {
 
     let now = 1000
     const limiter = new SubscriptionLimiter({ max: 1, windowMs: 60000, now: () => now })
-    nock('https://capped.test').post(/.*/).query(true).reply(200, { id: '1' })
+    nock('https://discord.com').post(/.*/).query(true).reply(200, { id: '1' })
 
     await deliverAll([sub(1)], payload(), { limiter })
     const results = await deliverAll([sub(1)], payload(), { limiter })
@@ -432,7 +434,7 @@ describe('subscription rate caps', function() {
     let now = 1000
     const limiter = new SubscriptionLimiter({ max: 1, windowMs: 60000, now: () => now })
 
-    nock('https://capped.test').post(/.*/).query(true).reply(200, { id: '1' })
+    nock('https://discord.com').post(/.*/).query(true).reply(200, { id: '1' })
     await deliverAll([sub(1)], payload(), { limiter })
 
     await deliverAll([sub(1)], payload(), { limiter })
@@ -441,11 +443,11 @@ describe('subscription rate caps', function() {
     now += 60001
 
     let summaryBody = null
-    nock('https://capped.test').post(/.*/, body => {
+    nock('https://discord.com').post(/.*/, body => {
       summaryBody = String(JSON.stringify(body))
       return true
     }).query(true).reply(200, { id: '2' })
-    nock('https://capped.test').post(/.*/).query(true).reply(200, { id: '3' })
+    nock('https://discord.com').post(/.*/).query(true).reply(200, { id: '3' })
 
     await deliverAll([sub(1)], payload(), { limiter })
 
@@ -460,7 +462,7 @@ describe('subscription rate caps', function() {
     let now = 1000
     const limiter = new SubscriptionLimiter({ max: 1, windowMs: 60000, now: () => now })
 
-    const scope = nock('https://capped.test')
+    const scope = nock('https://discord.com')
       .post(/.*/).query(true).times(2).reply(200, { id: '1' })
 
     const results = await deliverAll([sub(1), sub(2)], payload(), { limiter })
@@ -473,7 +475,7 @@ describe('subscription rate caps', function() {
   it('delivers without a cap when no limiter is supplied', async function() {
     const { deliverAll } = require('../lib/subscription-delivery')
 
-    const scope = nock('https://capped.test')
+    const scope = nock('https://discord.com')
       .post(/.*/).query(true).times(3).reply(200, { id: '1' })
 
     for (let i = 0; i < 3; i++) {
@@ -594,7 +596,13 @@ async function postSummary(webhookUrl, missed) {
     allowed_mentions: { parse: [] }
   }
 
-  await fetch(`${webhookUrl}?wait=true`, {
+  // new URL rather than string concatenation, matching
+  // lib/discord-platform.js:251-252 - a stored webhook that already carries a
+  // query string would otherwise produce "...?x=1?wait=true".
+  const url = new URL(webhookUrl)
+  url.searchParams.set('wait', 'true')
+
+  await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -721,7 +729,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/fan-out.test.js
 ```
-Expected: PASS — 10 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -802,6 +810,7 @@ describe('subscription health', function() {
     assert.isFalse(tracker.record(2, { ok: false, permanent: true }))
   })
 })
+```
 
 Then create a **separate** file `test/subscription-quarantine.test.js` for the
 database-backed half. Keeping it out of `test/fan-out.test.js` matters: that file
@@ -1068,7 +1077,7 @@ Run:
 npm run test:db:start
 npx mocha --colors --reporter spec --exit test/fan-out.test.js
 ```
-Expected: PASS — 16 passing
+Expected: PASS, 0 failing — every test in this file green
 
 Run the full suite:
 ```bash

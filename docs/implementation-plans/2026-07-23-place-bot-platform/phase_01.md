@@ -381,7 +381,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/sparql.test.js
 ```
-Expected: PASS — 6 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Rewire the claim watcher to the shared helper**
 
@@ -644,7 +644,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/region.test.js
 ```
-Expected: PASS — 5 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -891,7 +891,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/region.test.js
 ```
-Expected: PASS — 9 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
@@ -1106,7 +1106,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/osm-boundary.test.js
 ```
-Expected: PASS — 4 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Write the failing test for the geo strategy**
 
@@ -1298,7 +1298,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/region.test.js test/osm-boundary.test.js
 ```
-Expected: PASS — 15 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 9: Commit**
 
@@ -1580,7 +1580,7 @@ Run:
 ```bash
 npx mocha --colors --reporter spec --exit test/region.test.js
 ```
-Expected: PASS — 18 passing
+Expected: PASS, 0 failing — every test in this file green
 
 **Step 5: Commit**
 
