@@ -445,7 +445,11 @@ describe('fan-out', function() {
       './lib/diff-image': {
         captureDiffImage: async () => {
           renderCount++
-          return { screenshot: screenshotPath, altText: 'alt', summary: 's', article: null }
+          // summary must be an object or null, never a string: the embed
+          // builder does summary.sentence.charAt(0) at
+          // lib/discord-platform.js:187, and a truthy string sends every
+          // delivery through that path with sentence undefined.
+          return { screenshot: screenshotPath, altText: 'alt', summary: null, article: null }
         }
       },
       './lib/geolocation': {
