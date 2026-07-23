@@ -265,6 +265,8 @@ function buildHtml(points, { midMedian }) {
   <input id="search" type="search" placeholder="filter by title...">
   <label>min significance <input id="minsig" type="range" min="65" max="100" value="65">
     <span id="minsigv">65</span></label>
+  <label>min views/yr <input id="minviews" type="range" min="0" max="70" value="0">
+    <span id="minviewsv">0</span></label>
   <span id="vias"></span>
   <span id="count"></span>
 </div>
@@ -409,14 +411,29 @@ for (const v of allVias) {
 
 const search = document.getElementById('search')
 const minsig = document.getElementById('minsig')
+const minviews = document.getElementById('minviews')
+// slider is log-scaled to match the axis: value 0-70 -> 10^(v/10), rounded
+// to a clean threshold so the label reads 0, 100, 1,000, 25,000...
+const viewsThreshold = () => {
+  if (+minviews.value === 0) return 0
+  const raw = Math.pow(10, +minviews.value / 10)
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
+  return Math.round(raw / mag) * mag
+}
 search.oninput = render
 minsig.oninput = () => { document.getElementById('minsigv').textContent = minsig.value; render() }
+minviews.oninput = () => {
+  document.getElementById('minviewsv').textContent = viewsThreshold().toLocaleString('en-US')
+  render()
+}
 
 function render() {
   const term = search.value.toLowerCase()
+  const minV = viewsThreshold()
   let shown = 0
   DATA.forEach((p, i) => {
     const ok = p.s >= +minsig.value &&
+      p.v >= minV &&
       activeQ.has(p.q) &&
       p.via.split(' ').some(v => activeVia.has(v)) &&
       (!term || p.t.toLowerCase().includes(term))
