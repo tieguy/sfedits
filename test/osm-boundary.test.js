@@ -281,12 +281,9 @@ describe('osm-boundary', function() {
       }]
     })
 
-    try {
-      await fetchBoundary('incomplete')
-      assert.fail('expected fetchBoundary to throw on unclosed ring')
-    } catch (error) {
-      assert.include(error.message, 'unclosed')
-    }
+    const err = await fetchBoundary('incomplete').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'unclosed')
   })
 
   it('rejects zero-area rings created by duplicate ways', async function() {
@@ -336,12 +333,55 @@ describe('osm-boundary', function() {
       }]
     })
 
-    try {
-      await fetchBoundary('degenerate')
-      assert.fail('expected fetchBoundary to throw on degenerate ring')
-    } catch (error) {
-      assert.include(error.message, 'unclosed')
-    }
+    const err = await fetchBoundary('degenerate').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'unclosed')
+  })
+
+  it('rejects zero-area rings with only 3 points', async function() {
+    // Two ways form a closed 3-point ring [[0,0],[1,1],[0,0]] which has zero area
+    // (a degenerate line segment). This must be rejected via the ring.length >= 4 guard.
+    // The test includes one valid square so we can verify the boundary has at least
+    // one valid ring and we're genuinely rejecting the zero-area one, not failing entirely.
+    nock(OVERPASS).post('/api/interpreter').reply(200, {
+      elements: [{
+        type: 'relation',
+        members: [
+          // Two ways that close into a degenerate 3-point ring [[0,0],[1,1],[0,0]]
+          {
+            type: 'way', role: 'outer',
+            geometry: [
+              { lat: 0, lon: 0 },
+              { lat: 1, lon: 1 }
+            ]
+          },
+          {
+            type: 'way', role: 'outer',
+            geometry: [
+              { lat: 1, lon: 1 },
+              { lat: 0, lon: 0 }
+            ]
+          },
+          // One valid square that should be accepted
+          {
+            type: 'way', role: 'outer',
+            geometry: [
+              { lat: 10, lon: 10 },
+              { lat: 11, lon: 10 },
+              { lat: 11, lon: 11 },
+              { lat: 10, lon: 11 },
+              { lat: 10, lon: 10 }
+            ]
+          }
+        ]
+      }]
+    })
+
+    const polygon = await fetchBoundary('zero-area-ring-test')
+    // Should have exactly one polygon (the valid square), not including the degenerate 3-point ring
+    assert.equal(polygon.geometry.type, 'Polygon')
+    const outerRing = polygon.geometry.coordinates[0]
+    assert.equal(outerRing.length, 5) // 4 corners + closing point
   })
 
   it('associates holes with the correct outer ring in a multipolygon', async function() {
@@ -429,24 +469,18 @@ describe('osm-boundary', function() {
       }]
     })
 
-    try {
-      await fetchBoundary('orphan-hole')
-      assert.fail('expected fetchBoundary to throw on orphan hole')
-    } catch (error) {
-      assert.include(error.message, 'hole not contained')
-    }
+    const err = await fetchBoundary('orphan-hole').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'hole not contained')
   })
 
   it('throws on non-200/non-429 Overpass response', async function() {
     nock(OVERPASS).post('/api/interpreter').reply(500, 'Server error')
 
-    try {
-      await fetchBoundary('999')
-      assert.fail('expected fetchBoundary to throw on 500')
-    } catch (error) {
-      assert.include(error.message, 'Overpass returned')
-      assert.include(error.message, '500')
-    }
+    const err = await fetchBoundary('999').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'Overpass returned')
+    assert.include(err.message, '500')
   })
 
   it('throws when relation exists but has no outer members', async function() {
@@ -470,15 +504,12 @@ describe('osm-boundary', function() {
       }]
     })
 
-    try {
-      await fetchBoundary('111')
-      assert.fail('expected fetchBoundary to throw on no outer members')
-    } catch (error) {
-      assert.include(error.message, 'no usable outer')
-    }
+    const err = await fetchBoundary('111').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'no usable outer')
   })
 
-  it('throws when stitchRings returns empty for outer ways', async function() {
+  it('throws when stitchRings cannot close an outer way', async function() {
     nock(OVERPASS).post('/api/interpreter').reply(200, {
       elements: [{
         type: 'relation',
@@ -496,22 +527,20 @@ describe('osm-boundary', function() {
       }]
     })
 
-    try {
-      await fetchBoundary('222')
-      assert.fail('expected fetchBoundary to throw on stitchRings failure')
-    } catch (error) {
-      assert.include(error.message, 'unclosed')
-    }
+    const err = await fetchBoundary('222').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'unclosed')
   })
 
   it('does not extend already-closed ways beyond their natural boundary', async function() {
     // Two completely separate closed ways; they should NOT merge even though
-    // they might touch at a corner. Each should form its own ring.
+    // they share an endpoint. Each should form its own ring. This is a critical test
+    // for the isClosed() guard that prevents stitching of already-closed ways.
     nock(OVERPASS).post('/api/interpreter').reply(200, {
       elements: [{
         type: 'relation',
         members: [
-          // Closed square 1
+          // Closed square 1: (0,0) to (1,0) to (1,1) to (0,1) back to (0,0)
           {
             type: 'way', role: 'outer',
             geometry: [
@@ -522,15 +551,16 @@ describe('osm-boundary', function() {
               { lat: 0, lon: 0 }
             ]
           },
-          // Closed square 2, sharing only corner (1,1) with square 1
+          // Closed square 2: starts/ends at (0,0), goes the opposite direction
+          // (-1,0) to (-1,-1) to (0,-1) back to (0,0)
           {
             type: 'way', role: 'outer',
             geometry: [
-              { lat: 1, lon: 1 },
-              { lat: 2, lon: 1 },
-              { lat: 2, lon: 2 },
-              { lat: 1, lon: 2 },
-              { lat: 1, lon: 1 }
+              { lat: 0, lon: 0 },
+              { lat: -1, lon: 0 },
+              { lat: -1, lon: -1 },
+              { lat: 0, lon: -1 },
+              { lat: 0, lon: 0 }
             ]
           }
         ]
@@ -546,5 +576,76 @@ describe('osm-boundary', function() {
       const ring = poly[0]
       assert.deepEqual(ring[0], ring[ring.length - 1], 'outer ring must be closed')
     }
+  })
+
+  it('drops a malformed inner way with a warning instead of aborting', async function() {
+    // A valid outer boundary plus one dangling 2-point inner way (uncloseable)
+    // Should gracefully drop the inner ring with a console.warn, not throw
+    const warnings = []
+    const originalWarn = console.warn
+    console.warn = msg => warnings.push(msg)
+
+    try {
+      nock(OVERPASS).post('/api/interpreter').reply(200, {
+        elements: [{
+          type: 'relation',
+          members: [
+            // Valid outer square
+            {
+              type: 'way', role: 'outer',
+              geometry: [
+                { lat: 0, lon: 0 },
+                { lat: 10, lon: 0 },
+                { lat: 10, lon: 10 },
+                { lat: 0, lon: 10 },
+                { lat: 0, lon: 0 }
+              ]
+            },
+            // Dangling inner way - cannot be closed
+            {
+              type: 'way', role: 'inner',
+              geometry: [
+                { lat: 2, lon: 2 },
+                { lat: 8, lon: 2 }
+              ]
+            }
+          ]
+        }]
+      })
+
+      const polygon = await fetchBoundary('inner-defect')
+
+      // Should succeed with just the valid outer ring, no inner ring
+      assert.equal(polygon.geometry.type, 'Polygon')
+      assert.equal(polygon.geometry.coordinates.length, 1, 'should have only outer ring, no inner rings')
+      // Should have warned about the malformed inner way
+      assert.equal(warnings.length, 1)
+      assert.include(warnings[0], 'unclosed inner ring')
+    } finally {
+      console.warn = originalWarn
+    }
+  })
+
+  it('still throws when an outer way cannot be closed', async function() {
+    // A dangling outer way should still throw immediately
+    nock(OVERPASS).post('/api/interpreter').reply(200, {
+      elements: [{
+        type: 'relation',
+        members: [
+          // Dangling outer way - cannot be closed
+          {
+            type: 'way', role: 'outer',
+            geometry: [
+              { lat: 0, lon: 0 },
+              { lat: 10, lon: 0 }
+            ]
+          }
+        ]
+      }]
+    })
+
+    const err = await fetchBoundary('bad-outer').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject for unclosed outer ring')
+    assert.include(err.message, 'unclosed outer ring')
   })
 })

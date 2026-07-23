@@ -17,8 +17,13 @@ function entity(qid) {
 describe('region', function() {
   this.timeout(5000)
 
+  beforeEach(function() {
+    nock.disableNetConnect()
+  })
+
   afterEach(function() {
     nock.cleanAll()
+    nock.enableNetConnect()
   })
 
   describe('parsePoint', function() {
@@ -84,54 +89,67 @@ describe('region', function() {
     })
 
     it('rejects a QID with trailing space', function() {
+      let err
       try {
         assertQid('Q62 ')
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
+      } catch (e) {
+        err = e
       }
+      assert.isNotNull(err, 'expected assertQid to throw')
+      assert.include(err.message, 'must look like "Q62"')
     })
 
     it('rejects a QID with leading zeros in the numeric part', function() {
+      let err1
       try {
         assertQid('Q0123')
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
+      } catch (e) {
+        err1 = e
       }
+      assert.isNotNull(err1, 'expected assertQid to throw')
+      assert.include(err1.message, 'must look like "Q62"')
+
+      let err2
       try {
         assertQid('Q0')
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
+      } catch (e) {
+        err2 = e
       }
+      assert.isNotNull(err2, 'expected assertQid to throw')
+      assert.include(err2.message, 'must look like "Q62"')
     })
 
     it('rejects a bare number', function() {
+      let err
       try {
         assertQid('62')
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
+      } catch (e) {
+        err = e
       }
+      assert.isNotNull(err, 'expected assertQid to throw')
+      assert.include(err.message, 'must look like "Q62"')
     })
 
     it('rejects lowercase q', function() {
+      let err
       try {
         assertQid('q62')
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
+      } catch (e) {
+        err = e
       }
+      assert.isNotNull(err, 'expected assertQid to throw')
+      assert.include(err.message, 'must look like "Q62"')
     })
 
     it('rejects non-string input', function() {
+      let err
       try {
         assertQid(123)
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
+      } catch (e) {
+        err = e
       }
+      assert.isNotNull(err, 'expected assertQid to throw')
+      assert.include(err.message, 'must look like "Q62"')
     })
   })
 
@@ -159,32 +177,38 @@ describe('region', function() {
     })
 
     it('rejects SPARQL injection attempts in language codes', function() {
+      let err
       try {
         assertLang('en" } UNION { ?item ?p ?o')
-        assert.fail('expected assertLang to throw')
-      } catch (error) {
-        assert.include(error.message, 'Wiki language code')
+      } catch (e) {
+        err = e
       }
+      assert.isNotNull(err, 'expected assertLang to throw')
+      assert.include(err.message, 'Wiki language code')
     })
 
     it('rejects language codes containing a space, leading or internal', function() {
       for (const bad of ['en ', 'e n', ' en']) {
+        let err
         try {
           assertLang(bad)
-          assert.fail(`expected assertLang to throw for ${JSON.stringify(bad)}`)
-        } catch (error) {
-          assert.include(error.message, 'Wiki language code')
+        } catch (e) {
+          err = e
         }
+        assert.isNotNull(err, `expected assertLang to throw for ${JSON.stringify(bad)}`)
+        assert.include(err.message, 'Wiki language code')
       }
     })
 
     it('rejects non-string input', function() {
+      let err
       try {
         assertLang(123)
-        assert.fail('expected assertLang to throw')
-      } catch (error) {
-        assert.include(error.message, 'Wiki language code')
+      } catch (e) {
+        err = e
       }
+      assert.isNotNull(err, 'expected assertLang to throw')
+      assert.include(err.message, 'Wiki language code')
     })
   })
 
@@ -192,12 +216,9 @@ describe('region', function() {
     it('rejects an invalid input QID before querying SPARQL', async function() {
       // This test proves assertQid is called; if removed, this test fails
       // No SPARQL mock is set up, so if assertQid is skipped, the test would hang/error differently
-      try {
-        await resolveRegion('62')
-        assert.fail('expected resolveRegion to throw for invalid QID')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
-      }
+      const err = await resolveRegion('62').then(() => null, e => e)
+      assert.isNotNull(err, 'expected resolveRegion to reject')
+      assert.include(err.message, 'must look like "Q62"')
     })
 
     it('classifies an administrative entity as the admin strategy', async function() {
@@ -252,13 +273,10 @@ describe('region', function() {
     it('throws a descriptive error when the QID is not a place', async function() {
       nock(WDQS).post('/sparql').reply(200, bindings([]))
 
-      try {
-        await resolveRegion('Q42')
-        assert.fail('expected resolveRegion to throw')
-      } catch (error) {
-        assert.include(error.message, 'Q42')
-        assert.include(error.message, 'not a usable place')
-      }
+      const err = await resolveRegion('Q42').then(() => null, e => e)
+      assert.isNotNull(err, 'expected resolveRegion to reject')
+      assert.include(err.message, 'Q42')
+      assert.include(err.message, 'not a usable place')
     })
 
     it('throws when a geo region has no coordinate to seed from', async function() {
@@ -266,12 +284,9 @@ describe('region', function() {
         { cls: entity('Q123705'), label: { value: 'Nowhere' } }
       ]))
 
-      try {
-        await resolveRegion('Q999')
-        assert.fail('expected resolveRegion to throw')
-      } catch (error) {
-        assert.include(error.message, 'no coordinate')
-      }
+      const err = await resolveRegion('Q999').then(() => null, e => e)
+      assert.isNotNull(err, 'expected resolveRegion to reject')
+      assert.include(err.message, 'no coordinate')
     })
 
     it('filters out bnode classes and resolves successfully with valid classes', async function() {
@@ -482,15 +497,12 @@ describe('region', function() {
     it('rejects an invalid language code', async function() {
       // This test proves languageFilter validates language codes before querying SPARQL
       // We need to mock subEntities, but the language validation error will occur first
-      try {
-        await articlesByAdmin(
-          { qid: 'Q62', strategy: 'admin' },
-          { languages: ['en" } UNION { ?item ?p ?o'] })
-        assert.fail('expected articlesByAdmin to throw for invalid language code')
-      } catch (error) {
-        // The validation error should occur during languageFilter construction
-        assert.include(error.message, 'Wiki language code')
-      }
+      const err = await articlesByAdmin(
+        { qid: 'Q62', strategy: 'admin' },
+        { languages: ['en" } UNION { ?item ?p ?o'] }).then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesByAdmin to reject')
+      // The validation error should occur during languageFilter construction
+      assert.include(err.message, 'Wiki language code')
     })
 
     it('never interpolates an unstrippable sub-entity into a query', async function() {
@@ -642,15 +654,13 @@ describe('region', function() {
         }
       ]))
 
-      const { DEFAULT_SEED_RADIUS_KM } = require('../lib/region')
-
       await articlesByGeo(
         { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
         { boundary: SQUARE, languages: ['en'] })
 
-      // Default radius should be used (from DEFAULT_SEED_RADIUS_KM)
+      // Default radius should be used (literal 5 km)
       assert.equal(sent.length, 1)
-      assert.include(sent[0], `wikibase:radius "${DEFAULT_SEED_RADIUS_KM}"`)
+      assert.include(sent[0], 'wikibase:radius "5"')
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
@@ -678,83 +688,62 @@ describe('region', function() {
     })
 
     it('throws when region has no boundary', async function() {
-      try {
-        await articlesByGeo(
-          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
-          {})
-        assert.fail('expected articlesByGeo to throw')
-      } catch (error) {
-        assert.include(error.message, 'boundary')
-      }
+      const err = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        {}).then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesByGeo to reject')
+      assert.include(err.message, 'boundary')
     })
 
     it('throws when region has no centroid', async function() {
-      try {
-        await articlesByGeo(
-          { qid: 'Q1917571', strategy: 'geo' },
-          { boundary: SQUARE })
-        assert.fail('expected articlesByGeo to throw')
-      } catch (error) {
-        assert.include(error.message, 'centroid')
-      }
+      const err = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo' },
+        { boundary: SQUARE }).then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesByGeo to reject')
+      assert.include(err.message, 'centroid')
     })
 
     it('validates radiusKm is a finite positive number', async function() {
-      try {
-        await articlesByGeo(
-          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
-          { boundary: SQUARE, radiusKm: -5 })
-        assert.fail('expected articlesByGeo to throw for negative radius')
-      } catch (error) {
-        assert.include(error.message, 'radius')
-      }
+      const err1 = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, radiusKm: -5 }).then(() => null, e => e)
+      assert.isNotNull(err1, 'expected articlesByGeo to reject for negative radius')
+      assert.include(err1.message, 'radius')
 
-      try {
-        await articlesByGeo(
-          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
-          { boundary: SQUARE, radiusKm: Infinity })
-        assert.fail('expected articlesByGeo to throw for infinite radius')
-      } catch (error) {
-        assert.include(error.message, 'radius')
-      }
+      const err2 = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, radiusKm: Infinity }).then(() => null, e => e)
+      assert.isNotNull(err2, 'expected articlesByGeo to reject for infinite radius')
+      assert.include(err2.message, 'radius')
     })
 
     it('validates the region QID before querying', async function() {
       // No SPARQL mock needed - validation must happen first
-      try {
-        await articlesByGeo(
-          { qid: '123', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
-          { boundary: SQUARE })
-        assert.fail('expected articlesByGeo to throw for invalid QID')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
-      }
+      const err = await articlesByGeo(
+        { qid: '123', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE }).then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesByGeo to reject')
+      assert.include(err.message, 'must look like "Q62"')
       // Verify nock.isDone() - no SPARQL request should have been made
       assert.isTrue(nock.isDone(), 'no SPARQL request should be made for invalid QID')
     })
 
     it('validates centroid coordinates are finite before querying SPARQL', async function() {
       // Centroid with Infinity should throw before SPARQL query
-      try {
-        await articlesByGeo(
-          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: Infinity, lat: 37.76 } },
-          { boundary: SQUARE })
-        assert.fail('expected articlesByGeo to throw for infinite centroid')
-      } catch (error) {
-        assert.include(error.message, 'centroid coordinates must be finite')
-      }
+      const err = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: Infinity, lat: 37.76 } },
+        { boundary: SQUARE }).then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesByGeo to reject')
+      assert.include(err.message, 'centroid coordinates must be finite')
       assert.isTrue(nock.isDone(), 'no SPARQL request should be made for invalid centroid')
     })
 
     it('validates centroid coordinates are finite (NaN)', async function() {
-      try {
-        await articlesByGeo(
-          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: NaN, lat: 37.76 } },
-          { boundary: SQUARE })
-        assert.fail('expected articlesByGeo to throw for NaN centroid')
-      } catch (error) {
-        assert.include(error.message, 'centroid coordinates must be finite')
-      }
+      const err = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: NaN, lat: 37.76 } },
+        { boundary: SQUARE }).then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesByGeo to reject')
+      assert.include(err.message, 'centroid coordinates must be finite')
       assert.isTrue(nock.isDone(), 'no SPARQL request should be made for NaN centroid')
     })
   })
