@@ -550,4 +550,159 @@ describe('region', function() {
       }
     })
   })
+
+  describe('articlesByGeo', function() {
+    const { articlesByGeo } = require('../lib/region')
+
+    const SQUARE = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[
+          [-122.43, 37.74], [-122.43, 37.78], [-122.39, 37.78],
+          [-122.39, 37.74], [-122.43, 37.74]
+        ]]
+      }
+    }
+
+    it('keeps candidates inside the polygon and drops those outside', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },      // inside
+          article: { value: 'https://en.wikipedia.org/wiki/Inside' },
+          lang: { value: 'en' }
+        },
+        {
+          item: entity('Q20'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.50 37.90)' },      // outside
+          article: { value: 'https://en.wikipedia.org/wiki/Outside' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const articles = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, languages: ['en'] })
+
+      assert.equal(articles.length, 1)
+      assert.equal(articles[0].title, 'Inside')
+      assert.equal(articles[0].source, 'geo')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('drops candidates with an unparseable coordinate', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'not a point' },
+          article: { value: 'https://en.wikipedia.org/wiki/Bogus' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const articles = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, languages: ['en'] })
+
+      assert.equal(articles.length, 0)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('rejects malformed sitelinks', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },
+          article: { value: 'not a valid URL' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const articles = await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, languages: ['en'] })
+
+      assert.equal(articles.length, 0)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('uses a default seed radius when radiusKm is omitted', async function() {
+      const sent = []
+      nock(WDQS).post('/sparql', body => {
+        sent.push(body.query)
+        return true
+      }).reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },
+          article: { value: 'https://en.wikipedia.org/wiki/Inside' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, languages: ['en'] })
+
+      // Default radius should be used (from DEFAULT_SEED_RADIUS_KM)
+      assert.equal(sent.length, 1)
+      assert.include(sent[0], 'wikibase:radius')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('throws when region has no boundary', async function() {
+      try {
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+          {})
+        assert.fail('expected articlesByGeo to throw')
+      } catch (error) {
+        assert.include(error.message, 'boundary')
+      }
+    })
+
+    it('throws when region has no centroid', async function() {
+      try {
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo' },
+          { boundary: SQUARE })
+        assert.fail('expected articlesByGeo to throw')
+      } catch (error) {
+        assert.include(error.message, 'centroid')
+      }
+    })
+
+    it('validates radiusKm is a finite positive number', async function() {
+      try {
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+          { boundary: SQUARE, radiusKm: -5 })
+        assert.fail('expected articlesByGeo to throw for negative radius')
+      } catch (error) {
+        assert.include(error.message, 'radius')
+      }
+
+      try {
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+          { boundary: SQUARE, radiusKm: Infinity })
+        assert.fail('expected articlesByGeo to throw for infinite radius')
+      } catch (error) {
+        assert.include(error.message, 'radius')
+      }
+    })
+
+    it('validates the region QID before querying', async function() {
+      try {
+        await articlesByGeo(
+          { qid: '123', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+          { boundary: SQUARE })
+        assert.fail('expected articlesByGeo to throw for invalid QID')
+      } catch (error) {
+        assert.include(error.message, 'must look like "Q62"')
+      }
+    })
+  })
 })
