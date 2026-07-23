@@ -25,6 +25,46 @@ Run `npm test`. Verify the *delta*, never an absolute number.
 Phase 1's live-data verification block (bottom of `phase_01.md`) has **not** been run
 yet — it needs Task 7's `articlesForRegion`. Do it before starting Phase 2.
 
+## BLOCKER: the per-sub-entity chunking is backwards at city scale
+
+Phase 1's live-data verification does not pass, and the reason is architectural, not a
+bug in the code. Measured against live WDQS on 2026-07-23:
+
+| | Result |
+|---|---|
+| `SELECT ?sub WHERE { ?sub wdt:P131 wd:Q62 }` | **2151 sub-entities** in 698 ms |
+| Unchunked whole-city histogram | **OK in 2.9 s** — 5240 cells, 8776 articles |
+| Unchunked whole-city `en` article list | **OK in 1.8 s** — 1903 rows |
+| Chunked, as the plan specifies | **2151 sequential queries** |
+
+`articlesByAdmin` and `regionHistogram` chunk on *every direct P131 child*. For a city
+that is every neighborhood, park, school and building — 2151 anchors, run sequentially.
+At even 1 s each that is 36 minutes; at the 9–27 s the plan itself cites for degraded
+WDQS it is 5–16 hours, and it would sit permanently over the 60 s-query-time-per-minute
+budget, so throttling and retries make it worse still.
+
+**The premise is inverted.** `phase_01.md:29` says "chunking is a correctness
+requirement, not an optimization." That was learned from the claim watcher, which chunks
+over **9 curated counties**. Chunking a city over its 2151 children is catastrophically
+worse than the single query, which finishes in under 3 seconds.
+
+The plan anticipated trouble here but predicted the wrong symptom — it says to check
+whether `partial` comes back true at city scale. The real failure is that the job never
+finishes.
+
+Secondary: the plan predicts "a histogram of a few hundred cells". Actual for SF is
+**5240 cells**. Phase 2 stores and Phase 4 serves these, so the sizing assumption
+downstream is off by ~10-20x.
+
+**This needs a design decision before Phase 2 builds on it.** Options, roughly:
+pick chunk anchors by *class* (chunk on the handful of admin sub-classes rather than all
+children); try unchunked first and fall back to chunking only on timeout; or chunk only
+above some scale threshold where the single query actually fails (state/country), which
+is where the original county-chunking intuition genuinely applies.
+
+Everything else in Phase 1 is done and green — this is the only thing standing between
+it and complete.
+
 ## Contracts added during review that the plan text does not describe
 
 These came out of code review, not the plan. Later tasks must use them.
