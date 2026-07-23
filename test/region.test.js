@@ -846,6 +846,33 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
+    it('sums a (class, language) cell that appears in more than one chunk', async function() {
+      // Chunks are per sub-entity, so the SAME (cls, lang) cell comes back once per
+      // chunk and must be MERGED, not listed twice or overwritten. The single-chunk
+      // test above cannot see this: with one chunk there is nothing to merge, so the
+      // merge step could be deleted entirely and it would still pass.
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { sub: entity('Q1111') },
+        { sub: entity('Q2222') }
+      ]))
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '120' } }
+      ]))
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '30' } },
+        { cls: entity('Q5'), lang: { value: 'en' }, count: { value: '7' } }
+      ]))
+
+      const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' })
+
+      assert.equal(histogram.cells.length, 2, 'Q515/en must appear as ONE merged cell')
+      const q515 = histogram.cells.find(c => c.cls === 'Q515' && c.lang === 'en')
+      assert.equal(q515.count, 150, '120 from one chunk + 30 from the other')
+      assert.equal(histogram.total, 157)
+      assert.isFalse(histogram.partial)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
     it('sums matching cells client-side with no further queries', function() {
       const histogram = {
         cells: [
