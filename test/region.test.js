@@ -89,7 +89,7 @@ describe('region', function() {
     })
 
     it('rejects a QID with trailing space', function() {
-      let err
+      let err = null
       try {
         assertQid('Q62 ')
       } catch (e) {
@@ -120,7 +120,7 @@ describe('region', function() {
     })
 
     it('rejects a bare number', function() {
-      let err
+      let err = null
       try {
         assertQid('62')
       } catch (e) {
@@ -131,7 +131,7 @@ describe('region', function() {
     })
 
     it('rejects lowercase q', function() {
-      let err
+      let err = null
       try {
         assertQid('q62')
       } catch (e) {
@@ -142,7 +142,7 @@ describe('region', function() {
     })
 
     it('rejects non-string input', function() {
-      let err
+      let err = null
       try {
         assertQid(123)
       } catch (e) {
@@ -177,7 +177,7 @@ describe('region', function() {
     })
 
     it('rejects SPARQL injection attempts in language codes', function() {
-      let err
+      let err = null
       try {
         assertLang('en" } UNION { ?item ?p ?o')
       } catch (e) {
@@ -189,7 +189,7 @@ describe('region', function() {
 
     it('rejects language codes containing a space, leading or internal', function() {
       for (const bad of ['en ', 'e n', ' en']) {
-        let err
+        let err = null
         try {
           assertLang(bad)
         } catch (e) {
@@ -201,7 +201,7 @@ describe('region', function() {
     })
 
     it('rejects non-string input', function() {
-      let err
+      let err = null
       try {
         assertLang(123)
       } catch (e) {

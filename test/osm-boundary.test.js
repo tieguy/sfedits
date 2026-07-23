@@ -236,23 +236,17 @@ describe('osm-boundary', function() {
   it('throws when the relation has no usable geometry', async function() {
     nock(OVERPASS).post('/api/interpreter').reply(200, { elements: [] })
 
-    try {
-      await fetchBoundary('404404')
-      assert.fail('expected fetchBoundary to throw')
-    } catch (error) {
-      assert.include(error.message, '404404')
-    }
+    const err = await fetchBoundary('404404').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, '404404')
   })
 
   it('surfaces Overpass quota exhaustion distinctly', async function() {
     nock(OVERPASS).post('/api/interpreter').reply(429, 'rate limited')
 
-    try {
-      await fetchBoundary('555')
-      assert.fail('expected fetchBoundary to throw')
-    } catch (error) {
-      assert.include(error.message, 'rate limit')
-    }
+    const err = await fetchBoundary('555').then(() => null, e => e)
+    assert.isNotNull(err, 'expected fetchBoundary to reject')
+    assert.include(err.message, 'rate limit')
   })
 
   it('throws when outer ways cannot be stitched into a closed ring', async function() {
@@ -611,10 +605,17 @@ describe('osm-boundary', function() {
                 { lat: 6, lon: 2 }, { lat: 2, lon: 2 }
               ]
             },
-            // Dangling: cannot be closed.
+            // Dangling MULTI-way inner chain: these two stitch to each other but the
+            // chain never closes. Multi-way (not a single short way) on purpose - it is
+            // the only fixture that reaches the multi-way inner branch rather than the
+            // degenerate ring.length < 3 one.
             {
               type: 'way', role: 'inner',
-              geometry: [{ lat: 20, lon: 20 }, { lat: 25, lon: 20 }]
+              geometry: [{ lat: 20, lon: 20 }, { lat: 20, lon: 25 }, { lat: 25, lon: 25 }]
+            },
+            {
+              type: 'way', role: 'inner',
+              geometry: [{ lat: 25, lon: 25 }, { lat: 25, lon: 20 }, { lat: 27, lon: 18 }]
             }
           ]
         }]
