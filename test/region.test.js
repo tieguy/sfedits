@@ -747,4 +747,107 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'no SPARQL request should be made for NaN centroid')
     })
   })
+
+  describe('regionHistogram', function() {
+    const { regionHistogram, countFromHistogram } = require('../lib/region')
+
+    it('returns class x language cells, not articles', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([]))      // sub-entities
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '120' } },
+        { cls: entity('Q5'), lang: { value: 'en' }, count: { value: '80' } },
+        { cls: entity('Q515'), lang: { value: 'es' }, count: { value: '30' } }
+      ]))
+
+      const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' })
+
+      assert.equal(histogram.cells.length, 3)
+      assert.deepEqual(histogram.cells[0], { cls: 'Q515', lang: 'en', count: 120 })
+      assert.equal(histogram.total, 230)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('sums matching cells client-side with no further queries', function() {
+      const histogram = {
+        cells: [
+          { cls: 'Q515', lang: 'en', count: 120 },
+          { cls: 'Q5', lang: 'en', count: 80 },
+          { cls: 'Q515', lang: 'es', count: 30 }
+        ],
+        total: 230
+      }
+
+      assert.equal(
+        countFromHistogram(histogram, { classes: ['Q515'], languages: ['en'] }), 120)
+      assert.equal(
+        countFromHistogram(histogram, { classes: ['Q515'], languages: ['en', 'es'] }), 150)
+      assert.equal(
+        countFromHistogram(histogram, { classes: ['Q515', 'Q5'], languages: ['en'] }), 200)
+      assert.equal(countFromHistogram(histogram, {}), 230)
+    })
+
+    it('buckets the polygon-filtered list for a geo region', async function() {
+      const SQUARE = {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            [-122.43, 37.74], [-122.43, 37.78], [-122.39, 37.78],
+            [-122.39, 37.74], [-122.43, 37.74]
+          ]]
+        }
+      }
+
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },      // inside
+          article: { value: 'https://en.wikipedia.org/wiki/Inside' },
+          lang: { value: 'en' }
+        },
+        {
+          item: entity('Q20'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.50 37.90)' },      // outside
+          article: { value: 'https://en.wikipedia.org/wiki/Outside' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const histogram = await regionHistogram(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, languages: ['en'] })
+
+      assert.equal(histogram.total, 1,
+        'the count must respect the polygon, not the radius seed')
+      assert.deepEqual(histogram.cells, [{ cls: 'Q515', lang: 'en', count: 1 }])
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('refuses a geo histogram with no boundary', async function() {
+      const err = await regionHistogram(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } }, {})
+        .then(() => null, e => e)
+      assert.isNotNull(err, 'expected regionHistogram to reject')
+      assert.include(err.message, 'boundary')
+    })
+
+    it('marks the histogram partial when a chunk fails', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { sub: entity('Q1111') },
+        { sub: entity('Q2222') }
+      ]))
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '10' } }
+      ]))
+      nock(WDQS).post('/sparql').times(3).reply(500, 'Query timeout limit reached')
+
+      const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' },
+        { retries: 2, retryDelayMs: 0 })
+
+      assert.isTrue(histogram.partial)
+      assert.equal(histogram.total, 10)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+  })
 })
