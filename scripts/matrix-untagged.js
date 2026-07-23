@@ -248,6 +248,11 @@ function buildHtml(points, { midMedian }) {
   #count { color: #555; }
   .legend { display: flex; gap: .8rem; flex-wrap: wrap; font-size: .8rem; margin: .4rem 0; }
   .legend span::before { content: '●'; margin-right: .25rem; }
+  .quads { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem 1.2rem;
+    margin: 1rem 0; font-size: .85rem; max-width: 60rem; }
+  .quads div { border-left: 3px solid #ccc; padding: .2rem .8rem; }
+  .quads b { display: block; margin-bottom: .15rem; }
+  .quads .ex { color: #555; }
 </style>
 </head>
 <body>
@@ -267,6 +272,30 @@ function buildHtml(points, { midMedian }) {
 <div id="chart-wrap">
   <svg id="chart" viewBox="0 0 960 560"></svg>
   <div id="tip"></div>
+</div>
+<div class="quads">
+  <div><b>↖ Quiet infrastructure (high significance, low readership)</b>
+    Deeply Bay-Area-central but rarely read - civic bodies, historical
+    neighborhoods, local landmarks. Tagging is uncontroversial; most enter at
+    Low or Mid importance.
+    <span class="ex">Examples: Sausalito Ferry Terminal (96.2 significance,
+    1.8k views/yr) · Heinlenville, San Jose's former Chinatown (95.8, 1.2k).</span></div>
+  <div><b>↗ Tag first (high significance, high readership)</b>
+    Strongly connected and widely read - the clearest omissions from the
+    task force, worth tagging and rating individually.
+    <span class="ex">Examples: U.S. Court of Appeals for the Ninth Circuit
+    (84.7 significance, 196k views/yr) · Hoover Institution (86.5, 176k).</span></div>
+  <div><b>↙ Lower priority (low significance, low readership)</b>
+    Real but thin Bay Area connections on quiet articles. Fine to tag in
+    bulk sweeps later, or skip.
+    <span class="ex">Examples: Ray Kremer, 1920s Oakland-born pitcher
+    (65.5, 1.3k) · Afara Websystems, acquired Sunnyvale startup (65.5, 1.5k).</span></div>
+  <div><b>↘ Scrutinize: popular but peripheral? (low significance, high readership)</b>
+    Famous topics whose Bay Area connection is real but narrow - a human
+    should judge whether the tag helps the project before adding it.
+    <span class="ex">Examples: Warren G. Harding, who died at SF's Palace
+    Hotel (65.6 significance, 1.4M views/yr) · Jensen Huang, Nvidia CEO
+    (68.9, 3.0M).</span></div>
 </div>
 <script>
 const DATA = ${JSON.stringify(points)};
