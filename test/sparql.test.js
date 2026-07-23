@@ -121,7 +121,7 @@ describe('sparql', function() {
       let errorLogged = false
       const originalError = console.error
       console.error = function(msg) {
-        errorLogged = msg.includes('SPARQL chunk Q62 failed')
+        errorLogged = errorLogged || msg.includes('SPARQL chunk Q62 failed')
       }
 
       try {
