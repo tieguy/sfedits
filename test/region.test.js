@@ -43,10 +43,19 @@ describe('region', function() {
       assert.deepEqual(result, { lon: 12.5, lat: -3.25 })
     })
 
-    it('returns null for a point with NaN coordinates', function() {
-      // This would happen if we parsed something like "Point(1.2.3 4)" with the old regex
-      // The new regex and isFinite check prevent this from returning {lon: NaN, lat: 4}
+    it('returns null for malformed coordinates (tight regex prevents parsing)', function() {
+      // "Point(1.2.3 4)" has a malformed longitude with two decimal points.
+      // The tight regex /(-?\d+(?:\.\d+)?)/ will not match "1.2.3", so the entire
+      // regex fails and we return null. This test kills the mutation of the regex alone.
       const result = parsePoint('Point(1.2.3 4)')
+      assert.isNull(result)
+    })
+
+    it('returns null for float overflow (Number.isFinite guards absurdly long literals)', function() {
+      // An extremely long numeric literal like 999...999 (400 nines) overflows to Infinity.
+      // The tight regex matches it successfully (it's still just digits), but Number.isFinite
+      // rejects the overflow. This test kills the mutation of Number.isFinite removal alone.
+      const result = parsePoint('Point(' + '9'.repeat(400) + ' 4)')
       assert.isNull(result)
     })
 
@@ -73,9 +82,24 @@ describe('region', function() {
       assert.equal(assertQid('Q123456789'), 'Q123456789')
     })
 
-    it('rejects a QID with leading zeros', function() {
+    it('rejects a QID with trailing space', function() {
       try {
         assertQid('Q62 ')
+        assert.fail('expected assertQid to throw')
+      } catch (error) {
+        assert.include(error.message, 'must look like "Q62"')
+      }
+    })
+
+    it('rejects a QID with leading zeros in the numeric part', function() {
+      try {
+        assertQid('Q0123')
+        assert.fail('expected assertQid to throw')
+      } catch (error) {
+        assert.include(error.message, 'must look like "Q62"')
+      }
+      try {
+        assertQid('Q0')
         assert.fail('expected assertQid to throw')
       } catch (error) {
         assert.include(error.message, 'must look like "Q62"')
@@ -100,14 +124,6 @@ describe('region', function() {
       }
     })
 
-    it('rejects Q0', function() {
-      try {
-        assertQid('Q0')
-        assert.fail('expected assertQid to throw')
-      } catch (error) {
-        assert.include(error.message, 'must look like "Q62"')
-      }
-    })
 
     it('rejects non-string input', function() {
       try {
@@ -129,12 +145,26 @@ describe('region', function() {
       assert.equal(assertLang('pt-BR'), 'pt-BR')
     })
 
-    it('rejects an invalid language code', function() {
+    it('accepts Wikipedia language codes like "simple" and "tokipona"', function() {
+      assert.equal(assertLang('simple'), 'simple')
+      assert.equal(assertLang('tokipona'), 'tokipona')
+    })
+
+    it('rejects SPARQL injection attempts in language codes', function() {
       try {
         assertLang('en" } UNION { ?item ?p ?o')
         assert.fail('expected assertLang to throw')
       } catch (error) {
-        assert.include(error.message, 'BCP 47')
+        assert.include(error.message, 'Wiki language code')
+      }
+    })
+
+    it('rejects language codes with spaces', function() {
+      try {
+        assertLang('en ')
+        assert.fail('expected assertLang to throw')
+      } catch (error) {
+        assert.include(error.message, 'Wiki language code')
       }
     })
 
@@ -143,7 +173,7 @@ describe('region', function() {
         assertLang(123)
         assert.fail('expected assertLang to throw')
       } catch (error) {
-        assert.include(error.message, 'BCP 47')
+        assert.include(error.message, 'Wiki language code')
       }
     })
   })
@@ -232,6 +262,28 @@ describe('region', function() {
       } catch (error) {
         assert.include(error.message, 'no coordinate')
       }
+    })
+
+    it('filters out bnode classes and resolves successfully with valid classes', async function() {
+      // Simulate WDQS returning a bnode (from an "unknown value" snak) alongside a valid class
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          cls: { value: 'http://www.wikidata.org/.well-known/genid/t123456' }, // bnode, not a real entity
+          label: { value: 'San Francisco' }
+        },
+        {
+          cls: entity('Q62049'),  // consolidated city-county, valid
+          label: { value: 'San Francisco' },
+          coord: { value: 'Point(-122.4194 37.7749)' }
+        }
+      ]))
+
+      const region = await resolveRegion('Q62')
+
+      // Should resolve successfully using only the valid Q62049 class
+      assert.equal(region.qid, 'Q62')
+      assert.equal(region.strategy, 'admin')
+      assert.deepEqual(region.classes, ['Q62049'])
     })
   })
 
@@ -427,8 +479,45 @@ describe('region', function() {
         assert.fail('expected articlesByAdmin to throw for invalid language code')
       } catch (error) {
         // The validation error should occur during languageFilter construction
-        assert.include(error.message, 'BCP 47')
+        assert.include(error.message, 'Wiki language code')
       }
+    })
+
+    it('filters out unstrippable sub-entities and queries remaining valid anchors', async function() {
+      // Simulate subEntities returning a mix of valid QIDs and unstrippable values
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { sub: { value: 'http://www.wikidata.org/.well-known/genid/abc123' } }, // genid, not a real entity
+        { sub: entity('Q1111') },  // valid sub-entity
+        { sub: entity('Q2222') }   // valid sub-entity
+      ]))
+      // Queries for the two valid sub-entities
+      nock(WDQS).post('/sparql', body =>
+        body.query.includes('wd:Q1111')
+      ).reply(200, bindings([
+        {
+          item: entity('Q10'),
+          cls: entity('Q515'),
+          article: { value: 'https://en.wikipedia.org/wiki/Alpha' },
+          lang: { value: 'en' }
+        }
+      ]))
+      nock(WDQS).post('/sparql', body =>
+        body.query.includes('wd:Q2222')
+      ).reply(200, bindings([
+        {
+          item: entity('Q20'),
+          cls: entity('Q515'),
+          article: { value: 'https://en.wikipedia.org/wiki/Beta' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const articles = await articlesByAdmin(
+        { qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
+
+      // Both valid sub-entities should have been queried and results returned
+      assert.equal(articles.length, 2)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
   })
 })
