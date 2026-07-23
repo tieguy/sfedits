@@ -181,6 +181,14 @@ describe('public-server', function() {
       assert.isOk(data.repository)
     })
 
+    it('GET /matrix serves the committed triage-matrix snapshot', async function() {
+      const res = await fetch(`${base}/matrix`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      assert.include(html, 'triage matrix')
+      assert.include(html, 'Data snapshot:')
+    })
+
     it('GET / returns 503 when topics have not loaded yet', async function() {
       const saved = app.locals.topics
       app.locals.topics = null

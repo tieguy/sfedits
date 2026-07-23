@@ -211,14 +211,16 @@ function stageHtml() {
     op: c.otherProjects
   }))
 
-  const html = buildHtml(points, { midMedian })
+  // stamp the page with when the DATA was fetched, not when html was rebuilt
+  const snapshot = fs.statSync(cachePath('views')).mtime.toISOString().slice(0, 10)
+  const html = buildHtml(points, { midMedian, snapshot })
   const out = path.join(DATA_DIR, 'matrix-untagged.html')
   fs.writeFileSync(out, html)
   console.log(`  wrote ${out} (${points.length} points)`)
   return null
 }
 
-function buildHtml(points, { midMedian }) {
+function buildHtml(points, { midMedian, snapshot }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -260,7 +262,9 @@ function buildHtml(points, { midMedian }) {
 <div class="sub">${points.length} enwiki articles structurally connected to the Bay Area on
   Wikidata, untagged by the task force, all scoring above the tagged Mid-tier median
   significance (${(100 * midMedian).toFixed(1)}). x = pageviews/year (log), y = SF-significance.
-  Color = best quality class from other WikiProjects. Hover for details, click to open.</div>
+  Color = best quality class from other WikiProjects. Hover for details, click to open.
+  <b>Data snapshot: ${snapshot}</b> - a point-in-time analysis, not a live view; articles
+  leave this page as they get tagged.</div>
 <div class="controls">
   <input id="search" type="search" placeholder="filter by title...">
   <label>min significance <input id="minsig" type="range" min="65" max="100" value="65">
@@ -299,6 +303,8 @@ function buildHtml(points, { midMedian }) {
     Hotel (65.6 significance, 1.4M views/yr) · Jensen Huang, Nvidia CEO
     (68.9, 3.0M).</span></div>
 </div>
+<div class="sub">Part of <a href="/">San Francisco Edit Stream</a> · methodology
+  described on the SFBA task force talk page</div>
 <script>
 const DATA = ${JSON.stringify(points)};
 const QCOLOR = { fa: '#7b3fa0', fl: '#7b3fa0', a: '#2456a5', ga: '#2e7d32', b: '#4d94c9',
