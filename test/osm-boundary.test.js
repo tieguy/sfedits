@@ -4,6 +4,11 @@ const nock = require('nock')
 
 const { fetchBoundary } = require('../lib/osm-boundary')
 
+// Turf v7 ships dual ESM/CJS builds; under require() the function is on .default
+// in some resolutions and bare in others.
+const turfPip = require('@turf/boolean-point-in-polygon')
+const booleanPointInPolygon = typeof turfPip === 'function' ? turfPip : turfPip.default
+
 const OVERPASS = 'https://overpass-api.de'
 
 describe('osm-boundary', function() {
@@ -575,6 +580,60 @@ describe('osm-boundary', function() {
     for (const poly of polygon.geometry.coordinates) {
       const ring = poly[0]
       assert.deepEqual(ring[0], ring[ring.length - 1], 'outer ring must be closed')
+    }
+  })
+
+  it('drops only the malformed hole, keeping holes that stitched cleanly', async function() {
+    // An earlier revision threw in-loop for an unclosable inner ring and returned [],
+    // which discarded every hole already stitched rather than just the bad one. A
+    // region with two enclaves would silently lose the good one too.
+    const warnings = []
+    const originalWarn = console.warn
+    console.warn = msg => warnings.push(msg)
+
+    try {
+      nock(OVERPASS).post('/api/interpreter').reply(200, {
+        elements: [{
+          type: 'relation',
+          members: [
+            {
+              type: 'way', role: 'outer',
+              geometry: [
+                { lat: 0, lon: 0 }, { lat: 0, lon: 30 }, { lat: 30, lon: 30 },
+                { lat: 30, lon: 0 }, { lat: 0, lon: 0 }
+              ]
+            },
+            // A perfectly good hole, listed BEFORE the broken one.
+            {
+              type: 'way', role: 'inner',
+              geometry: [
+                { lat: 2, lon: 2 }, { lat: 2, lon: 6 }, { lat: 6, lon: 6 },
+                { lat: 6, lon: 2 }, { lat: 2, lon: 2 }
+              ]
+            },
+            // Dangling: cannot be closed.
+            {
+              type: 'way', role: 'inner',
+              geometry: [{ lat: 20, lon: 20 }, { lat: 25, lon: 20 }]
+            }
+          ]
+        }]
+      })
+
+      const polygon = await fetchBoundary('mixed-holes')
+
+      assert.equal(polygon.geometry.type, 'Polygon')
+      assert.equal(polygon.geometry.coordinates.length, 2,
+        'outer ring plus the ONE hole that stitched cleanly')
+      // The surviving hole must actually work as a hole.
+      assert.isFalse(booleanPointInPolygon([4, 4], polygon),
+        'a point inside the good hole must be excluded')
+      assert.isTrue(booleanPointInPolygon([15, 15], polygon),
+        'a point in the interior but outside any hole must be included')
+      assert.equal(warnings.length, 1, 'exactly one warning, for the broken hole')
+      assert.include(warnings[0], 'inner')
+    } finally {
+      console.warn = originalWarn
     }
   })
 
