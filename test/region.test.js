@@ -642,13 +642,38 @@ describe('region', function() {
         }
       ]))
 
+      const { DEFAULT_SEED_RADIUS_KM } = require('../lib/region')
+
       await articlesByGeo(
         { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
         { boundary: SQUARE, languages: ['en'] })
 
       // Default radius should be used (from DEFAULT_SEED_RADIUS_KM)
       assert.equal(sent.length, 1)
-      assert.include(sent[0], 'wikibase:radius')
+      assert.include(sent[0], `wikibase:radius "${DEFAULT_SEED_RADIUS_KM}"`)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('uses an explicit radius when radiusKm is provided', async function() {
+      const sent = []
+      nock(WDQS).post('/sparql', body => {
+        sent.push(body.query)
+        return true
+      }).reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },
+          article: { value: 'https://en.wikipedia.org/wiki/Inside' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      await articlesByGeo(
+        { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+        { boundary: SQUARE, languages: ['en'], radiusKm: 12 })
+
+      assert.equal(sent.length, 1)
+      assert.include(sent[0], 'wikibase:radius "12"')
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
@@ -695,6 +720,7 @@ describe('region', function() {
     })
 
     it('validates the region QID before querying', async function() {
+      // No SPARQL mock needed - validation must happen first
       try {
         await articlesByGeo(
           { qid: '123', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
@@ -703,6 +729,33 @@ describe('region', function() {
       } catch (error) {
         assert.include(error.message, 'must look like "Q62"')
       }
+      // Verify nock.isDone() - no SPARQL request should have been made
+      assert.isTrue(nock.isDone(), 'no SPARQL request should be made for invalid QID')
+    })
+
+    it('validates centroid coordinates are finite before querying SPARQL', async function() {
+      // Centroid with Infinity should throw before SPARQL query
+      try {
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: Infinity, lat: 37.76 } },
+          { boundary: SQUARE })
+        assert.fail('expected articlesByGeo to throw for infinite centroid')
+      } catch (error) {
+        assert.include(error.message, 'centroid coordinates must be finite')
+      }
+      assert.isTrue(nock.isDone(), 'no SPARQL request should be made for invalid centroid')
+    })
+
+    it('validates centroid coordinates are finite (NaN)', async function() {
+      try {
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: NaN, lat: 37.76 } },
+          { boundary: SQUARE })
+        assert.fail('expected articlesByGeo to throw for NaN centroid')
+      } catch (error) {
+        assert.include(error.message, 'centroid coordinates must be finite')
+      }
+      assert.isTrue(nock.isDone(), 'no SPARQL request should be made for NaN centroid')
     })
   })
 })
