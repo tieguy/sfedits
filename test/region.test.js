@@ -748,6 +748,85 @@ describe('region', function() {
     })
   })
 
+  describe('articlesForRegion', function() {
+    const { articlesForRegion } = require('../lib/region')
+
+    it('takes the admin path for an administrative region', async function() {
+      // resolveRegion
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        { cls: entity('Q62049'), label: { value: 'San Francisco' } }
+      ]))
+      // subEntities
+      nock(WDQS).post('/sparql').reply(200, bindings([]))
+      // closure
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          article: { value: 'https://en.wikipedia.org/wiki/Alpha' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const result = await articlesForRegion('Q62', { languages: ['en'] })
+
+      assert.equal(result.region.strategy, 'admin')
+      assert.equal(result.articles.length, 1)
+      assert.equal(result.articles[0].source, 'admin')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('fetches a boundary and takes the geo path for a neighborhood', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          cls: entity('Q123705'), label: { value: 'Mission District' },
+          osm: { value: '2222222' },
+          coord: { value: 'Point(-122.41 37.76)' }
+        }
+      ]))
+      nock('https://overpass-api.de').post('/api/interpreter').reply(200, {
+        elements: [{
+          type: 'relation',
+          members: [{
+            type: 'way', role: 'outer',
+            geometry: [
+              { lat: 37.74, lon: -122.43 }, { lat: 37.78, lon: -122.43 },
+              { lat: 37.78, lon: -122.39 }, { lat: 37.74, lon: -122.39 }
+            ]
+          }]
+        }]
+      })
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },
+          article: { value: 'https://en.wikipedia.org/wiki/Inside' },
+          lang: { value: 'en' }
+        }
+      ]))
+
+      const result = await articlesForRegion('Q1917571', { languages: ['en'] })
+
+      assert.equal(result.region.strategy, 'geo')
+      assert.equal(result.articles.length, 1)
+      assert.equal(result.articles[0].source, 'geo')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('refuses the geo strategy when the region has no OSM boundary', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          cls: entity('Q123705'), label: { value: 'Vague Place' },
+          coord: { value: 'Point(-122.41 37.76)' }
+        }
+      ]))
+
+      const err = await articlesForRegion('Q999', { languages: ['en'] })
+        .then(() => null, e => e)
+      assert.isNotNull(err, 'expected articlesForRegion to reject')
+      assert.include(err.message, 'no OSM boundary')
+    })
+  })
+
   describe('regionHistogram', function() {
     const { regionHistogram, countFromHistogram } = require('../lib/region')
 
