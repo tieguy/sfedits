@@ -15,55 +15,53 @@ Nothing has been pushed. All commits are local.
 | 1 | 3 — region descriptor | done |
 | 1 | 4 — admin containment | done |
 | 1 | 5 — geo containment | done |
-| 1 | 6 — count histogram | **next** |
-| 1 | 7 — strategy dispatch | not started |
+| 1 | 6 — count histogram | done |
+| 1 | 7 — strategy dispatch | done |
+| 1 | chunking → unchunked + size guard | **done, live-verified** |
 | 2–5 | all | not started |
 
-Test suite: **244 at baseline → 327 passing, 1 pending, 0 failing.**
+Test suite: **334 passing, 1 pending, 0 failing** (2026-07-24).
 Run `npm test`. Verify the *delta*, never an absolute number.
 
-Phase 1's live-data verification block (bottom of `phase_01.md`) has **not** been run
-yet — it needs Task 7's `articlesForRegion`. Do it before starting Phase 2.
+Phase 1's live-data verification has now been **run and passes** — see below. Phase 1 is
+complete; Phase 2 can start.
 
-## BLOCKER: the per-sub-entity chunking is backwards at city scale
+## RESOLVED (2026-07-24): chunking replaced by unchunked query + size guard
 
-Phase 1's live-data verification does not pass, and the reason is architectural, not a
-bug in the code. Measured against live WDQS on 2026-07-23:
+The city-scale blocker below turned out to be moot once the *actual* first use cases were
+measured live. New Zealand (Q664) — the flagship small-country case — runs its whole
+P131* closure in one query in ~4–5 s; the catastrophic 2151-query case was SF-*as-a-city*,
+which is out of scope (so is the USA). So `articlesByAdmin` and `regionHistogram` no
+longer chunk on sub-entities at all: **one unchunked query anchored at `region.qid`**,
+and a WDQS **timeout is translated into a clear "region too large / out of scope" error**
+(`runRegionQuery` + `isTimeout` in `lib/region.js`). No magic ceiling — the USA closure
+cannot even be *counted* inside 60 s, so a timeout is itself the scale signal.
 
+`subEntities()` and the `onChunkError` option were removed (dead after this change).
+`sparqlChunked` stays in `lib/sparql.js` with its tests but is now unused — kept as the
+documented claim-watcher chunking pattern per Louie's "chunk machinery stays" call.
+
+Live verification 2026-07-24, through the real code path:
 | | Result |
 |---|---|
-| `SELECT ?sub WHERE { ?sub wdt:P131 wd:Q62 }` | **2151 sub-entities** in 698 ms |
-| Unchunked whole-city histogram | **OK in 2.9 s** — 5240 cells, 8776 articles |
-| Unchunked whole-city `en` article list | **OK in 1.8 s** — 1903 rows |
-| Chunked, as the plan specifies | **2151 sequential queries** |
+| `resolveRegion(Q664)` | admin strategy |
+| `regionHistogram(NZ)` | 10,398 cells, total 58,657, partial=false, **5.1 s** |
+| `articlesForRegion(Q664, en)` | 7,985 articles, **5.2 s** |
+| `articlesByAdmin(Q30 / USA)` | throws the scope error after 60 s ✓ |
 
-`articlesByAdmin` and `regionHistogram` chunk on *every direct P131 child*. For a city
-that is every neighborhood, park, school and building — 2151 anchors, run sequentially.
-At even 1 s each that is 36 minutes; at the 9–27 s the plan itself cites for degraded
-WDQS it is 5–16 hours, and it would sit permanently over the 60 s-query-time-per-minute
-budget, so throttling and retries make it worse still.
+Decisions recorded in Claude memory: `place-bot-region-scale-scope` (updated) and
+`place-bot-neighborhood-boundary` (new).
 
-**The premise is inverted.** `phase_01.md:29` says "chunking is a correctness
-requirement, not an optimization." That was learned from the claim watcher, which chunks
-over **9 curated counties**. Chunking a city over its 2151 children is catastrophically
-worse than the single query, which finishes in under 3 seconds.
+**Still open for Phase 2 (downstream sizing):** the histogram is ~10k cells for NZ, not
+"a few hundred" as the plan predicted. Phase 2 storage and Phase 4 serving must size for
+10^4 cells, not 10^2.
 
-The plan anticipated trouble here but predicted the wrong symptom — it says to check
-whether `partial` comes back true at city scale. The real failure is that the job never
-finishes.
-
-Secondary: the plan predicts "a histogram of a few hundred cells". Actual for SF is
-**5240 cells**. Phase 2 stores and Phase 4 serves these, so the sizing assumption
-downstream is off by ~10-20x.
-
-**This needs a design decision before Phase 2 builds on it.** Options, roughly:
-pick chunk anchors by *class* (chunk on the handful of admin sub-classes rather than all
-children); try unchunked first and fall back to chunking only on timeout; or chunk only
-above some scale threshold where the single query actually fails (state/country), which
-is where the original county-chunking intuition genuinely applies.
-
-Everything else in Phase 1 is done and green — this is the only thing standing between
-it and complete.
+**Separate gated track — the Mission District has no OSM boundary.** The flagship
+neighborhood (Q7469) is a *point* in OSM (no P402, no relation; Nominatim has no polygon
+either), so the geo strategy's boundary filter has no data. Louie chose to **contribute a
+boundary to OSM** — an outward-facing data task to prepare-and-present before editing, not
+a code change (the geo path already works once P402 + a relation exist). Do **not** block
+Phase 2 / NZ on it. See `place-bot-neighborhood-boundary` memory.
 
 ## Contracts added during review that the plan text does not describe
 

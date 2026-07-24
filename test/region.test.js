@@ -313,22 +313,15 @@ describe('region', function() {
   })
 
   describe('articlesByAdmin', function() {
-    it('returns one article row per sitelink, chunked by sub-entity', async function() {
-      // chunk discovery query
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: entity('Q1111') },
-        { sub: entity('Q2222') }
-      ]))
-      // one closure query per chunk
-      nock(WDQS).post('/sparql').reply(200, bindings([
+    it('returns article rows from a single unchunked query anchored at the region', async function() {
+      const sent = []
+      nock(WDQS).post('/sparql', body => { sent.push(body.query); return true }).reply(200, bindings([
         {
           item: entity('Q10'),
           cls: entity('Q515'),
           article: { value: 'https://en.wikipedia.org/wiki/Alpha' },
           lang: { value: 'en' }
-        }
-      ]))
-      nock(WDQS).post('/sparql').reply(200, bindings([
+        },
         {
           item: entity('Q20'),
           cls: entity('Q5'),
@@ -338,9 +331,11 @@ describe('region', function() {
       ]))
 
       const articles = await articlesByAdmin(
-        { qid: 'Q62', label: 'San Francisco', strategy: 'admin' },
+        { qid: 'Q664', label: 'New Zealand', strategy: 'admin' },
         { languages: ['en', 'es'] })
 
+      assert.equal(sent.length, 1, 'exactly one query - no per-sub-entity chunking')
+      assert.include(sent[0], 'wd:Q664', 'the closure is anchored at the region itself')
       assert.equal(articles.length, 2)
       assert.deepEqual(articles[0], {
         qid: 'Q10',
@@ -356,7 +351,6 @@ describe('region', function() {
     })
 
     it('decodes percent-encoded and underscored titles', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([]))
       nock(WDQS).post('/sparql').reply(200, bindings([
         {
           item: entity('Q30'),
@@ -373,19 +367,14 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('deduplicates an item reachable through two sub-entities', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: entity('Q1111') },
-        { sub: entity('Q2222') }
-      ]))
+    it('deduplicates an item that appears more than once in the result set', async function() {
       const dupe = {
         item: entity('Q10'),
         cls: entity('Q515'),
         article: { value: 'https://en.wikipedia.org/wiki/Alpha' },
         lang: { value: 'en' }
       }
-      nock(WDQS).post('/sparql').reply(200, bindings([dupe]))
-      nock(WDQS).post('/sparql').reply(200, bindings([dupe]))
+      nock(WDQS).post('/sparql').reply(200, bindings([dupe, dupe]))
 
       const articles = await articlesByAdmin(
         { qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
@@ -394,28 +383,7 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('queries the region directly when it has no sub-entities', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([]))
-      nock(WDQS).post('/sparql', body =>
-        body.query.includes('wd:Q1917571')
-      ).reply(200, bindings([
-        {
-          item: entity('Q10'),
-          cls: entity('Q515'),
-          article: { value: 'https://en.wikipedia.org/wiki/Alpha' },
-          lang: { value: 'en' }
-        }
-      ]))
-
-      const articles = await articlesByAdmin(
-        { qid: 'Q1917571', strategy: 'admin' }, { languages: ['en'] })
-
-      assert.equal(articles.length, 1)
-      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
-    })
-
     it('queries without language filter when languages is omitted', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([]))
       nock(WDQS).post('/sparql', body =>
         !body.query.includes('VALUES ?lang')
       ).reply(200, bindings([
@@ -435,7 +403,6 @@ describe('region', function() {
     })
 
     it('skips articles with malformed percent-encoding in the sitelink', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([]))
       nock(WDQS).post('/sparql').reply(200, bindings([
         {
           item: entity('Q10'),
@@ -460,106 +427,39 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('invokes onChunkError when a chunk query fails', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: entity('Q1111') },
-        { sub: entity('Q2222') }
-      ]))
-      // First chunk 400s; second chunk succeeds
-      nock(WDQS).post('/sparql').reply(400, { error: 'Bad request' })
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        {
-          item: entity('Q20'),
-          cls: entity('Q5'),
-          article: { value: 'https://en.wikipedia.org/wiki/Beta' },
-          lang: { value: 'en' }
-        }
-      ]))
+    it('throws a clear out-of-scope error when the query times out', async function() {
+      // WDQS signals a query timeout with a 500 whose body names the timeout. A region
+      // whose P131* closure cannot be resolved in one query (e.g. a whole large country
+      // like the USA) is out of scope, and the failure must say so rather than surface a
+      // bare 500 - see place-bot-region-scale-scope.
+      nock(WDQS).post('/sparql').reply(500,
+        'java.util.concurrent.TimeoutException: Query timed out')
 
-      const errors = []
-      const articles = await articlesByAdmin(
-        { qid: 'Q62', strategy: 'admin' },
-        {
-          languages: ['en'],
-          onChunkError: (chunk, error) => {
-            errors.push({ chunk, error })
-          }
-        })
+      const err = await articlesByAdmin(
+        { qid: 'Q30', label: 'United States of America', strategy: 'admin' },
+        { languages: ['en'] }).then(() => null, e => e)
 
-      // The surviving chunk should still return articles despite the error in the other chunk
-      assert.equal(articles.length, 1)
-      assert.equal(articles[0].title, 'Beta')
-      assert.equal(errors.length, 1)
-      assert.include(errors[0].error.message, '400')
+      assert.isNotNull(err, 'expected a WDQS timeout to reject')
+      assert.include(err.message, 'Q30')
+      assert.include(err.message, 'too large')
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('rejects an invalid language code', async function() {
-      // This test proves languageFilter validates language codes before querying SPARQL
-      // We need to mock subEntities, but the language validation error will occur first
+    it('validates the region QID before querying', async function() {
+      // region.qid is interpolated straight into the closure query, so it must be
+      // validated here - there is no longer a subEntities() call to do it first.
+      const err = await articlesByAdmin(
+        { qid: 'Q0abc', strategy: 'admin' }, { languages: ['en'] }).then(() => null, e => e)
+      assert.isNotNull(err, 'expected an invalid QID to reject')
+      assert.include(err.message, 'QID')
+    })
+
+    it('rejects an invalid language code before querying SPARQL', async function() {
       const err = await articlesByAdmin(
         { qid: 'Q62', strategy: 'admin' },
         { languages: ['en" } UNION { ?item ?p ?o'] }).then(() => null, e => e)
       assert.isNotNull(err, 'expected articlesByAdmin to reject')
-      // The validation error should occur during languageFilter construction
       assert.include(err.message, 'Wiki language code')
-    })
-
-    it('never interpolates an unstrippable sub-entity into a query', async function() {
-      // This guards the boundary between WDQS output and raw SPARQL interpolation.
-      // Asserting on the returned articles is NOT sufficient: with the filter removed
-      // the genid anchor simply produces an extra request that matches no interceptor,
-      // sparqlChunked swallows it, and the article count is unchanged. So capture what
-      // was actually SENT and assert the genid never reached a query string.
-      const sent = []
-
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: { value: 'http://www.wikidata.org/.well-known/genid/abc123' } }, // genid, not an entity
-        { sub: entity('Q1111') },
-        { sub: entity('Q2222') }
-      ]))
-
-      nock(WDQS).post('/sparql', body => {
-        sent.push(body.query)
-        return true
-      }).times(3).reply(200, bindings([
-        {
-          item: entity('Q10'),
-          cls: entity('Q515'),
-          article: { value: 'https://en.wikipedia.org/wiki/Alpha' },
-          lang: { value: 'en' }
-        }
-      ]))
-
-      await articlesByAdmin({ qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
-
-      assert.equal(sent.length, 2, 'exactly two closure queries, one per valid sub-entity')
-      assert.isTrue(sent.every(q => !q.includes('genid')),
-        'no query may contain the genid URI')
-      assert.isTrue(sent.some(q => q.includes('wd:Q1111')))
-      assert.isTrue(sent.some(q => q.includes('wd:Q2222')))
-    })
-
-    it('warns when every sub-entity was filtered out', async function() {
-      // Falling back to one unchunked whole-region query is exactly the timeout the
-      // chunking exists to prevent, so it must not happen silently.
-      const warnings = []
-      const originalWarn = console.warn
-      console.warn = msg => warnings.push(msg)
-
-      try {
-        nock(WDQS).post('/sparql').reply(200, bindings([
-          { sub: { value: 'http://www.wikidata.org/.well-known/genid/abc123' } }
-        ]))
-        nock(WDQS).post('/sparql').reply(200, bindings([]))
-
-        await articlesByAdmin({ qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
-
-        assert.equal(warnings.length, 1)
-        assert.include(warnings[0], 'all 1 sub-entities were unusable')
-      } finally {
-        console.warn = originalWarn
-      }
     })
   })
 
@@ -756,9 +656,7 @@ describe('region', function() {
       nock(WDQS).post('/sparql').reply(200, bindings([
         { cls: entity('Q62049'), label: { value: 'San Francisco' } }
       ]))
-      // subEntities
-      nock(WDQS).post('/sparql').reply(200, bindings([]))
-      // closure
+      // closure (single unchunked query - no sub-entity discovery)
       nock(WDQS).post('/sparql').reply(200, bindings([
         {
           item: entity('Q10'), cls: entity('Q515'),
@@ -831,8 +729,8 @@ describe('region', function() {
     const { regionHistogram, countFromHistogram } = require('../lib/region')
 
     it('returns class x language cells, not articles', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([]))      // sub-entities
-      nock(WDQS).post('/sparql').reply(200, bindings([
+      const sent = []
+      nock(WDQS).post('/sparql', body => { sent.push(body.query); return true }).reply(200, bindings([
         { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '120' } },
         { cls: entity('Q5'), lang: { value: 'en' }, count: { value: '80' } },
         { cls: entity('Q515'), lang: { value: 'es' }, count: { value: '30' } }
@@ -840,25 +738,21 @@ describe('region', function() {
 
       const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' })
 
+      assert.equal(sent.length, 1, 'exactly one query - no per-sub-entity chunking')
+      assert.include(sent[0], 'wd:Q62', 'the histogram is anchored at the region itself')
       assert.equal(histogram.cells.length, 3)
       assert.deepEqual(histogram.cells[0], { cls: 'Q515', lang: 'en', count: 120 })
       assert.equal(histogram.total, 230)
+      assert.isFalse(histogram.partial)
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('sums a (class, language) cell that appears in more than one chunk', async function() {
-      // Chunks are per sub-entity, so the SAME (cls, lang) cell comes back once per
-      // chunk and must be MERGED, not listed twice or overwritten. The single-chunk
-      // test above cannot see this: with one chunk there is nothing to merge, so the
-      // merge step could be deleted entirely and it would still pass.
+    it('sums a (class, language) cell that appears more than once in the result', async function() {
+      // A GROUP BY normally returns each (cls, lang) once, but the merge step is kept
+      // defensively so a duplicated row cannot overwrite or double-list a cell. Feed one
+      // response with a repeated (Q515, en) to prove the counts are summed, not replaced.
       nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: entity('Q1111') },
-        { sub: entity('Q2222') }
-      ]))
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '120' } }
-      ]))
-      nock(WDQS).post('/sparql').reply(200, bindings([
+        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '120' } },
         { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '30' } },
         { cls: entity('Q5'), lang: { value: 'en' }, count: { value: '7' } }
       ]))
@@ -867,7 +761,7 @@ describe('region', function() {
 
       assert.equal(histogram.cells.length, 2, 'Q515/en must appear as ONE merged cell')
       const q515 = histogram.cells.find(c => c.cls === 'Q515' && c.lang === 'en')
-      assert.equal(q515.count, 150, '120 from one chunk + 30 from the other')
+      assert.equal(q515.count, 150, '120 + 30 summed, not overwritten')
       assert.equal(histogram.total, 157)
       assert.isFalse(histogram.partial)
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
@@ -938,21 +832,16 @@ describe('region', function() {
       assert.include(err.message, 'boundary')
     })
 
-    it('marks the histogram partial when a chunk fails', async function() {
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { sub: entity('Q1111') },
-        { sub: entity('Q2222') }
-      ]))
-      nock(WDQS).post('/sparql').reply(200, bindings([
-        { cls: entity('Q515'), lang: { value: 'en' }, count: { value: '10' } }
-      ]))
-      nock(WDQS).post('/sparql').times(3).reply(500, 'Query timeout limit reached')
+    it('throws a clear out-of-scope error when the histogram query times out', async function() {
+      nock(WDQS).post('/sparql').reply(500, 'Query timeout limit reached')
 
-      const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' },
-        { retries: 2, retryDelayMs: 0 })
+      const err = await regionHistogram(
+        { qid: 'Q30', label: 'United States of America', strategy: 'admin' })
+        .then(() => null, e => e)
 
-      assert.isTrue(histogram.partial)
-      assert.equal(histogram.total, 10)
+      assert.isNotNull(err, 'expected a WDQS timeout to reject')
+      assert.include(err.message, 'Q30')
+      assert.include(err.message, 'too large')
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
   })
