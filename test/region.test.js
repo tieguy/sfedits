@@ -725,6 +725,98 @@ describe('region', function() {
     })
   })
 
+  describe('resolveBoundary', function() {
+    const { resolveBoundary } = require('../lib/region')
+
+    const OVERPASS = 'https://overpass-api.de'
+    function overpassSquare() {
+      // fetchBoundary stitches an outer ring from Overpass way geometry
+      return {
+        elements: [{
+          type: 'relation',
+          members: [{
+            type: 'way', role: 'outer',
+            geometry: [
+              { lat: 37.74, lon: -122.43 }, { lat: 37.78, lon: -122.43 },
+              { lat: 37.78, lon: -122.39 }, { lat: 37.74, lon: -122.39 }
+            ]
+          }]
+        }]
+      }
+    }
+
+    it('tier 1 (self): returns the place own boundary when it has P402', async function() {
+      nock(OVERPASS).post('/api/interpreter').reply(200, overpassSquare())
+
+      const result = await resolveBoundary({
+        qid: 'Q62', label: 'San Francisco', osmRelationId: '111968',
+        centroid: { lon: -122.42, lat: 37.77 }
+      })
+
+      assert.equal(result.source, 'self')
+      assert.isTrue(result.exact)
+      assert.equal(result.boundary.type, 'Feature')
+      assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
+    })
+
+    it('tier 2 (container): falls back to the boundaried P131 container', async function() {
+      // Q7469 (Mission) has no P402; its P131 parent Q62 (SF) does.
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q7469')).reply(200, bindings([
+        { parent: entity('Q62'), parentLabel: { value: 'San Francisco' },
+          osm: { value: '111968' }, cls: entity('Q515') }
+      ]))
+
+      const result = await resolveBoundary({
+        qid: 'Q7469', label: 'Mission District', osmRelationId: null,
+        centroid: { lon: -122.42, lat: 37.76 }
+      })
+
+      assert.equal(result.source, 'container')
+      assert.isFalse(result.exact)
+      assert.deepEqual(result.suggestion,
+        { qid: 'Q62', label: 'San Francisco', class: 'Q515', via: 'p131' })
+      assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
+    })
+
+    it('tier 2: skips an unbounded parent and climbs to the next level', async function() {
+      // Level 1 parent Q100 has no P402; level 2 parent Q200 does.
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q50')).reply(200, bindings([
+        { parent: entity('Q100'), parentLabel: { value: 'Unbounded District' }, cls: entity('Q1') }
+      ]))
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q100')).reply(200, bindings([
+        { parent: entity('Q200'), parentLabel: { value: 'Bounded City' },
+          osm: { value: '999' }, cls: entity('Q515') }
+      ]))
+
+      const result = await resolveBoundary({
+        qid: 'Q50', label: 'Deep Place', osmRelationId: null,
+        centroid: { lon: 0, lat: 0 }
+      })
+
+      assert.equal(result.source, 'container')
+      assert.equal(result.suggestion.qid, 'Q200')
+      assert.equal(result.suggestion.via, 'p131')
+      assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
+    })
+
+    it('tier 2: picks the smallest-by-area container when a level has several', async function() {
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q7469')).reply(200, bindings([
+        { parent: entity('Q10'), parentLabel: { value: 'Big County' },
+          osm: { value: '10' }, cls: entity('Q28575'), area: { value: '1200' } },
+        { parent: entity('Q20'), parentLabel: { value: 'Small City' },
+          osm: { value: '20' }, cls: entity('Q515'), area: { value: '120' } }
+      ]))
+
+      const result = await resolveBoundary({
+        qid: 'Q7469', label: 'Mission District', osmRelationId: null,
+        centroid: { lon: -122.42, lat: 37.76 }
+      })
+
+      assert.equal(result.suggestion.qid, 'Q20', 'smaller area wins')
+      assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
+    })
+  })
+
   describe('regionHistogram', function() {
     const { regionHistogram, countFromHistogram } = require('../lib/region')
 
