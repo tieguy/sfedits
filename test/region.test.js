@@ -815,6 +815,50 @@ describe('region', function() {
       assert.equal(result.suggestion.qid, 'Q20', 'smaller area wins')
       assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
     })
+
+    it('tier 3 (radius): no boundaried ancestor falls back to a radius on the centroid', async function() {
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q50')).reply(200, bindings([
+        { parent: entity('Q100'), parentLabel: { value: 'Unbounded' }, cls: entity('Q1') }
+      ]))
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q100')).reply(200, bindings([]))
+
+      const result = await resolveBoundary({
+        qid: 'Q50', label: 'Orphan Place', osmRelationId: null,
+        centroid: { lon: -1.2, lat: 51.7 }
+      })
+
+      assert.equal(result.source, 'radius')
+      assert.isFalse(result.exact)
+      assert.deepEqual(result.centroid, { lon: -1.2, lat: 51.7 })
+      assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
+    })
+
+    it('tier 3: terminates on a P131 cycle and falls back to radius', async function() {
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q50')).reply(200, bindings([
+        { parent: entity('Q60'), parentLabel: { value: 'A' }, cls: entity('Q1') }
+      ]))
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q60')).reply(200, bindings([
+        { parent: entity('Q50'), parentLabel: { value: 'B' }, cls: entity('Q1') } // back to Q50
+      ]))
+
+      const result = await resolveBoundary({
+        qid: 'Q50', label: 'Cyclic', osmRelationId: null, centroid: { lon: 0, lat: 0 }
+      })
+
+      assert.equal(result.source, 'radius', 'cycle must not loop forever')
+      assert.isTrue(nock.isDone(), 'all mocked requests were consumed')
+    })
+
+    it('tier 3: throws when there is no boundary and no centroid to approximate from', async function() {
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q50')).reply(200, bindings([]))
+
+      const err = await resolveBoundary({
+        qid: 'Q50', label: 'Nowhere', osmRelationId: null, centroid: null
+      }).then(() => null, e => e)
+
+      assert.isNotNull(err, 'expected resolveBoundary to reject')
+      assert.include(err.message, 'no coordinate')
+    })
   })
 
   describe('regionHistogram', function() {

@@ -110,11 +110,13 @@ Resolution tiers, in order:
    multi-parents and rare cycles) and a depth cap (~5). Multiple hits at one
    level → pick smallest by area. Returns the container identity only; the
    boundary is not fetched here.
-3. **Nearby / radius** — no boundaried ancestor: `wikibase:around` for the
-   nearest boundaried region whose polygon **contains the place's point**
-   (point-in-polygon via the already-imported `@turf/boolean-point-in-polygon`).
-   If none, return `{ source:'radius', centroid }` and let the caller seed a
-   radius with no polygon filter.
+3. **Radius** — no boundaried ancestor: return `{ source:'radius', centroid }`
+   and let the caller seed a radius with no polygon filter. *(First pass is
+   radius-only. The Overpass-backed `nearby` search — `wikibase:around` for the
+   nearest boundaried region whose polygon contains the place's point, via
+   `@turf/boolean-point-in-polygon` — is deferred as a future enhancement: it is
+   the rarest path and depends on Overpass, which was observed flaky. The
+   `suggestion.via` field leaves room for it without a contract change.)*
 
 **Why a level-walk, not one `P131+` property-path query:** a property path
 returns *all* boundaried ancestors (city, county, state, country) with no cheap
@@ -180,21 +182,19 @@ that skips an unbounded intermediate parent; multiple bounded parents at a level
 → smallest by area; cycle/multi-parent guard; depth cap exhausted with no hit
 (falls through to tier 3, stubbed here).
 
-### Phase 2: resolveBoundary — nearby + radius tier
+### Phase 2: resolveBoundary — radius tier (first pass)
 **Goal:** Handle places with no boundaried ancestor.
 
 **Components:**
-- Tier 3 in `resolveBoundary`: `wikibase:around` candidate query filtered to
-  boundaried regions, point-in-polygon containment test of the place's centroid
-  (`@turf/boolean-point-in-polygon`), else a `radius` result carrying the
-  centroid.
+- Tier 3 in `resolveBoundary`: when the P131 walk finds no boundaried ancestor,
+  return a `radius` result carrying the place's centroid. *(The Overpass-backed
+  `nearby` search is deferred — see Architecture §3.)*
 - Unit tests in `test/region.test.js`.
 
 **Dependencies:** Phase 1.
 
-**Done when:** Unit tests pass for: `around` returns a containing boundaried
-region (`nearby`); `around` returns only non-containing candidates → `radius`;
-`around` empty → `radius`; place with no centroid → clear error.
+**Done when:** Unit tests pass for: no boundaried ancestor → `radius`; the walk
+terminates on a P131 cycle → `radius`; place with no centroid → clear error.
 
 ### Phase 3: Geo-path integration + suggestion contract + live verification
 **Goal:** Route the geo strategy through `resolveBoundary` and surface
