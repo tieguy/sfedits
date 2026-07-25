@@ -587,12 +587,28 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('throws when region has no boundary', async function() {
-      const err = await articlesByGeo(
+    it('returns the whole radius seed unfiltered when no boundary is given', async function() {
+      // Approximate mode (resolveBoundary's radius tier): no polygon to trim against,
+      // so every candidate in the radius seed is kept - even one far from the centroid.
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },
+          article: { value: 'https://en.wikipedia.org/wiki/Near' }, lang: { value: 'en' }
+        },
+        {
+          item: entity('Q20'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.99 37.99)' },
+          article: { value: 'https://en.wikipedia.org/wiki/Far' }, lang: { value: 'en' }
+        }
+      ]))
+
+      const articles = await articlesByGeo(
         { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
-        {}).then(() => null, e => e)
-      assert.isNotNull(err, 'expected articlesByGeo to reject')
-      assert.include(err.message, 'boundary')
+        { languages: ['en'] })  // no boundary
+
+      assert.equal(articles.length, 2, 'no polygon filter - the radius seed is the answer')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
     it('throws when region has no centroid', async function() {
@@ -710,18 +726,55 @@ describe('region', function() {
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
 
-    it('refuses the geo strategy when the region has no OSM boundary', async function() {
+    it('surfaces a container suggestion when a boundaryless region has a boundaried parent', async function() {
+      // resolveRegion: neighborhood (geo), has a coord, no P402
       nock(WDQS).post('/sparql').reply(200, bindings([
         {
           cls: entity('Q123705'), label: { value: 'Vague Place' },
           coord: { value: 'Point(-122.41 37.76)' }
         }
       ]))
+      // resolveBoundary tier 2: P131 parent Q62 carries a boundary
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q999')).reply(200, bindings([
+        { parent: entity('Q62'), parentLabel: { value: 'San Francisco' },
+          osm: { value: '111968' }, cls: entity('Q515') }
+      ]))
 
-      const err = await articlesForRegion('Q999', { languages: ['en'] })
-        .then(() => null, e => e)
-      assert.isNotNull(err, 'expected articlesForRegion to reject')
-      assert.include(err.message, 'no OSM boundary')
+      const result = await articlesForRegion('Q999', { languages: ['en'] })
+
+      assert.isTrue(result.needsConfirmation, 'container substitution must be surfaced, not silent')
+      assert.equal(result.suggestion.qid, 'Q62')
+      assert.isUndefined(result.articles, 'no articles fetched before confirmation')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('returns an approximate result when there is no boundary and no boundaried ancestor', async function() {
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          cls: entity('Q123705'), label: { value: 'Vague Place' },
+          coord: { value: 'Point(-122.41 37.76)' }
+        }
+      ]))
+      // resolveBoundary tier 2: parent has no boundary...
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q999')).reply(200, bindings([
+        { parent: entity('Q100'), parentLabel: { value: 'Unbounded' }, cls: entity('Q1') }
+      ]))
+      // ...and neither does anything above it
+      nock(WDQS).post('/sparql', body => body.query.includes('wd:Q100')).reply(200, bindings([]))
+      // tier 3 radius: articlesByGeo seeds a disc and returns it unfiltered
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          item: entity('Q10'), cls: entity('Q515'),
+          coord: { value: 'Point(-122.41 37.76)' },
+          article: { value: 'https://en.wikipedia.org/wiki/X' }, lang: { value: 'en' }
+        }
+      ]))
+
+      const result = await articlesForRegion('Q999', { languages: ['en'] })
+
+      assert.isTrue(result.approximate, 'radius fallback stays on the region but flags imprecision')
+      assert.equal(result.articles.length, 1)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
   })
 
