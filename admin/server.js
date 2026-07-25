@@ -9,6 +9,7 @@ const { createAuthenticatedAgent } = require('../lib/bluesky-client')
 const { recordPost } = require('../lib/post-log')
 const bluesky = require('../lib/bluesky-platform')
 const mastodon = require('../lib/mastodon-platform')
+const { articlesForRegion } = require('../lib/region')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -438,6 +439,54 @@ app.get('/screenshots/:filename', requireAuth, (req, res) => {
   }
 })
 
+
+/**
+ * Resolve a place QID for the create flow, normalizing articlesForRegion's
+ * result into a console-friendly shape. A region with no boundary of its own
+ * comes back as `needs_confirmation` carrying the container suggestion, so the
+ * UI can ask "no boundary for X - use Y?" rather than the resolver silently
+ * substituting. See docs/design-plans/2026-07-24-boundary-resolution.md.
+ */
+async function resolveForConsole(qid, options = {}) {
+  try {
+    const result = await articlesForRegion(qid, options)
+    if (result.needsConfirmation) {
+      return {
+        status: 'needs_confirmation',
+        region: { qid: result.region.qid, label: result.region.label },
+        suggestion: result.suggestion
+      }
+    }
+    return {
+      status: 'resolved',
+      region: {
+        qid: result.region.qid,
+        label: result.region.label,
+        strategy: result.region.strategy
+      },
+      count: result.articles.length,
+      approximate: result.approximate === true
+    }
+  } catch (error) {
+    return { status: 'error', error: error.message }
+  }
+}
+
+/**
+ * POST /api/region/resolve
+ * Resolve a place QID, surfacing a container suggestion when it has no boundary.
+ */
+app.post('/api/region/resolve', requireAuth, async (req, res) => {
+  const { qid, languages } = req.body || {}
+  if (!qid) {
+    return res.status(400).json({ error: 'qid required' })
+  }
+  const result = await resolveForConsole(qid, { languages })
+  res.json(result)
+})
+
+// Expose the resolver for unit tests without starting a server.
+app.resolveForConsole = resolveForConsole
 
 // Start server only if run directly (not when imported by tests)
 if (require.main === module) {
