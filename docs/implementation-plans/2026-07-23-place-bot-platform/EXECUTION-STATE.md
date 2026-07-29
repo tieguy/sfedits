@@ -1,30 +1,46 @@
 # Plan A execution state
 
 Working notes for resuming `/ed3d-plan-and-execute:execute-implementation-plan` on this
-plan. Written 2026-07-23. Delete when Plan A is finished.
+plan. Written 2026-07-23, updated 2026-07-29. Delete when Plan A is finished.
 
 **Worktree:** `.worktrees/place-bot-platform`, branch `place-bot-platform`.
 Nothing has been pushed. All commits are local.
+
+**Standing instruction from Louie (2026-07-29): this is MVP/POC, not perfection.**
+Prefer the smallest thing that works and is tested over the thorough version.
 
 ## Where things stand
 
 | Phase | Task | Status |
 |---|---|---|
-| 1 | 1 — geo dependency | done |
-| 1 | 2 — shared SPARQL helper | done |
-| 1 | 3 — region descriptor | done |
-| 1 | 4 — admin containment | done |
-| 1 | 5 — geo containment | done |
-| 1 | 6 — count histogram | done |
-| 1 | 7 — strategy dispatch | done |
+| 1 | 1–7 (geo dep → strategy dispatch) | done |
 | 1 | chunking → unchunked + size guard | **done, live-verified** |
-| 2–5 | all | not started |
+| — | boundary resolution (unplanned sub-plan) | **done** |
+| 2 | topic store on ToolsDB | **in progress (started 2026-07-29)** |
+| 3–5 | rebuild job, bot wiring, delivery | not started |
+| 6 | Wikimedia OAuth | `lib/mw-oauth.js` spike only, **not wired** |
 
-Test suite: **334 passing, 1 pending, 0 failing** (2026-07-24).
+Test suite: **352 passing, 1 pending, 0 failing** (2026-07-29).
 Run `npm test`. Verify the *delta*, never an absolute number.
 
-Phase 1's live-data verification has now been **run and passes** — see below. Phase 1 is
-complete; Phase 2 can start.
+### The boundary-resolution detour (2026-07-24 → 07-25)
+
+Phase 1's geo strategy hard-failed on any place without a P402 (OSM relation) — which
+includes the flagship Mission District. Rather than block on contributing a boundary to
+OSM (shelved), a sub-plan was designed and built:
+`docs/design-plans/2026-07-24-boundary-resolution.md`, implemented as `resolveBoundary`
+in `lib/region.js` with three tiers — **self** (own P402) → **container** (P131 parent's
+boundary, returns `needsConfirmation`) → **radius** (centroid + radius, `approximate`).
+The geo path routes through it and the admin console surfaces the suggestion.
+
+### The OAuth spike (2026-07-25)
+
+`lib/mw-oauth.js` + `test/mw-oauth.test.js` implement the Wikimedia OAuth 2.0 identify
+flow (`authorizeUrl` / `exchangeCode` / `fetchProfile`). This is **Phase 6 work done out
+of order** and nothing imports it. Leave it parked; Phase 7's web flow is its first
+consumer.
+
+Phase 1's live-data verification has been **run and passes** — see below.
 
 ## RESOLVED (2026-07-24): chunking replaced by unchunked query + size guard
 
@@ -107,8 +123,12 @@ Verify plan code against reality before copying it. Found so far:
   before dispatching.
 - **`fetchBoundary`** assumed one way per ring and discarded `role: 'inner'`. Both wrong
   against live data.
-- **Phase 2 assumes Docker.** This machine has **no docker** — `podman` is present and
-  usable. `scripts/test-db.sh` must be written against podman or detect at runtime.
+- **Phase 2 assumes Docker.** This machine has **no docker** — `podman` 5.8.4 is present
+  and usable. `scripts/test-db.sh` is written against podman.
+- **Phase 2's test glob trap is real** — `test/**/*.js` is unquoted in `package.json`, so
+  the first `.js` file under a `test/` subdirectory silently reduces the suite to that one
+  file while still reporting green. Task 1 Step 3 fixes it; do it before creating
+  `test/helpers/`.
 
 ## Process notes
 
