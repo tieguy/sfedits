@@ -171,6 +171,7 @@ ${claimsSection}
 <footer>
   <p>Updated ${escapeHtml(topics.updated_at)} ·
      <a href="/api/topics.json">JSON</a> ·
+     <a href="/matrix">untagged-article matrix</a> ·
      <a href="https://github.com/tieguy/sfedits">source</a> ·
      a fork of <a href="https://github.com/mrfinnsmith/sfedits">mrfinnsmith/sfedits</a> ·
      runs on <a href="https://toolforge.org">Toolforge</a></p>
@@ -388,6 +389,12 @@ app.get('/', (req, res) => {
     return res.status(503).send('Topics are still loading - try again shortly.')
   }
   res.type('html').send(renderPage(app.locals.topics))
+})
+
+// Static snapshot of the untagged-article triage matrix, generated locally
+// by scripts/matrix-untagged.js and committed - see the page's own header
+app.get('/matrix', (req, res) => {
+  res.sendFile(path.join(__dirname, 'matrix-untagged.html'))
 })
 
 app.get('/api/topics.json', (req, res) => {
