@@ -17,12 +17,24 @@ Prefer the smallest thing that works and is tested over the thorough version.
 | 1 | chunking → unchunked + size guard | **done, live-verified** |
 | — | boundary resolution (unplanned sub-plan) | **done** |
 | 2 | 1–5 (driver → watch index) | **done 2026-07-29** |
-| 3–5 | rebuild job, bot wiring, delivery | not started |
+| 3 | 1–3 (title resolver → rebuild job) | **done 2026-07-29** |
+| 4 | 1–3 (topic index → fan-out → config) | **done 2026-07-29** |
+| 5 | 1–4 (rate cap → quarantine → docs) | **done 2026-07-29** |
 | 6 | Wikimedia OAuth | `lib/mw-oauth.js` spike only, **not wired** |
+| 7–9 | web flow, BYO-auth, guardrails | design only, no implementation plan |
 
-Test suite: **393 passing, 1 pending, 0 failing** with the test database up
-(`npm run test:db:start`); **369 passing, 25 pending** with it down. Both are green.
+**Plan A (Phases 1–5) is code-complete.** Phases 6–9 are Plan B, which the design
+plan says to write only after the go/no-go below.
+
+Test suite: **456 passing, 1 pending, 0 failing** with the test database up
+(`npm run test:db:start`); **405 passing, 52 pending** with it down. Both are green.
 Run `npm test`. Verify the *delta*, never an absolute number.
+
+**One unexplained intermittent failure.** Two full-suite runs out of roughly forty on
+2026-07-29 reported `1 failing` without the failure text being captured; ~35 targeted
+re-runs (including back-to-back and piped invocations) never reproduced it, so which
+test it was is unknown. Capture `npm test` to a file rather than piping to `grep` so the
+next occurrence is diagnosable.
 
 ### Phase 2 as built (differs from the plan in two small ways)
 
@@ -34,6 +46,69 @@ Run `npm test`. Verify the *delta*, never an absolute number.
 
 Also worth knowing downstream: `setTopicArticles` does **not** bump the generation when a
 rebuild changes nothing, so an idle rebuild does not force every bot to reload its index.
+
+### Phases 3–5 as built (deviations from the plan text)
+
+- **Phase 3, `siteToWikipedia`.** The plan's regex `/^([a-z_]+)wiki$/` maps `commonswiki`
+  to a "commons" Wikipedia, so File: pages would enter a place feed. Sister projects are
+  now denied by name (`NON_WIKIPEDIA_SITES`).
+- **Phase 3, `defaultResolver`.** The plan passed `onChunkError`, which Phase 1 removed
+  along with chunking. The resolver now refuses a `needsConfirmation` result instead —
+  a geo region with no boundary of its own resolves to a *container* (a whole city
+  standing in for a neighborhood), which is a human's call, not a nightly job's. The
+  error names the suggested container.
+- **Phase 3, plan QID wrong.** The manual check names `Q1917571` as the Mission District;
+  that is Mehrow, a German village. The Mission District is `Q7469`, which resolves
+  correctly in en and es.
+- **Phase 5, webhook allowlist.** Kept as the plan specifies — https only, to the four
+  Discord hosts, path under `/api/webhooks/`, checked at delivery rather than only at
+  insert. This is the SSRF guard for URLs strangers type; do not relax it in Phase 8,
+  extend it.
+
+### What is NOT verified (needs Louie, both outward-facing)
+
+- **Phase 4/5 live end-to-end.** Seeding two subscriptions on one topic, running the bot
+  for real, and confirming both channels get the post with the rich embed intact, one
+  render, and that deleting a webhook flips the row to `broken` after five edits. This
+  posts to real Discord channels, so it waits for an explicit go.
+- What *was* verified live: a seeded topic reaches a running bot's index
+  (`Topic index: 2 titles across 1 topics`), the bot starts unchanged with no
+  `topic_store` stanza, `scripts/rebuild-topics.js gc` works against a real database, and
+  `titlesForQidsViaApi` returns real current titles in en and es.
+
+## GO/NO-GO for Plan B — measured 2026-07-29, and the answer is NO-GO
+
+The design plan says to run the scale check before writing Plan B. Numbers, live:
+
+| Region | Strategy | Result | Time |
+|---|---|---|---|
+| California (Q99) | admin | 26,914 cells, **211,590 articles**, partial=false | 15.8 s |
+| San Mateo County (Q108101) | **geo** | **13 articles** | 6.9 s |
+
+**The county number is the blocker, and it is wrong rather than slow.** San Mateo
+County's P31 is `Q131427665` ("charter county of California"), which is not in
+`ADMIN_CLASSES` — that set matches *direct* P31 membership only, with no P279 subclass
+walk. So the county falls through to the geo strategy, where `articlesByGeo` seeds from
+`DEFAULT_SEED_RADIUS_KM = 5` around the centroid and returns 13 articles against a design
+estimate of ~10⁴. It does not error, does not warn, and does not set `approximate` (a
+self-boundary was found, so the radius seed is trimmed to a polygon that is far larger
+than the seed). **A silently plausible wrong answer is the failure mode a web form must
+not have**, and Phase 7 is exactly that web form.
+
+Two things to settle before Plan B:
+
+1. **Admin detection must walk P279***, or the flat class set will keep missing regions
+   as Wikidata refines its class hierarchy — this is not a one-off bad QID.
+2. **The geo radius seed must not silently under-return.** Either derive the radius from
+   the boundary's bounding box, or refuse when the boundary is much larger than the seed.
+
+California is the other half: 211,590 articles resolves cleanly in 16 s, so the resolver
+will happily hand a stranger a 10⁵-article firehose. Phase 5's per-subscription rate cap
+is currently the *only* thing standing between that and a subscriber's Discord channel;
+Phase 9's region-size cap is not optional.
+
+Overpass flakiness also recurred: the first San Mateo attempt died on a 504 from
+`overpass-api.de` and succeeded on retry, matching the operational risk noted below.
 
 ### The boundary-resolution detour (2026-07-24 → 07-25)
 
