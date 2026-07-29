@@ -348,6 +348,75 @@ describeWithDb('topic-store (database)', function() {
     })
   })
 
+  describe('getWatchIndex', function() {
+    it('maps wikipedia -> title -> topic ids', async function() {
+      const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+      await store.setTopicArticles(topic.id, [
+        { qid: 'Q10', wikipedia: 'en', title: 'Alpha', source: 'admin' },
+        { qid: 'Q20', wikipedia: 'es', title: 'Beta', source: 'admin' }
+      ])
+
+      const index = await store.getWatchIndex()
+
+      assert.deepEqual(Array.from(index.byWiki.get('en').get('Alpha')), [topic.id])
+      assert.deepEqual(Array.from(index.byWiki.get('es').get('Beta')), [topic.id])
+    })
+
+    it('lists every topic watching a shared article', async function() {
+      const a = await store.upsertTopic('Q62', { languages: ['en'] })
+      const b = await store.upsertTopic('Q62', { languages: ['en', 'es'] })
+      const shared = [{ qid: 'Q10', wikipedia: 'en', title: 'Alpha', source: 'admin' }]
+
+      await store.setTopicArticles(a.id, shared)
+      await store.setTopicArticles(b.id, shared)
+
+      const index = await store.getWatchIndex()
+      const topics = Array.from(index.byWiki.get('en').get('Alpha')).sort()
+
+      assert.deepEqual(topics, [a.id, b.id].sort())
+    })
+
+    it('excludes articles that have left the topic', async function() {
+      const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+      await store.setTopicArticles(topic.id, [
+        { qid: 'Q10', wikipedia: 'en', title: 'Alpha', source: 'admin' }
+      ])
+      await store.setTopicArticles(topic.id, [])
+
+      const index = await store.getWatchIndex()
+      assert.isUndefined(index.byWiki.get('en'))
+    })
+
+    it('excludes topics with no active subscription', async function() {
+      const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+      await store.setTopicArticles(topic.id, [
+        { qid: 'Q10', wikipedia: 'en', title: 'Alpha', source: 'admin' }
+      ])
+
+      let index = await store.getWatchIndex({ requireSubscription: true })
+      assert.equal(index.byWiki.size, 0, 'no subscribers means nothing to deliver')
+
+      await store.addSubscription(topic.id, {
+        ownerUser: 'A', deliveryType: 'discord', deliveryConfig: { webhook_url: 'https://a' }
+      })
+
+      index = await store.getWatchIndex({ requireSubscription: true })
+      assert.deepEqual(Array.from(index.byWiki.get('en').get('Alpha')), [topic.id])
+    })
+
+    it('reports a generation that changes when any topic rebuilds', async function() {
+      const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+      const before = await store.getWatchIndex()
+
+      await store.setTopicArticles(topic.id, [
+        { qid: 'Q10', wikipedia: 'en', title: 'Alpha', source: 'admin' }
+      ])
+
+      const after = await store.getWatchIndex()
+      assert.notEqual(after.generation, before.generation)
+    })
+  })
+
   describe('topic garbage collection', function() {
     it('deletes a topic when its last subscription goes away', async function() {
       const topic = await store.upsertTopic('Q62', { languages: ['en'] })
