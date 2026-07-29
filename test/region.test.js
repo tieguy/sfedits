@@ -256,6 +256,47 @@ describe('region', function() {
       assert.equal(region.label, 'Mission District')
     })
 
+    it('classifies a subclass of an admin class as the admin strategy', async function() {
+      // San Mateo County's real P31 is Q131427665, "charter county of
+      // California" - a subclass of county, not county itself. Matching P31
+      // against a flat set missed it, the region fell through to the geo
+      // strategy, and its 5km centroid seed returned 13 articles for a whole
+      // county without erroring. The subclass walk is what catches this.
+      nock(WDQS).post('/sparql').reply(200, bindings([
+        {
+          cls: entity('Q131427665'),
+          adminCls: entity('Q28575'),     // ...which is a county
+          label: { value: 'San Mateo County' },
+          coord: { value: 'Point(-122.35 37.43)' }
+        }
+      ]))
+
+      const region = await resolveRegion('Q108101')
+
+      assert.equal(region.strategy, 'admin')
+    })
+
+    it('does not treat the generic admin root as an admin classification',
+      async function() {
+        // Q56061 (administrative territorial entity) is the root nearly every
+        // place class descends from, INCLUDING neighborhoods. Walking to it
+        // would flip the Mission District to the admin strategy and undo the
+        // whole boundary-resolution design. Only specific classes count.
+        nock(WDQS).post('/sparql').reply(200, bindings([
+          {
+            cls: entity('Q748198'),        // neighborhood of San Francisco
+            adminCls: entity('Q56061'),    // ...only reaches the generic root
+            label: { value: 'Mission District' },
+            coord: { value: 'Point(-122.4148 37.7599)' }
+          }
+        ]))
+
+        const region = await resolveRegion('Q7469')
+
+        assert.equal(region.strategy, 'geo',
+          'a neighborhood must keep the geo strategy')
+      })
+
     it('honors an explicit strategy override', async function() {
       nock(WDQS).post('/sparql').reply(200, bindings([
         {
@@ -558,11 +599,63 @@ describe('region', function() {
         { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
         { boundary: SQUARE, languages: ['en'] })
 
-      // Default radius should be used (literal 5 km)
+      // The seed is sized from the boundary, not from a flat default. SQUARE's
+      // farthest corner is ~2.8km from this centre, so with the margin and the
+      // ceiling the radius is 4km. A flat 5km happened to cover this fixture;
+      // it did NOT cover a county, which is the bug this sizing prevents.
       assert.equal(sent.length, 1)
-      assert.include(sent[0], 'wikibase:radius "5"')
+      assert.include(sent[0], 'wikibase:radius "4"')
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })
+
+    it('sizes the seed to a large boundary instead of the 5km default',
+      async function() {
+        // A county-sized square: ~0.5 degrees, far beyond a 5km seed. Before
+        // this, the seed stayed at 5km, the polygon filter had nothing to trim,
+        // and a whole county came back as a dozen articles without any error.
+        const county = {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
+              [-122.6, 37.2], [-122.6, 37.7], [-122.1, 37.7],
+              [-122.1, 37.2], [-122.6, 37.2]
+            ]]
+          }
+        }
+
+        const sent = []
+        nock(WDQS).post('/sparql', body => {
+          sent.push(body.query)
+          return true
+        }).reply(200, bindings([]))
+
+        await articlesByGeo(
+          { qid: 'Q108101', strategy: 'geo', centroid: { lon: -122.35, lat: 37.45 } },
+          { boundary: county, languages: ['en'] })
+
+        const radius = Number(/wikibase:radius "(\d+)"/.exec(sent[0])[1])
+        assert.isAbove(radius, 30, 'a county-sized boundary needs a county-sized seed')
+      })
+
+    it('falls back to the default radius when the boundary has no usable geometry',
+      async function() {
+        const sent = []
+        nock(WDQS).post('/sparql', body => {
+          sent.push(body.query)
+          return true
+        }).reply(200, bindings([]))
+
+        await articlesByGeo(
+          { qid: 'Q1917571', strategy: 'geo', centroid: { lon: -122.41, lat: 37.76 } },
+          {
+            boundary: { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [] } },
+            languages: ['en']
+          })
+
+        assert.include(sent[0], 'wikibase:radius "5"')
+      })
 
     it('uses an explicit radius when radiusKm is provided', async function() {
       const sent = []
