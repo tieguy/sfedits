@@ -26,7 +26,7 @@
     "sinon": "^21.0.0"
   },
   "engines": {
-    "node": ">=6"
+    "node": ">=20"
   },
   "scripts": {
     "test": "mocha --colors --reporter spec --exit --ignore 'test/helpers/**' 'test/**/*.js'",
