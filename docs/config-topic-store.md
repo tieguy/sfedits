@@ -47,3 +47,61 @@ Start that container with `npm run test:db:start`.
 - Migrations are applied by `lib/db.js`'s `migrate(pool)`. They are immutable
   once shipped: a schema change adds `db/migrations/002-*.sql` rather than
   editing `001`, which is already recorded in `schema_migrations`.
+
+## Delivery limits
+
+```json
+{
+  "topic_store": {
+    "max_posts_per_hour": 20,
+    "rate_window_ms": 3600000
+  }
+}
+```
+
+Both are optional; the defaults are 20 posts per hour per subscription.
+
+The cap is per **subscription**, not per topic or per bot. Two people
+subscribed to the same busy topic each get their own budget, so one
+oversized bot cannot consume another's.
+
+When a subscription exceeds its cap, posts are suppressed and counted. Once
+the window rolls over, the subscriber gets a single summary embed —
+"…and N more edits not shown (rate cap)" — which names the likely cause,
+since an oversized region is what usually produces it.
+
+## Webhook URLs
+
+Delivery URLs are allowlisted: `https` only, to `discord.com`,
+`discordapp.com`, `ptb.discord.com`, or `canary.discord.com`, with a path under
+`/api/webhooks/`. Anything else is refused before a request is made.
+
+This is not tidiness. From Phase 5 on the URL is a string a stranger typed, and
+fetching an arbitrary URL from a Toolforge-resident process is a server-side
+request forgery primitive — `http://127.0.0.1:…`, link-local metadata
+endpoints, and `*.svc.wikimedia.cloud` are all reachable from inside Cloud
+Services and not from outside. The check runs at delivery time, not only at
+insert, because the process making the request is the only place it cannot be
+bypassed.
+
+## Broken subscriptions
+
+A subscription whose webhook returns a 4xx (other than 429) five times in a
+row is marked `status = 'broken'` and stops receiving posts.
+`subscriptionsForTopic()` filters to active subscriptions, so quarantine takes
+effect immediately and survives a restart.
+
+Transient failures — 5xx, timeouts, 429 — never count toward this. Discord
+having a bad hour must not disable a working bot.
+
+**The subscriber is not currently told their bot went quiet.** This is a known
+gap, deferred deliberately: see "Credential death" in
+`docs/design-plans/2026-07-23-place-bot-platform.md`. The likely answer is a
+low-frequency notice to the creator's user talk page, but a bot that edits
+talk pages is itself subject to bot-editing norms and needs its own design.
+
+To re-enable a repaired subscription:
+
+```sql
+UPDATE subscriptions SET status = 'active' WHERE id = ?;
+```
