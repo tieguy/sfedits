@@ -21,12 +21,14 @@ Prefer the smallest thing that works and is tested over the thorough version.
 | 4 | 1–3 (topic index → fan-out → config) | **done 2026-07-29** |
 | 5 | 1–4 (rate cap → quarantine → docs) | **done 2026-07-29** |
 | 6 | Wikimedia OAuth | `lib/mw-oauth.js` spike only, **not wired** |
-| 7–9 | web flow, BYO-auth, guardrails | design only, no implementation plan |
+| 7 | create web flow | **MVP shipped 2026-07-29** — invite-gated, not OAuth |
+| 8–9 | BYO-auth delivery, guardrails | design only; the size cap landed early |
 
-**Plan A (Phases 1–5) is code-complete.** Phases 6–9 are Plan B, which the design
-plan says to write only after the go/no-go below.
+**Plan A (Phases 1–5) is code-complete**, plus an invite-gated slice of Phase 7. See
+"the two resolver bugs are FIXED and a create form SHIPPED" below for what changed after
+the go/no-go.
 
-Test suite: **456 passing, 1 pending, 0 failing** with the test database up
+Test suite: **487 passing, 1 pending, 0 failing** with the test database up
 (`npm run test:db:start`); **405 passing, 52 pending** with it down. Both are green.
 Run `npm test`. Verify the *delta*, never an absolute number.
 
@@ -76,7 +78,51 @@ rebuild changes nothing, so an idle rebuild does not force every bot to reload i
   `topic_store` stanza, `scripts/rebuild-topics.js gc` works against a real database, and
   `titlesForQidsViaApi` returns real current titles in en and es.
 
-## GO/NO-GO for Plan B — measured 2026-07-29, and the answer is NO-GO
+## 2026-07-29, later: the two resolver bugs are FIXED and a create form SHIPPED
+
+Louie's call: *"fix the P279 walk and geo seed radius as much as possible, but we should
+get soon to having a working web form and have people discover bugs rather than
+continuing to have non-shipping-but-headed-towards-perfection code."*
+
+**Both resolver fixes are in** (`lib/region.js`):
+
+- Admin detection walks `P279*` to the specific admin classes via a new
+  `ADMIN_SUBCLASS_ROOTS`. `Q56061` (administrative territorial entity) is deliberately
+  **excluded from the walk** — it is the root nearly every place class descends from, and
+  the Mission District reaches it and nothing narrower, so walking to it would classify
+  neighborhoods as admin regions and undo the boundary-resolution design. It remains a
+  direct-P31 match. Live after the fix: San Mateo **13 → 323 articles** (admin, 1.7s),
+  Mission District still geo, California still admin.
+- The geo seed radius is derived from the boundary's farthest vertex
+  (`radiusForBoundary`, equirectangular, ×1.15 margin, ceiling) instead of a flat 5 km,
+  so the polygon filter has something real to trim. Falls back to the 5 km default when
+  the geometry yields no usable position, and approximate (no-boundary) mode is unchanged.
+
+**A create form ships at `/create`** (`lib/topic-create.js`, routes in
+`public/server.js`). Place search against Wikidata's `wbsearchentities`, a size estimate
+before anything is written, dedup so two people asking for the same place share one
+topic. Gated by an **invite code from `config.web.invite_codes`** — Louie chose this over
+wiring the OAuth spike, because an OAuth consumer needs Wikimedia registration and
+approval, and waiting on that keeps the flow off the internet where its bugs are. Both
+routes stay off unless `topic_store` **and** `web.invite_codes` are configured.
+
+A **5,000-article ceiling** (`web.max_articles`) is Phase 9's guardrail in its cheapest
+useful form. Verified live: California is refused at 24,346 en articles.
+
+Live end-to-end, all through HTTP against a real database: place search → estimate →
+bad invite refused → SSRF webhook refused → create (323 articles) → second person joins
+the same topic (1 topic, 2 subscriptions) → California refused → **the running bot boots
+and reports `Topic index: 323 titles across 1 topics`**. The loop is closed.
+
+Still not verified, still needs Louie, still outward-facing: a real Discord webhook
+receiving a real post. Everything up to the moment of posting is exercised.
+
+Also found and NOT fixed: `fetchBoundary` cannot stitch Yosemite's OSM relation
+(`1643367`) — "unclosed outer ring" after stitching all 40 ways. It throws loudly rather
+than returning something wrong, so it is a real but non-silent bug. Unrelated to the two
+fixes above.
+
+## GO/NO-GO for Plan B — measured 2026-07-29 BEFORE the fixes above
 
 The design plan says to run the scale check before writing Plan B. Numbers, live:
 
