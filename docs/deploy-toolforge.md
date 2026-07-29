@@ -196,11 +196,16 @@ you are deploying for.
 
 ```bash
 toolforge jobs run rebuild-topics \
-  --command "node scripts/rebuild-topics.js all" \
+  --command rebuild-topics \
   --image tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest \
-  --schedule "@daily" \
+  --schedule "17 4 * * *" \
   --mem 1Gi
 ```
+
+`rebuild-topics` is a Procfile entry, so the launcher resolves it and the
+command cannot drift from the Procfile. Off-peak and off the hour on purpose:
+WDQS is shared, and every tool scheduling `@daily` hits it at midnight
+together.
 
 This is what follows renames, picks up new articles, and drops departed ones.
 Without it, a topic's list is frozen at whatever the create form resolved.
