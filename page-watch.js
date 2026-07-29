@@ -15,6 +15,14 @@ const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
 const discord = require('./lib/discord-platform')
 const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
+const { createTopicStore } = require('./lib/topic-store')
+const { createTopicIndex } = require('./lib/topic-index')
+const { deliverAll } = require('./lib/subscription-delivery')
+
+// Topic store and index are null until main() starts them; the bot runs
+// without a topic_store stanza exactly as it did before this phase.
+let topicStore = null
+let topicIndex = null
 const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-watch')
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
@@ -335,7 +343,38 @@ function getStatus(edit, name, template) {
   }
 }
 
-async function sendStatus(account, statusData, edit) {
+/**
+ * Deliver an already-rendered post to every subscription of every matched
+ * topic. The render happened once, upstream; this is the cheap part.
+ *
+ * Exported for testing.
+ */
+async function deliverToTopics({ topicStore: store, topicIds }, payload) {
+  if (!store || topicIds.length === 0) return []
+
+  const results = []
+  for (const topicId of topicIds) {
+    let subscriptions
+    try {
+      subscriptions = await store.subscriptionsForTopic(topicId)
+    } catch (error) {
+      console.error(`Could not load subscriptions for topic ${topicId}:`, error.message)
+      continue
+    }
+
+    const delivered = await deliverAll(subscriptions, payload)
+    for (const result of delivered) {
+      if (!result.ok) {
+        console.error(
+          `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
+      }
+    }
+    results.push(...delivered)
+  }
+  return results
+}
+
+async function sendStatus(account, statusData, edit, topicIds = []) {
   try {
     console.log(statusData.text)
 
@@ -420,6 +459,15 @@ async function sendStatus(account, statusData, edit) {
           discordMessageId = result?.id || null
         }
 
+        // Fan out to topic subscriptions, reusing the single render above.
+        // Delivery failures are logged per subscription and never abort the
+        // account-level posts that already succeeded.
+        await deliverToTopics({ topicStore, topicIds }, {
+          text: enrichedText,
+          screenshot,
+          metadata
+        })
+
         // Record what was posted so the revdel sweeper can delete these
         // posts if the revision is later hidden on-wiki
         recordPost({ diffUrl: edit.url, page: edit.page, blueskyUri, mastodonId, discordMessageId })
@@ -449,10 +497,17 @@ async function inspect(account, edit) {
   }
 
   if (edit.url) {
-    if (isWatched(account, edit)) {
+    // Two independent membership sources. The legacy PageAssessments
+    // watchlist is what the SFBA bot runs on and is deliberately left
+    // untouched; the topic index is the new platform path. An edit matching
+    // both is rendered once and delivered to both.
+    const watched = isWatched(account, edit)
+    const topicIds = topicIndex ? topicIndex.topicsForEdit(edit) : []
+
+    if (watched || topicIds.length > 0) {
       const statusData = getStatus(edit, edit.user, account.template)
       try {
-        await sendStatus(account, statusData, edit)
+        await sendStatus(account, statusData, edit, topicIds)
       } catch (error) {
         console.error('Failed to process edit:', edit.page, error.message)
       }
@@ -476,6 +531,23 @@ async function main() {
 
   // Fetch dynamic article lists (WikiProject task forces) before listening
   await startWatchlistSync(config, { dataDir: HEARTBEAT_DIR })
+
+  // Topic store: optional. Without a topic_store stanza the bot behaves
+  // exactly as it did before the platform work, running on the account
+  // watchlists alone.
+  if (config.topic_store) {
+    topicStore = createTopicStore({ config: config.topic_store })
+    topicIndex = createTopicIndex(topicStore)
+    const loaded = await topicIndex.refresh()
+    if (loaded.ok) {
+      const stats = topicIndex.stats()
+      console.log(
+        `Topic index: ${stats.titleCount} titles across ${stats.topicCount} topics`)
+      topicIndex.start()
+    } else {
+      console.error('Topic index unavailable at startup; account watchlists still active')
+    }
+  }
 
   // Build Bay Area target sets for Wikidata claim notices before listening
   await startClaimWatch(config, { dataDir: HEARTBEAT_DIR })
@@ -533,4 +605,9 @@ module.exports = {
   extractDiffText,
   analyzeForPII,
   screenForPII
+}
+module.exports.deliverToTopics = deliverToTopics
+module.exports._setTopicStateForTest = (store, index) => {
+  topicStore = store
+  topicIndex = index
 }
