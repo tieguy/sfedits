@@ -62,4 +62,28 @@ describe('lib/config', function() {
     const config = loadConfig({ env: { CONFIG_PATH: file } })
     assert.equal(config.nick, 'pathbot')
   })
+
+  it('passes a topic_store stanza through untouched', function() {
+    const config = loadConfig({
+      env: {
+        SFEDITS_CONFIG: JSON.stringify({
+          accounts: [],
+          topic_store: {
+            host: 'tools.db.svc.wikimedia.cloud',
+            database: 's51234__sfedits'
+          }
+        })
+      }
+    })
+
+    assert.equal(config.topic_store.database, 's51234__sfedits')
+  })
+
+  it('loads a config with no topic_store stanza', function() {
+    const config = loadConfig({
+      env: { SFEDITS_CONFIG: JSON.stringify({ accounts: [] }) }
+    })
+
+    assert.isUndefined(config.topic_store)
+  })
 })
