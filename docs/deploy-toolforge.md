@@ -28,12 +28,12 @@ git push fork integration
 
 Never push to `origin` — that is Finn's upstream.
 
-**Decide the tool name.** `public/server.js`'s `toolinfo.json` claims
-`san-francisco-edit-stream.toolforge.org`, but the in-flight
-`toolforge-jobs.yaml` (uncommitted, in the main checkout as of 2026-07-29) uses
-images named `tool-sfedits/tool-sfedits`. **These disagree** — pick one and fix
-the other before deploying, or `/toolinfo.json` will advertise a URL that does
-not resolve. The rest of this document writes it as `$TOOL`.
+**The tool is `san-francisco-edit-stream`** (settled 2026-07-29), so the
+webservice is at `https://san-francisco-edit-stream.toolforge.org` and build
+images are `tool-san-francisco-edit-stream/tool-san-francisco-edit-stream`.
+That matches what `public/server.js`'s `toolinfo.json` already advertises.
+The short form `sfedits` is the **GitHub repo** name and the local checkout —
+not the tool.
 
 **This document uses ad-hoc `toolforge jobs run` commands.** The uncommitted
 `toolforge-jobs.yaml` declares the same jobs and loads them in one shot with
@@ -56,7 +56,7 @@ browser). Then:
 
 ```bash
 ssh login.toolforge.org
-become $TOOL
+become san-francisco-edit-stream
 ```
 
 ## 2. Create the ToolsDB database
@@ -149,7 +149,7 @@ Once, before anything starts, and again after any deploy that adds a migration:
 ```bash
 toolforge jobs run migrate \
   --command "node scripts/migrate.js" \
-  --image tool-$TOOL/tool-$TOOL:latest \
+  --image tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest \
   --wait
 
 toolforge jobs logs migrate
@@ -169,18 +169,18 @@ toolforge webservice status
 
 Then check, from anywhere:
 
-- `https://$TOOL.toolforge.org/` — the coverage page
-- `https://$TOOL.toolforge.org/create` — the form. If it says "Bot creation is
+- `https://san-francisco-edit-stream.toolforge.org/` — the coverage page
+- `https://san-francisco-edit-stream.toolforge.org/create` — the form. If it says "Bot creation is
   not enabled here", the `web.invite_codes` list is missing or empty, or
   `topic_store` is absent.
-- `https://$TOOL.toolforge.org/api/places.json?q=mission` — place search
+- `https://san-francisco-edit-stream.toolforge.org/api/places.json?q=mission` — place search
 
 ## 7. Start the bot
 
 ```bash
 toolforge jobs run bot \
   --command "node page-watch.js" \
-  --image tool-$TOOL/tool-$TOOL:latest \
+  --image tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest \
   --continuous \
   --mem 1Gi
 
@@ -197,7 +197,7 @@ you are deploying for.
 ```bash
 toolforge jobs run rebuild-topics \
   --command "node scripts/rebuild-topics.js all" \
-  --image tool-$TOOL/tool-$TOOL:latest \
+  --image tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest \
   --schedule "@daily" \
   --mem 1Gi
 ```
@@ -210,7 +210,7 @@ Optionally, weekly garbage collection of topics nobody subscribes to any more:
 ```bash
 toolforge jobs run gc-topics \
   --command "node scripts/rebuild-topics.js gc" \
-  --image tool-$TOOL/tool-$TOOL:latest \
+  --image tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest \
   --schedule "0 4 * * 0"
 ```
 
@@ -237,7 +237,7 @@ toolforge jobs restart bot
 toolforge webservice buildservice restart
 # only if the deploy adds a migration:
 toolforge jobs run migrate --command "node scripts/migrate.js" \
-  --image tool-$TOOL/tool-$TOOL:latest --wait
+  --image tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest --wait
 ```
 
 ## Things that will go wrong
