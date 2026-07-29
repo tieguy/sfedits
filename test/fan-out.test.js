@@ -338,3 +338,58 @@ describe('subscription rate caps', function() {
     assert.isTrue(scope.isDone())
   })
 })
+
+describe('subscription health', function() {
+  this.timeout(5000)
+
+  it('quarantines after consecutive permanent failures', function() {
+    const { createHealthTracker } = require('../lib/subscription-health')
+    const tracker = createHealthTracker({ threshold: 3 })
+
+    assert.isFalse(tracker.record(1, { ok: false, permanent: true }))
+    assert.isFalse(tracker.record(1, { ok: false, permanent: true }))
+    assert.isTrue(tracker.record(1, { ok: false, permanent: true }),
+      'third consecutive permanent failure quarantines')
+  })
+
+  it('does not count transient failures toward quarantine', function() {
+    const { createHealthTracker } = require('../lib/subscription-health')
+    const tracker = createHealthTracker({ threshold: 2 })
+
+    assert.isFalse(tracker.record(1, { ok: false, permanent: false }))
+    assert.isFalse(tracker.record(1, { ok: false, permanent: false }))
+    assert.isFalse(tracker.record(1, { ok: false, permanent: false }),
+      'Discord having a bad hour must not disable a working bot')
+  })
+
+  it('resets the streak on a success', function() {
+    const { createHealthTracker } = require('../lib/subscription-health')
+    const tracker = createHealthTracker({ threshold: 2 })
+
+    tracker.record(1, { ok: false, permanent: true })
+    tracker.record(1, { ok: true })
+
+    assert.isFalse(tracker.record(1, { ok: false, permanent: true }),
+      'streak restarted after the success')
+  })
+
+  it('ignores capped results entirely', function() {
+    const { createHealthTracker } = require('../lib/subscription-health')
+    const tracker = createHealthTracker({ threshold: 2 })
+
+    tracker.record(1, { ok: false, capped: true })
+    tracker.record(1, { ok: false, capped: true })
+    tracker.record(1, { ok: false, capped: true })
+
+    assert.isFalse(tracker.record(1, { ok: false, permanent: true }),
+      'being rate capped is not a health signal')
+  })
+
+  it('tracks each subscription separately', function() {
+    const { createHealthTracker } = require('../lib/subscription-health')
+    const tracker = createHealthTracker({ threshold: 2 })
+
+    tracker.record(1, { ok: false, permanent: true })
+    assert.isFalse(tracker.record(2, { ok: false, permanent: true }))
+  })
+})

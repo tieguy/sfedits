@@ -18,11 +18,15 @@ const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
 const { createTopicStore } = require('./lib/topic-store')
 const { createTopicIndex } = require('./lib/topic-index')
 const { deliverAll } = require('./lib/subscription-delivery')
+const { createHealthTracker } = require('./lib/subscription-health')
+const { SubscriptionLimiter } = require('./lib/delivery-limits')
 
 // Topic store and index are null until main() starts them; the bot runs
 // without a topic_store stanza exactly as it did before this phase.
 let topicStore = null
 let topicIndex = null
+let subscriptionLimiter = null
+const subscriptionHealth = createHealthTracker()
 const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-watch')
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
@@ -362,11 +366,32 @@ async function deliverToTopics({ topicStore: store, topicIds }, payload) {
       continue
     }
 
-    const delivered = await deliverAll(subscriptions, payload)
+    const delivered = await deliverAll(subscriptions, payload,
+      { limiter: subscriptionLimiter })
+
     for (const result of delivered) {
-      if (!result.ok) {
-        console.error(
-          `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
+      if (result.capped) {
+        console.log(`Subscription ${result.subscriptionId}: rate capped`)
+        continue
+      }
+      if (result.ok) {
+        subscriptionHealth.record(result.subscriptionId, result)
+        continue
+      }
+
+      console.error(
+        `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
+
+      if (subscriptionHealth.record(result.subscriptionId, result)) {
+        try {
+          await store.setSubscriptionStatus(result.subscriptionId, 'broken')
+          console.error(
+            `Subscription ${result.subscriptionId} quarantined after repeated ` +
+            'permanent failures; it will stop receiving posts')
+        } catch (error) {
+          console.error(
+            `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
+        }
       }
     }
     results.push(...delivered)
@@ -538,6 +563,13 @@ async function main() {
   if (config.topic_store) {
     topicStore = createTopicStore({ config: config.topic_store })
     topicIndex = createTopicIndex(topicStore)
+    subscriptionLimiter = new SubscriptionLimiter({
+      max: config.topic_store.max_posts_per_hour || undefined,
+      windowMs: config.topic_store.rate_window_ms || undefined
+    })
+    // Idle caps accumulate as subscriptions come and go; sweep hourly.
+    const pruneTimer = setInterval(() => subscriptionLimiter.prune(), 60 * 60 * 1000)
+    pruneTimer.unref()
     const loaded = await topicIndex.refresh()
     if (loaded.ok) {
       const stats = topicIndex.stats()
