@@ -105,3 +105,34 @@ To re-enable a repaired subscription:
 ```sql
 UPDATE subscriptions SET status = 'active' WHERE id = ?;
 ```
+
+## Self-serve bot creation (`/create`)
+
+```json
+{
+  "web": {
+    "invite_codes": ["sfba-alpha-2026"],
+    "max_articles": 5000
+  }
+}
+```
+
+`/create` and its APIs stay **off** unless both a `topic_store` stanza and at
+least one invite code are configured — a deployment with neither runs as the
+read-only coverage page it always was. An empty `invite_codes` list closes
+creation rather than opening it.
+
+`max_articles` (default 5,000) is the region-size refusal. It is not tidiness:
+California resolves cleanly to 24,346 English articles in about 16 seconds, so
+nothing about the query itself stops someone from pointing a firehose at their
+own Discord channel. The estimate shown before submission comes from the same
+histogram the refusal uses.
+
+Codes are shared secrets, not accounts. Revoking one is an edit to
+`SFEDITS_CONFIG` and a restart. **Wikimedia OAuth replaces this** — see Phase 6
+in the design plan; the form's shape does not change when it lands, only where
+`owner_user` comes from.
+
+Two people who ask for the same place with the same languages get **one topic
+and two subscriptions**: the region is resolved once, each edit is rendered
+once, and the second person is told they joined rather than created.
