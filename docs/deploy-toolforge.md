@@ -28,9 +28,26 @@ git push fork integration
 
 Never push to `origin` — that is Finn's upstream.
 
-**Decide the tool name.** `public/server.js`'s `toolinfo.json` already claims
-`san-francisco-edit-stream.toolforge.org`; if you pick a different name, change
-that route too. The rest of this document writes it as `$TOOL`.
+**Decide the tool name.** `public/server.js`'s `toolinfo.json` claims
+`san-francisco-edit-stream.toolforge.org`, but the in-flight
+`toolforge-jobs.yaml` (uncommitted, in the main checkout as of 2026-07-29) uses
+images named `tool-sfedits/tool-sfedits`. **These disagree** — pick one and fix
+the other before deploying, or `/toolinfo.json` will advertise a URL that does
+not resolve. The rest of this document writes it as `$TOOL`.
+
+**This document uses ad-hoc `toolforge jobs run` commands.** The uncommitted
+`toolforge-jobs.yaml` declares the same jobs and loads them in one shot with
+`toolforge jobs load toolforge-jobs.yaml`, which is the better path once that
+file lands — it keeps job definitions in git and its `command:` values are
+Procfile entry names, so they cannot drift from the Procfile. Prefer it if it
+is present; the individual commands below are the fallback and the explanation
+of what each job is for.
+
+**If the `autoupdate` poller is already running on Toolforge, pushing to
+`fork/integration` deploys.** That job polls the branch every 15 minutes and
+rebuilds when the SHA moves. That is the intended design, but it means a push
+is a deploy — migrate before or immediately after, or the new code meets an
+old schema.
 
 ## 1. Create the tool and log in
 
