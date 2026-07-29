@@ -16,12 +16,24 @@ Prefer the smallest thing that works and is tested over the thorough version.
 | 1 | 1–7 (geo dep → strategy dispatch) | done |
 | 1 | chunking → unchunked + size guard | **done, live-verified** |
 | — | boundary resolution (unplanned sub-plan) | **done** |
-| 2 | topic store on ToolsDB | **in progress (started 2026-07-29)** |
+| 2 | 1–5 (driver → watch index) | **done 2026-07-29** |
 | 3–5 | rebuild job, bot wiring, delivery | not started |
 | 6 | Wikimedia OAuth | `lib/mw-oauth.js` spike only, **not wired** |
 
-Test suite: **352 passing, 1 pending, 0 failing** (2026-07-29).
+Test suite: **393 passing, 1 pending, 0 failing** with the test database up
+(`npm run test:db:start`); **369 passing, 25 pending** with it down. Both are green.
 Run `npm test`. Verify the *delta*, never an absolute number.
+
+### Phase 2 as built (differs from the plan in two small ways)
+
+- The migration runner lives in **`lib/db.js`**, not in the test helper, so the rebuild
+  job and webservice apply migrations by the same path the tests do.
+  `test/helpers/db-helper.js` is now only `describeWithDb` / `truncateAll` / `testDsn`.
+- The plan deliberately left `connectionOptions` and `parseJsonColumn` tests red at the
+  end of Task 3. Those tests were moved to Task 4 instead; no task ends red.
+
+Also worth knowing downstream: `setTopicArticles` does **not** bump the generation when a
+rebuild changes nothing, so an idle rebuild does not force every bot to reload its index.
 
 ### The boundary-resolution detour (2026-07-24 → 07-25)
 
