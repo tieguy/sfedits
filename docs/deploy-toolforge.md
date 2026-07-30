@@ -44,9 +44,11 @@ explanation of what each job is for.
 
 **If the `autoupdate` poller is already running on Toolforge, pushing to
 `fork/integration` deploys.** That job polls the branch every 15 minutes and
-rebuilds when the SHA moves. That is the intended design, but it means a push
-is a deploy — migrate before or immediately after, or the new code meets an
-old schema.
+rebuilds when the SHA moves — build, then migrate on the new image, then restart
+the bot and the webservice, then record the SHA. A failed build or migration
+records nothing and retries on the next tick, so a push is a deploy but a bad
+push is not a broken deploy. Step 5 below is only needed for the **first**
+deploy, before the poller exists.
 
 ## 1. Create the tool and log in
 
