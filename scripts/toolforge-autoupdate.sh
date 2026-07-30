@@ -24,8 +24,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_URL="${SFEDITS_DEPLOY_REPO:-https://github.com/tieguy/sfedits.git}"
 BRANCH="${SFEDITS_DEPLOY_BRANCH:-integration}"
 BOT_JOB="${SFEDITS_BOT_JOB:-bot}"
-# Set to "yes" once the admin console runs as a webservice.
-RESTART_WEBSERVICE="${SFEDITS_RESTART_WEBSERVICE:-no}"
+# The webservice is not optional any more: public/server.js serves the /create
+# form, so a deploy that only restarts the bot ships new bot code against an old
+# form. Set to "no" to deploy the bot alone.
+RESTART_WEBSERVICE="${SFEDITS_RESTART_WEBSERVICE:-yes}"
+
+# Schema migrations run on the freshly built image before the restart. Set to
+# "no" only to debug a deploy; skipping them ships code against an old schema.
+RUN_MIGRATIONS="${SFEDITS_RUN_MIGRATIONS:-yes}"
+MIGRATE_JOB="${SFEDITS_MIGRATE_JOB:-migrate}"
+IMAGE="${SFEDITS_IMAGE:-tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest}"
 
 STATE_DIR="${SFEDITS_STATE_DIR:-$HOME/data}"
 SHA_FILE="$STATE_DIR/deployed-sha"
@@ -101,6 +109,35 @@ while :; do
     *) log "build in progress..." ;;
   esac
 done
+
+# --- migrate -----------------------------------------------------------
+#
+# On the image that was just built, so the migrations that ship with the new
+# code are the ones applied. BEFORE the restart, deliberately: new code must
+# never meet an old schema, and the reverse is survivable because migrations are
+# additive (CREATE TABLE IF NOT EXISTS) - the still-running old code tolerates
+# the new schema for the seconds until the restart.
+#
+# scripts/migrate.js is idempotent, so this runs on every deploy rather than
+# only on deploys that add a migration. One cheap query, and no chance of
+# forgetting which deploy was the one that needed it.
+if [ "$RUN_MIGRATIONS" = "yes" ]; then
+  log "applying migrations"
+  # `jobs run` refuses a name that already exists, and the previous deploy's
+  # finished job still holds the name.
+  toolforge jobs delete "$MIGRATE_JOB" >/dev/null 2>&1 || true
+
+  if ! toolforge jobs run "$MIGRATE_JOB" \
+       --command "$MIGRATE_JOB" --image "$IMAGE" --wait; then
+    toolforge jobs logs "$MIGRATE_JOB" 2>/dev/null | tail -20 || true
+    alert "migrations failed for ${REMOTE_SHA:0:8}; not restarting"
+    exit 1
+  fi
+
+  # The exit status of a --wait job is not always the migration's own status,
+  # so surface the output either way; migrate.js prints what it applied.
+  toolforge jobs logs "$MIGRATE_JOB" 2>/dev/null | tail -5 || true
+fi
 
 # --- restart -----------------------------------------------------------
 
