@@ -35,13 +35,12 @@ That matches what `public/server.js`'s `toolinfo.json` already advertises.
 The short form `sfedits` is the **GitHub repo** name and the local checkout —
 not the tool.
 
-**This document uses ad-hoc `toolforge jobs run` commands.** The uncommitted
+**This document uses ad-hoc `toolforge jobs run` commands.**
 `toolforge-jobs.yaml` declares the same jobs and loads them in one shot with
-`toolforge jobs load toolforge-jobs.yaml`, which is the better path once that
-file lands — it keeps job definitions in git and its `command:` values are
-Procfile entry names, so they cannot drift from the Procfile. Prefer it if it
-is present; the individual commands below are the fallback and the explanation
-of what each job is for.
+`toolforge jobs load toolforge-jobs.yaml`. Prefer it — it keeps job definitions
+in git and its `command:` values are Procfile entry names, so they cannot drift
+from the Procfile. The individual commands below remain the fallback and the
+explanation of what each job is for.
 
 **If the `autoupdate` poller is already running on Toolforge, pushing to
 `fork/integration` deploys.** That job polls the branch every 15 minutes and
