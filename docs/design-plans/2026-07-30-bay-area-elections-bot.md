@@ -416,8 +416,10 @@ posts unchanged.
 **Components:**
 - Candidacy statements on `Q110933376` (Connie Chan) and `Q7437504` (Scott
   Wiener): `P3602` → `Q131470954`, qualified `P768` → `Q2681039` (CA-11), each
-  referenced to the CA SoS certified candidate list.
-- Re-reference against the general-election certified list when published
+  referenced to the certified **Statement of Vote** for the June 2 primary —
+  the source that proves advancement, not merely filing. See "Citation
+  precision" in Additional Considerations.
+- Add the general-election certified list as a second reference when published
   (~late August 2026).
 
 **Dependencies:** Phases 1, 3.
@@ -515,15 +517,32 @@ single implementation plan should cover Phases 2, 3, 5, 7, 8.
 rules in `CLAUDE.md`, statements are prepared as reviewable batches and wait for
 explicit approval before being applied. This design does not authorize any edit.
 
-**Citation precision.** The June primary certified list proves that Chan and
-Wiener were certified candidates for US Representative District 11 (verified:
-page 14 of 53, document dated 3/26/2026). It does not by itself prove
-advancement to the general — that comes from the primary results or the
-general-election certified list, expected late August 2026. Under California's
-top-two system both contests are stages of one election for one office, so
-`P3602` referenced to the primary certified list is defensible; adding the
-general-election list as a second reference in September is the honest
-completion.
+**Citation precision — pick the discriminating source.** The first draft of the
+CA-11 batch cited the SoS *Certified List of Candidates*. That was wrong, and
+the way it was wrong generalizes: that document lists all 11 CA-11 primary
+candidates and does nothing to distinguish the two who advanced. It would
+support a candidacy statement for Hurabiell or Ganezer equally well. A
+reference that cannot discriminate between the claim and its neighbours is not
+doing the job a reference exists to do.
+
+The correct source is the certified **Statement of Vote**
+(`.../sov/2026-primary/sov/76-us-rep.pdf`, page 79, verified 2026-07-30):
+Wiener 95,816 (40.7%), Chan 69,899 (29.7%), Chakrabarti 42,060 (17.9%). Under
+California's top-two primary the top two advance regardless of party, so this
+document proves the specific claim being made. The certified candidate list
+remains a valid *supporting* reference but must not be the only one.
+
+No `P577` (publication date) is asserted for the SOV: the certification date is
+not stated in any extractable text in the published PDFs and has not been
+verified. `P813` (retrieved) is asserted and is true. Where a reference field
+cannot be verified, omit it rather than inferring it from statutory deadlines.
+
+The general-election certified list, expected late August 2026, should be added
+as a second reference when it publishes — not as a replacement.
+
+**This generalizes to Phase 7.** The reconciliation report should diff against
+Statements of Vote and county canvass results, not candidate filing lists,
+because only the former establish who is actually on the November ballot.
 
 **Surveillance floor.** The place-bot design notes that amplification, not
 exposure, is the residual concern for a bot like this. Candidates for public
