@@ -1,7 +1,8 @@
 const { assert } = require('chai')
 
 const {
-  percentileRanks, median, leadScore, scoreCohort, pickCandidates, BAY_AREA_RE
+  percentileRanks, median, leadScore, scoreCohort, pickCandidates, BAY_AREA_RE,
+  wikitextLinks, canonicalInlinks, redirectTargets, buildUniverse, assignTiers
 } = require('../scripts/reassess')
 
 describe('reassess', function() {
@@ -55,6 +56,209 @@ describe('reassess', function() {
     })
   })
 
+  describe('wikitextLinks', function() {
+    it('extracts plain and piped links', function() {
+      const links = wikitextLinks('The [[Mission District]] and [[Bay Bridge|the bridge]].')
+      assert.deepEqual([...links].sort(), ['Bay Bridge', 'Mission District'])
+    })
+
+    it('strips section anchors', function() {
+      assert.deepEqual([...wikitextLinks('[[Oakland#History]]')], ['Oakland'])
+    })
+
+    it('normalizes underscores and leading case like MediaWiki', function() {
+      assert.deepEqual([...wikitextLinks('[[san_francisco bay]]')], ['San francisco bay'])
+    })
+
+    it('counts a repeated link once', function() {
+      assert.deepEqual([...wikitextLinks('[[Caltrain]] runs. See [[Caltrain]].')], ['Caltrain'])
+    })
+
+    it('ignores links inside HTML comments', function() {
+      assert.deepEqual([...wikitextLinks('[[Berkeley]] <!-- [[Hidden Place]] -->')], ['Berkeley'])
+    })
+
+    it('excludes file, image and category links', function() {
+      const links = wikitextLinks('[[File:X.jpg|thumb]] [[Category:Y]] [[Image:Z.png]] [[Alcatraz]]')
+      assert.deepEqual([...links], ['Alcatraz'])
+    })
+
+    it('finds a link nested inside a file caption', function() {
+      const links = wikitextLinks('[[File:X.jpg|thumb|A view of [[Coit Tower]]]]')
+      assert.deepEqual([...links], ['Coit Tower'])
+    })
+
+    it('does NOT see links that only a transcluded template would render', function() {
+      // the whole point of the stage: a navbox call contributes no links here
+      assert.deepEqual([...wikitextLinks('Text. {{Bay Area Rapid Transit}}')], [])
+    })
+
+    it('returns an empty set for empty or missing text', function() {
+      assert.equal(wikitextLinks('').size, 0)
+      assert.equal(wikitextLinks(undefined).size, 0)
+    })
+
+    it('ignores publications wikilinked inside a citation template', function() {
+      // ~93% of TechCrunch's inbound links are of this shape: a reference, not
+      // a statement that the article is about TechCrunch.
+      const links = wikitextLinks(
+        'Instagram launched.<ref>{{cite web |work=[[TechCrunch]] |title=X}}</ref> ' +
+        'It is based in [[Menlo Park]].')
+      assert.deepEqual([...links], ['Menlo Park'])
+    })
+
+    it('ignores links anywhere inside ref tags, not just citation templates', function() {
+      const links = wikitextLinks(
+        'Text.<ref>See [[Oakland Tribune]], p. 4.</ref> More [[Berkeley]] text.')
+      assert.deepEqual([...links], ['Berkeley'])
+    })
+
+    it('handles self-closing and named ref tags', function() {
+      const links = wikitextLinks(
+        '[[Alcatraz]] text.<ref name="a">[[Wired (magazine)]]</ref><ref name="a" /> end.')
+      assert.deepEqual([...links], ['Alcatraz'])
+    })
+
+    it('ignores a bare citation template outside ref tags', function() {
+      const links = wikitextLinks('{{cite news |work=[[San Francisco Chronicle]]}} [[Presidio]]')
+      assert.deepEqual([...links], ['Presidio'])
+    })
+
+    it('still counts a publication linked in actual prose', function() {
+      const links = wikitextLinks('The [[San Francisco Chronicle]] is the city\'s daily paper.')
+      assert.deepEqual([...links], ['San Francisco Chronicle'])
+    })
+  })
+
+  describe('canonicalInlinks', function() {
+    const cohort = ['California gold rush', 'Netflix']
+    const redirects = {
+      'California gold rush': 'California gold rush',
+      'California Gold Rush': 'California gold rush',
+      'Gold Rush (California)': 'California gold rush',
+      Netflix: 'Netflix'
+    }
+
+    it('folds redirect counts into the canonical title', function() {
+      const counts = { 'California gold rush': 60, 'California Gold Rush': 250, 'Gold Rush (California)': 35 }
+      const out = canonicalInlinks(counts, redirects, cohort)
+      assert.equal(out['California gold rush'], 345)
+    })
+
+    it('leaves an article with no redirects unchanged', function() {
+      const out = canonicalInlinks({ Netflix: 125 }, redirects, cohort)
+      assert.equal(out.Netflix, 125)
+    })
+
+    it('drops targets outside the cohort', function() {
+      const out = canonicalInlinks({ Netflix: 125, Microsoft: 177 }, redirects, cohort)
+      assert.isUndefined(out.Microsoft)
+    })
+
+    it('ignores targets absent from the redirect map', function() {
+      // unmapped titles cannot be resolved and must not be guessed at
+      const out = canonicalInlinks({ 'Some Unmapped Title': 9 }, redirects, cohort)
+      assert.isUndefined(out['Some Unmapped Title'])
+    })
+
+    it('reports zero for a cohort article nothing links to', function() {
+      const out = canonicalInlinks({ Netflix: 3 }, redirects, cohort)
+      assert.equal(out['California gold rush'], 0)
+    })
+  })
+
+  describe('redirectTargets', function() {
+    const cohort = [{ title: 'Oakland' }, { title: 'Berkeley' }]
+
+    it('returns cohort titles when there are no candidates', function() {
+      assert.deepEqual(redirectTargets(cohort, null), ['Oakland', 'Berkeley'])
+    })
+
+    it('includes untagged candidates so their inlinks are not undercounted', function() {
+      const out = redirectTargets(cohort, [{ title: 'Port of Oakland' }])
+      assert.include(out, 'Port of Oakland')
+      assert.lengthOf(out, 3)
+    })
+
+    it('de-duplicates a candidate that is also in the cohort', function() {
+      const out = redirectTargets(cohort, [{ title: 'Oakland' }, { title: 'Sausalito' }])
+      assert.lengthOf(out, 3)
+      assert.equal(out.filter(t => t === 'Oakland').length, 1)
+    })
+  })
+
+  describe('buildUniverse', function() {
+    const cohort = [
+      { title: 'Oakland, California', importance: 'top' },
+      { title: 'Some List', importance: 'na' }
+    ]
+    const candidates = [
+      { title: 'Port of Oakland', via: ['P159'] },
+      { title: 'Microsoft', via: ['P937'] },
+      { title: 'Joe DiMaggio', via: ['P19', 'P20'] },
+      { title: 'Plaza de César Chávez', via: ['P131'] },
+      { title: 'Chyanne Chen', via: ['P39'] }
+    ]
+
+    it('keeps candidates whose Wikidata says the subject IS in the region', function() {
+      const titles = buildUniverse(cohort, candidates).map(u => u.title)
+      assert.include(titles, 'Port of Oakland')
+      assert.include(titles, 'Plaza de César Chávez')
+      assert.include(titles, 'Chyanne Chen')
+    })
+
+    it('drops candidates that merely passed through - born, died, worked', function() {
+      const titles = buildUniverse(cohort, candidates).map(u => u.title)
+      assert.notInclude(titles, 'Microsoft', 'work location only')
+      assert.notInclude(titles, 'Joe DiMaggio', 'birth and death only')
+    })
+
+    it('excludes NA-class cohort entries but keeps rated ones', function() {
+      const titles = buildUniverse(cohort, candidates).map(u => u.title)
+      assert.include(titles, 'Oakland, California')
+      assert.notInclude(titles, 'Some List')
+    })
+
+    it('marks which entries are already tagged', function() {
+      const u = Object.fromEntries(buildUniverse(cohort, candidates).map(x => [x.title, x]))
+      assert.isTrue(u['Oakland, California'].tagged)
+      assert.equal(u['Oakland, California'].importance, 'top')
+      assert.isFalse(u['Port of Oakland'].tagged)
+      assert.isNull(u['Port of Oakland'].importance)
+    })
+
+    it('does not duplicate a candidate that is already tagged', function() {
+      const out = buildUniverse(cohort, [...candidates, { title: 'Oakland, California', via: ['P131'] }])
+      assert.equal(out.filter(x => x.title === 'Oakland, California').length, 1)
+      assert.isTrue(out.find(x => x.title === 'Oakland, California').tagged)
+    })
+  })
+
+  describe('assignTiers', function() {
+    // 1000 articles, descending score
+    const ranked = Array.from({ length: 1000 }, (_, i) => ({ title: `A${i}`, inlinks: 1000 - i }))
+
+    it('cuts tiers at the given percentiles of the ranked list', function() {
+      const out = assignTiers(ranked, { top: 0.0025, high: 0.025, mid: 0.15 })
+      assert.equal(out.filter(r => r.tier === 'top').length, 3)
+      assert.equal(out.filter(r => r.tier === 'high').length, 22)
+      assert.equal(out.filter(r => r.tier === 'mid').length, 125)
+      assert.equal(out.filter(r => r.tier === 'low').length, 850)
+    })
+
+    it('assigns the highest-ranked article to top', function() {
+      const out = assignTiers(ranked, { top: 0.0025, high: 0.025, mid: 0.15 })
+      assert.equal(out[0].tier, 'top')
+      assert.equal(out[out.length - 1].tier, 'low')
+    })
+
+    it('records the inlink cutoff for each tier', function() {
+      const out = assignTiers(ranked, { top: 0.0025, high: 0.025, mid: 0.15 })
+      assert.equal(out.cutoffs.top, 998)
+      assert.equal(out.cutoffs.high, 976)
+    })
+  })
+
   describe('scoreCohort', function() {
     const inputs = {
       cohort: [
@@ -86,9 +290,7 @@ describe('reassess', function() {
         byTitle['Netscape'].significance)
     })
 
-    it('uses inlink ratio for Top/High significance when denominators exist', function() {
-      // Netscape: high raw inlinks but a tiny share of its total backlinks;
-      // BoS: fewer raw inlinks but the task force is most of its links.
+    it('reports inlink ratio as evidence without scoring on it', function() {
       const rows = scoreCohort({
         ...inputs,
         denoms: {
@@ -98,10 +300,93 @@ describe('reassess', function() {
       })
       const byTitle = Object.fromEntries(rows.map(r => [r.title, r]))
       assert.approximately(byTitle['Netscape'].ratio, 2 / 4000, 1e-9)
-      assert.isAbove(byTitle['SF Board of Supervisors'].significanceTH,
-        byTitle['Netscape'].significanceTH)
-      // Daniel Lurie is not Top/High, so no denominator-based score
-      assert.isUndefined(byTitle['Daniel Lurie'].significanceTH)
+      assert.equal(byTitle['Netscape'].totalInlinks, 4000)
+      assert.isUndefined(byTitle['Netscape'].significanceTH, 'refinement removed')
+    })
+
+    it('adds a navbox-free significance when linksProse is supplied', function() {
+      // Station: 100 cohort inlinks, but only 1 survives navbox stripping.
+      // Plaza: barely linked by navboxes, well linked from prose.
+      const rows = scoreCohort({
+        cohort: [
+          { title: 'Station', importance: 'high' },
+          { title: 'Middle', importance: 'high' },
+          { title: 'Plaza', importance: 'high' }
+        ],
+        qids: { Station: 'Q1', Middle: 'Q2', Plaza: 'Q3' },
+        links: { Station: 100, Middle: 50, Plaza: 1 },
+        linksProse: { Station: 1, Middle: 50, Plaza: 60 },
+        claims: { Q1: 0, Q2: 5, Q3: 9 },
+        assessments: {
+          Station: { otherProjects: 0 },
+          Middle: { otherProjects: 1 },
+          Plaza: { otherProjects: 3 }
+        },
+        leads: {
+          Station: { score: 0.9, term: 'Oakland' },
+          Middle: { score: 0.5, term: 'Oakland' },
+          Plaza: { score: 0 }
+        }
+      })
+      const byTitle = Object.fromEntries(rows.map(r => [r.title, r]))
+      assert.equal(byTitle.Station.inlinkProse, 1)
+      assert.equal(byTitle.Station.inlink, 100, 'raw metric is preserved')
+      assert.isBelow(byTitle.Station.significanceProse, byTitle.Station.significance,
+        'a navbox-inflated article falls once navbox links are removed')
+      assert.isAbove(byTitle.Plaza.significanceProse, byTitle.Plaza.significance,
+        'a prose-linked article rises')
+    })
+
+    it('leaves prose fields undefined when linksProse is absent', function() {
+      const rows = scoreCohort(inputs)
+      assert.isUndefined(rows[0].inlinkProse)
+      assert.isUndefined(rows[0].significanceProse)
+    })
+
+    it('treats an article missing from linksProse as zero prose inlinks', function() {
+      const rows = scoreCohort({ ...inputs, linksProse: { Netscape: 2 } })
+      const byTitle = Object.fromEntries(rows.map(r => [r.title, r]))
+      assert.equal(byTitle['Daniel Lurie'].inlinkProse, 0)
+    })
+
+    it('ranks on canonical inlinks alone when they are supplied', function() {
+      // Netflix leads on raw inlinks; the Gold Rush leads once redirects are
+      // folded in, and the score must follow the canonical count.
+      const rows = scoreCohort({
+        ...inputs,
+        linksCanonical: { 'SF Board of Supervisors': 2, Netscape: 40, 'Daniel Lurie': 345 }
+      })
+      const byTitle = Object.fromEntries(rows.map(r => [r.title, r]))
+      assert.equal(byTitle['Daniel Lurie'].inlinkCanonical, 345)
+      assert.isAbove(byTitle['Daniel Lurie'].significance, byTitle['Netscape'].significance)
+      assert.isAbove(byTitle['Netscape'].significance, byTitle['SF Board of Supervisors'].significance)
+    })
+
+    it('no longer applies the Top/High inlink-ratio refinement', function() {
+      // significanceTH over-penalised articles that are both locally central
+      // and globally famous; it is deliberately gone.
+      const rows = scoreCohort({
+        ...inputs,
+        linksCanonical: { 'SF Board of Supervisors': 40, Netscape: 2, 'Daniel Lurie': 25 },
+        denoms: {
+          'SF Board of Supervisors': { count: 60, capped: false },
+          Netscape: { count: 4000, capped: false }
+        }
+      })
+      assert.isUndefined(rows[0].significanceTH)
+    })
+
+    it('keeps entangle and lead as reported evidence, out of the score', function() {
+      const rows = scoreCohort({
+        ...inputs,
+        linksCanonical: { 'SF Board of Supervisors': 5, Netscape: 5, 'Daniel Lurie': 5 }
+      })
+      const byTitle = Object.fromEntries(rows.map(r => [r.title, r]))
+      // all three tie on inlinks, so the score must tie despite differing
+      // entangle/lead/exclusive values
+      assert.equal(byTitle['SF Board of Supervisors'].significance, byTitle['Netscape'].significance)
+      assert.equal(byTitle['Netscape'].entangle, 1, 'evidence still reported')
+      assert.equal(byTitle['SF Board of Supervisors'].lead, 0.9, 'evidence still reported')
     })
 
     it('defaults missing data to zero-valued metrics', function() {

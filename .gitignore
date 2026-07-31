@@ -17,3 +17,7 @@ data/posted-log.jsonl
 .superpowers/
 docs/superpowers/
 data/fonts/
+data/reassess-backup-*/
+data/wikidata-claim-targets.json
+\#*\#
+.#*
