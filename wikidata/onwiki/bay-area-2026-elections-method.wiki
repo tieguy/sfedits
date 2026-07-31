@@ -1,0 +1,336 @@
+{{User page}}
+
+Detailed method for [[../|the Bay Area 2026 elections proposal]]. This page is
+the "how"; the parent page is the "what and why", and is where discussion should
+happen.
+
+Written for one region and one cycle, but deliberately not specific to either —
+the structure applies anywhere an elections authority publishes certified
+results.
+
+== Scope ==
+
+Two gates, applied in order.
+
+=== The office-class floor ===
+
+'''In scope:''' federal, state legislative, county offices, and major-city
+offices. '''Out of scope:''' school boards, special districts, and municipal
+offices below the major-city line. Statewide offices are also out, as not
+specific to the region.
+
+This is an editorial judgment, not a derived one. The intent is to stop well
+above the point where a candidate stops being a public figure in any meaningful
+sense. Someone standing for Congress, a county board, or a city council in a
+substantial city has sought public office and public scrutiny; a first-time
+candidate for a minor local body has not, to the same degree.
+
+That line should not be decidable by the accident of whether someone happens to
+have a Wikidata item, which is what would happen if the mechanical gate below
+were the only control.
+
+'''"Major city" means population ≥ 100,000, or the seat of one of the nine
+counties''' — both checkable via {{P|P1082}} and {{P|P36}}, so the line is
+chosen editorially but applied mechanically. That gives sixteen cities over the
+population line plus four county seats below it. San Francisco is handled as a
+county, being a consolidated city-county.
+
+Charter-city status was considered as the line and rejected: it is close to
+uncorrelated with significance, excluding Fremont, Hayward and Daly City while
+admitting cities of around ten thousand people, and it changes by ballot measure
+for unrelated fiscal reasons.
+
+=== The mechanical bar ===
+
+Among contests passing the floor, a contest is included if '''either''' enwiki
+has an article for it, '''or''' at least one certified candidate has a Wikidata
+item. Both are checkable, and both are evidence that someone independent of this
+project already judged the subject notable.
+
+This applies to district contests too, which is why there is no vote-share
+threshold: a district is in scope if any of its counties is a Bay Area county.
+Share of a district's electorate does not measure whether an office represents
+Bay Area constituents — one Assembly district is 18% Santa Clara and is held by
+the Speaker of the California State Assembly.
+
+== Step 1: build a register of contests ==
+
+An auditable inventory of every in-scope contest, with the source establishing
+each one, published as a subpage of the parent.
+
+=== Re-discovered each cycle, never carried forward ===
+
+The register makes the next cycle cheaper, but it is rebuilt from sources rather
+than diffed. Contests appear and disappear for reasons no diff predicts:
+voting-rights settlements convert cities from at-large to district elections,
+creating seats that did not previously exist — over 600 California local bodies
+since 2002, on litigation timelines — and boundaries move mid-decade, as
+California's congressional districts did by ballot measure in November 2025.
+
+=== Federal and state legislative ===
+
+The state's certified results publication covers every congressional and
+legislative contest, one workbook per office class (see [[#Sources|Sources]]).
+Each district block lists per-county vote totals, so regional membership is
+derived from the documents themselves rather than from a maintained list of
+districts.
+
+Under California's top-two rule the two highest vote-getters advance, so for
+this tier one document is simultaneously the contest list, the candidate list,
+and the reference.
+
+Measured 2026-07-31: 34 districts touch the Bay Area, yielding 67 advancing
+candidates — 32 resolving confidently to Wikidata items, 9 ambiguous, 26 with no
+item.
+
+=== County and municipal contests ===
+
+There is no state-level aggregation; each county publishes independently, and
+formats differ. For each county, work down until a source is found: the county
+elections office; the county clerk where elections sit there; the state's
+published directory of county elections officials, which is the reliable way to
+find an office whose website has moved; then direct contact.
+
+A source is usable when it is '''published by the elections official''' — not a
+news outlet or aggregator — is dated, and enumerates the November ballot for
+that contest. Ballotpedia, news coverage and candidate websites may be used to
+''find'' a contest; they are never the reference on the resulting statement.
+
+Capture the URL, the retrieval date, and an archive snapshot, because county
+pages are reorganised aggressively after each election and a reference that
+404s in two years cannot be checked.
+
+'''Where a source is missing, record that fact rather than skipping the
+county.''' A county with no usable source should be a visible gap, not an
+apparent absence of contests. Several county sites resist automated access; that
+is a property of the sources, and this tier is partly manual by nature.
+
+Note that most municipal contests have '''no primary''', and several Bay Area
+cities use ranked-choice voting, so every certified candidate appears on the
+November ballot rather than a top two. Expect more candidates per contest here
+than in the district tier, and a larger proportion with no Wikidata item.
+
+== Step 2: election items and their data model ==
+
+=== Where the model comes from ===
+
+For congressional and legislative contests the previous cycle's item is a good
+model: it already carries date, jurisdiction, office contested and series links,
+so the argument is simply that this cycle should match the last one.
+
+For local contests the previous cycle is '''not''' a usable model. The 2024 Bay
+Area local election items carry only {{P|P31}}, sometimes {{P|P17}} — one adds
+{{P|P1001}}. The model here is instead taken from better-developed mayoral items
+elsewhere: {{Q|Q85737931}}, {{Q|Q118966754}} and the Boston, Chicago and Los
+Angeles equivalents, which are consistent with each other.
+
+Whether that is the right template — and whether it should be formalised as an
+[[Wikidata:Schemas|EntitySchema]] — is one of the open questions on the parent
+page.
+
+=== Proposed properties ===
+
+For contests whose election item covers the whole state:
+
+{| class="wikitable"
+! Property !! Value
+|-
+| {{P|P585}} || the general-election date
+|-
+| {{P|P1001}} || the state
+|-
+| {{P|P541}} || the office contested
+|-
+| {{P|P361}} || the national or statewide parent
+|-
+| {{P|P155}} || the previous cycle's equivalent
+|}
+
+For contests whose election item covers a single county or city:
+
+{| class="wikitable"
+! Property !! Value
+|-
+| {{P|P585}} || the general-election date
+|-
+| {{P|P1001}} || the county or city
+|-
+| {{P|P541}} || the office contested
+|-
+| {{P|P31}} || the election-series class where one exists, else {{Q|Q40231}}
+|-
+| {{P|P155}} / {{P|P156}} || the adjacent cycles
+|}
+
+{{P|P991}} is out of scope until after the election.
+
+{{P|P1001}} is the load-bearing one for local items: it is what makes them
+discoverable geographically, with no list of QIDs maintained anywhere. Contests
+whose item is statewide cannot work this way, since district items are modelled
+{{P|P131}} → the state rather than → county — which is the subject of one of the
+open questions.
+
+=== Creating items ===
+
+Create only where the register entry has a source. Before creating, search for
+an existing item under variant names: '''name-pattern search is a starting
+point, not a check''', since it misses items filed under other names and returns
+confident false matches from elsewhere in the world — place names repeat across
+countries. Confirm by jurisdiction and date, never by label.
+
+'''Naming.''' There is no single established pattern — existing items use
+adjectival forms, office-name forms, and plural county omnibus forms. So: mirror
+the enwiki article title where one exists; otherwise mirror the previous cycle's
+item for the same jurisdiction and office; never invent a third form for a
+jurisdiction that already has one.
+
+'''Notability.''' [[Wikidata:Notability]] criterion 2 appears to cover these: a
+certified election for a named public office, documented by an official canvass
+published by the responsible elections authority, is a clearly identifiable
+entity with public references. Criterion 3 arguably also applies, but criterion 2
+is the better argument — a structural need created by one's own project is a
+weaker claim.
+
+=== Checking completeness ===
+
+One query over the register returns one row per '''missing''' required property.
+An empty result means every item is complete; because the query is generated
+from the register, re-running it re-checks everything, including items fixed in
+earlier passes.
+
+{{SPARQL|query=SELECT ?item ?itemLabel ?missingLabel WHERE {
+  VALUES (?item ?missing) {
+    (wd:Q131470954 wd:P585) (wd:Q131470954 wd:P1001) (wd:Q131470954 wd:P541)
+    (wd:Q131470954 wd:P361) (wd:Q131470954 wd:P155)
+    (wd:Q138112703 wd:P585) (wd:Q138112703 wd:P1001) (wd:Q138112703 wd:P541)
+  }
+  ?missing wikibase:directClaim ?dc .
+  FILTER NOT EXISTS { ?item ?dc [] }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+ORDER BY ?itemLabel}}
+
+Binding the property as an entity and dereferencing <code>wikibase:directClaim</code>
+is what lets one query check different requirements per class without
+enumerating them in code. Run as shown, {{Q|Q131470954}} returns nothing and
+{{Q|Q138112703}} returns three rows.
+
+== Step 3: candidates ==
+
+=== Names cannot be matched on names ===
+
+Matching a candidate's name against labels fails in two ways that are common
+rather than exotic, and it fails ''confidently''.
+
+Disambiguation items carry the plain name as their label, so a name matches both
+the disambiguation item and the person with nothing in the label to separate
+them. And namesakes are ordinary: Bay Area candidates this cycle share exact
+names with an actor who died in 2002, a cricketer born in 1868, and a film
+producer.
+
+So: '''never accept a name→QID match on a label.''' Require {{P|P31}} =
+{{Q|Q5}} as a hard gate, rank on corroborating evidence, and treat a close
+second place as a reason for review rather than a tiebreak to resolve
+automatically.
+
+=== Scoring ===
+
+Candidates are scored on {{P|P106}} = politician, holding any {{P|P39}},
+{{P|P27}} = United States, and having an enwiki sitelink. Items failing
+{{P|P31}} = {{Q|Q5}} are discarded rather than ranked. A match is treated as
+confident only if it scores well '''and''' strictly beats the runner-up.
+
+Results fall into three tiers, and '''none of them writes directly''':
+
+* '''Confident''' — generates a batch for review.
+* '''Ambiguous''' — generates a list showing each rival item and its
+  description, so a human can see what the match was chosen over.
+* '''No item''' — recorded as a coverage gap. Not a worklist for creating items;
+  see the parent page.
+
+The confident tier is reviewed rather than trusted. The score measures whether
+an item is a plausible American public figure, not whether it is the person who
+stood in this contest — a long-dead labour leader satisfies every signal.
+
+=== Statement direction ===
+
+Working assumption, and '''the least settled part of this method''':
+{{P|P3602}} on the person qualified with {{P|P768}} for congressional and
+legislative contests, since there is no per-district election item to attach
+{{P|P726}} to; {{P|P726}} on the election item for mayoral and council contests.
+This is inferred from a handful of items and is an open question on the parent
+page.
+
+=== References ===
+
+Every candidacy statement carries {{P|P854}}, {{P|P1476}} and {{P|P813}}, plus
+{{P|P577}} only where the source states a publication date — never inferred from
+statutory deadlines.
+
+The test a source must pass:
+
+: '''The source must establish who is on the November ballot''' — not merely who
+filed, and not merely who exists.
+
+For contests with a primary, the certified results establish who advanced; a
+pre-primary filing list does not. For contests whose first round is November,
+the general-election certified candidate list does establish it, because it
+enumerates exactly the people on that ballot. The test is on what a document
+''establishes'', never on what it is called — a blanket rule against filing
+lists would make every no-primary contest permanently unlinkable.
+
+{{P|P143}} is not used, for the reason given on the parent page.
+
+=== Batch hygiene ===
+
+A removal takes no qualifiers, or QuickStatements splits the line into a
+malformed second command. QuickStatements also decomposes one input line into
+several commands — statement, qualifiers, references — so a summary reporting
+errors must be read per row.
+
+Neither a batch summary nor the absence of errors is evidence of correctness.
+'''The verification query is''', and every batch is paired with the query that
+checks it.
+
+== Review ==
+
+Per proposed candidacy statement, before the batch runs:
+
+# The target item is {{P|P31}} = {{Q|Q5}} — not a disambiguation item, not an
+  organisation.
+# Its description, occupation or held positions are consistent with a 2026
+  candidate for this office.
+# It is not a different person of the same name — check dates of birth and
+  death, nationality, and the enwiki article where one exists.
+# The cited source actually names this person for this contest. Open it.
+# The qualifier district or jurisdiction matches the source.
+
+Per election-item statement: the item is the right election, the jurisdiction
+and office are correct, and the date is the general-election date.
+
+How much of this should remain manual is an open question on the parent page.
+The stages differ enormously in risk: parsing certified results, writing
+data-model statements from a fixed template, and attaching references are
+ordinary data processing, while resolving a name to a QID is the stage with a
+measured error rate and living-person exposure.
+
+== Sources ==
+
+Locations current as of 2026-07-31, and specific to this region and cycle —
+elsewhere, substitute the equivalents.
+
+'''California certified results (Statement of Vote), June 2026 primary.''' One
+workbook per office class, published as PDF and <code>.xlsx</code>:
+
+* <code>https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.xlsx</code>
+* <code>https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/90-state-senator.xlsx</code>
+* <code>https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/95-state-assembly.xlsx</code>
+
+'''California certified list of candidates''', published per election by the
+Secretary of State; the general-election edition is expected in late August 2026.
+
+'''County elections officials directory''', published by the Secretary of State
+each cycle for all 58 counties.
+
+County and municipal sources are recorded per contest in the register rather
+than here, since they move.

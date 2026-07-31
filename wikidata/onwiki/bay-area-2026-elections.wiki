@@ -1,0 +1,249 @@
+{{User page}}
+
+This is a proposal to add candidacy and election data for the November 2026
+elections in the San Francisco Bay Area. It is a draft for discussion. One
+contest has been done as a pilot; nothing further will be added until this has
+had a hearing.
+
+I would particularly like feedback on the modelling questions in
+[[#Open questions|Open questions]] below — I am not an expert in how elections
+are modelled here, and several of my choices are inferences from a small number
+of existing items rather than anything I found written down.
+
+=== Why I want this ===
+
+I should be straightforward about my motivation, since it shapes what I am
+asking for.
+
+I want to build a feed that surfaces Wikipedia edits to the articles of people
+standing for office in the Bay Area, during the campaign, so that changes to
+candidate biographies are visible while they matter rather than afterwards. For
+that feed to work without me hand-maintaining a list of people, it has to ask
+Wikidata who the candidates are — which is why I care that these statements
+exist and are correct.
+
+Two things follow that are worth stating rather than leaving for someone to
+discover. It means I have an interest in coverage being complete, which is a
+reason to be sceptical of my scope choices. And it means an incorrect statement
+does not sit quietly in a database: the feed would repeat the claim that someone
+is a candidate off-wiki, where nobody here can revert it. That asymmetry is why
+I have been more cautious about name resolution than the data-quality case alone
+would justify.
+
+The data seems to me worth having regardless — but if you think the feed is a
+bad idea, I would rather hear that now, and the modelling questions below are
+still worth answering either way.
+
+== The gap ==
+
+Wikidata knows very little about who is standing for office in the Bay Area this
+November.
+
+The election items that exist are close to empty. Before the pilot below,
+{{Q|Q131470954}} carried {{P|P17}} and {{P|P31}} and nothing else — no date, no
+jurisdiction, no office contested. {{Q|Q138112703}}, {{Q|Q139040246}} and
+{{Q|Q139073833}} still carry only {{P|P31}}. Because they have no {{P|P585}} and
+no {{P|P1001}}, they cannot be found by any query that does not already know
+their QIDs.
+
+Candidacy statements are almost entirely absent. This returns everyone with a
+{{P|P3602}} to a 2026 election in California — three people, two of whom I added
+in the pilot below:
+
+{{SPARQL|query=SELECT ?person ?personLabel ?electionLabel WHERE {
+  ?person p:P3602 ?st . ?st ps:P3602 ?election .
+  ?election wdt:P1001 wd:Q99 ; wdt:P585 ?d .
+  FILTER(YEAR(?d) = 2026)
+  ?person wdt:P31 wd:Q5 .
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}}}
+
+Meanwhile {{P|P39}} is not a usable substitute. Querying current officeholders
+whose position has {{P|P1001}} into any of the nine Bay Area counties returns 19
+people, including ten concurrent Sheriffs of San Francisco and four concurrent
+District Attorneys — the result of missing {{P|P582}} end dates accumulated over
+many years.
+
+== What I would like to add ==
+
+Two kinds of statement.
+
+'''Data-model statements on election items''' — {{P|P585}}, {{P|P1001}},
+{{P|P541}}, and series links — bringing 2026 items to the same completeness as
+the equivalent items for earlier cycles. Roughly 115–200 statements across
+25–40 items, some of which do not exist yet and would need creating.
+
+'''Candidacy statements''' linking people who ''already have items'' to the
+contests they are standing in, each with a reference. Roughly 65–90 statements.
+
+Total is in the low hundreds. This is not a bulk import, and I am not proposing
+to create items for people.
+
+=== What I am not proposing ===
+
+* '''No new items for candidates.''' Around 26 of the candidates I have
+  identified have no Wikidata item. Creating biographical items for largely
+  private people from a single primary source is a different undertaking with
+  different notability and living-person considerations, and I am not asking to
+  do it. Those candidates are recorded as gaps and left alone.
+* '''No bot, currently.''' Every statement so far has been made through
+  QuickStatements from a batch I read first. Whether parts of this ''should'' be
+  automated is one of the open questions below.
+
+== The pilot: California's 11th congressional district ==
+
+I did one contest end to end so there is something concrete to inspect rather
+than only a description. This is Nancy Pelosi's open seat; Scott Wiener and
+Connie Chan advanced from the June primary.
+
+'''Data model''', on {{Q|Q131470954}} — five statements bringing it to parity
+with {{Q|Q116006860}}, the 2024 equivalent, which already carried all of them:
+{{P|P585}} 3 November 2026, {{P|P1001}} California, {{P|P541}} United States
+representative, {{P|P361}}, {{P|P155}}.
+
+'''Candidacies''', on {{Q|Q7437504}} and {{Q|Q105663114}}: {{P|P3602}} →
+{{Q|Q131470954}}, qualified {{P|P768}} → {{Q|Q2681039}}, each referenced to the
+certified Statement of Vote.
+
+Both items' histories are public and I would welcome scrutiny of them.
+
+=== An error, and how it was caught ===
+
+I am describing this because it is the most useful thing I can tell you about
+how reliable this process is.
+
+Connie Chan's candidacy was first written to {{Q|Q110933376}} — which is a
+disambiguation page, not a person. The QID had been resolved by looking up the
+enwiki title "Connie Chan", which is itself a disambiguation page, and the
+verification step compared ''labels'', which match on both items. The check
+could not have caught the error.
+
+It was found by a human asking whether the identifiers had actually been
+validated, and corrected the following day: removed from {{Q|Q110933376}}, added
+to {{Q|Q105663114}}, which is {{P|P31}} human and holds {{P|P39}} member of the
+San Francisco Board of Supervisors.
+
+Every subsequent resolution requires {{P|P31}} = {{Q|Q5}} as a hard gate, and
+the checklist asks whether the item's dates and description are consistent with
+a 2026 candidate.
+
+== Sourcing ==
+
+This is the part I am willing to commit to absolutely.
+
+'''Every candidacy statement cites a source that directly supports it''' —
+establishing that the person is on the November ballot, not merely that they
+filed. In practice:
+
+* For contests with a June primary, the certified '''Statement of Vote''', which
+  shows who advanced under California's top-two rule. The certified ''list of
+  candidates'' is not sufficient on its own: it names all eleven CA-11 primary
+  candidates and does not distinguish the two who advanced.
+* For contests whose first round is in November — many municipal offices — the
+  general-election certified candidate list, which enumerates exactly the people
+  on that ballot.
+
+References carry {{P|P854}}, {{P|P1476}} and {{P|P813}}, plus {{P|P577}} only
+where the source states a publication date.
+
+'''{{P|P143}} is not used.''' The intended consumer of this data is a bot that
+watches Wikipedia edits, so sourcing Wikidata back to Wikipedia would make
+unsourced Wikipedia edits into "sourced" Wikidata.
+
+== Automation and AI involvement ==
+
+An LLM-assisted toolchain (Claude, driven interactively) parses the published
+results spreadsheets, computes which districts overlap the Bay Area and who
+advanced, proposes name→QID matches with scores, and generates QuickStatements
+batches and the queries that verify them. It drafted this page.
+
+'''It holds no credentials, has no account, and makes no edits.''' Everything so
+far has gone through QuickStatements under this account, from a batch I read.
+
+=== Measured error rates ===
+
+Name resolution is where the risk is, and the numbers are not flattering.
+
+{| class="wikitable"
+! Method !! Matches returned !! Known wrong
+|-
+| Matching on label alone (52-candidate subset) || 30 || at least 5
+|-
+| Scored on {{P|P31}}/{{P|P39}}/{{P|P106}}/{{P|P27}} + sitelinks (full 67) || 32 || 1
+|}
+
+Label matching would have attached candidacies to an actor who died in 2002, a
+cricketer born in 1868, and a film producer. Scoring is roughly an order of
+magnitude better and still not zero: one candidate resolved confidently to a
+19th-century labour leader, because he genuinely is an American with an
+occupation, held positions and an article. Every signal fired correctly and the
+answer was wrong.
+
+That residual rate is why name resolution is reviewed by hand rather than
+trusted, and it will not be tuned away.
+
+== Open questions ==
+
+These are the things I would most like input on. I have working answers, but
+they are inferences and I would rather be corrected now than after several
+hundred statements exist.
+
+# '''Which stages, if any, should be automated?''' Risk is not uniform. Parsing
+  certified results, writing data-model statements from a fixed template, and
+  attaching references are ordinary data processing. Resolving a name to a QID
+  is the stage with a measured error rate and living-person exposure. Is there
+  an established view on where the line sits, and would a bot flag be
+  appropriate for the mechanical parts?
+# '''{{P|P3602}} on the person, or {{P|P726}} on the election?''' I have used
+  {{P|P3602}} for congressional and legislative contests — there is no
+  per-district election item for regular cycles to attach {{P|P726}} to — and
+  intended {{P|P726}} for mayoral and council contests, following the New York
+  City, Boston, Chicago and Los Angeles items. '''Four items is an observation,
+  not a convention.''' Is mixing directions by contest type normal? Does
+  {{P|P726}} become unwieldy for contests with many candidates?
+# '''Should congressional and legislative district items carry {{P|P131}} to the
+  counties they cover?''' They are currently modelled {{P|P131}} → the state, so
+  there is no way to ask which districts are in a given region. Adding
+  county-level {{P|P131}} would make it derivable, and is arguably accurate, but
+  it is a modelling change across many items to suit one query and I would not
+  do it unilaterally.
+# '''What should a local election item be required to carry?''' The Bay Area
+  items for earlier cycles are nearly empty, so I have taken the model from
+  better-developed mayoral items elsewhere. Would an [[Wikidata:Schemas|
+  EntitySchema]] for election items be welcome, and does one already exist?
+# '''Are county- and city-level election items wanted at all?''' I read
+  [[Wikidata:Notability]] criterion 2 as covering them — a certified election
+  documented by an official canvass is clearly identifiable with public
+  references. If that is wrong, most local coverage does not happen, and it is
+  better to know now.
+# '''Is the scope right?''' Currently federal, state legislative, county
+  offices, and cities over 100,000 or county seats. Deliberately conservative.
+  It could reasonably be called too narrow to be useful, or too broad given that
+  candidates for smaller offices are closer to private individuals.
+
+== Scope, briefly ==
+
+Contests for offices representing part of the nine Bay Area counties: US House,
+State Senate, State Assembly, county offices, and cities over 100,000 population
+or county seats. Statewide offices are excluded — they are not specific to the
+region. School boards, special districts, and smaller municipal offices are
+excluded deliberately, on the grounds that candidates for them are closer to
+private individuals than public figures.
+
+== Objections, and what happens next ==
+
+* '''A challenged statement is reverted first and discussed after.''' If
+  something here is wrong, revert it; I will not restore it without discussing.
+* '''Everything is published.''' The register of contests, the sources used, and
+  every batch applied will be on-wiki as subpages of this page, so anyone can
+  see what was added and on what evidence.
+* '''Batches are small and incremental''', so an error affects a reviewable
+  number of statements.
+
+The full method, in more detail than belongs on this page, is at
+[[/Method]].
+
+Comments here or on the talk page are welcome. I intend to leave this for
+discussion before adding anything beyond the CA-11 pilot.
+
+~~~~
