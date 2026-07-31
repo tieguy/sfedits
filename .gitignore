@@ -21,3 +21,4 @@ data/reassess-backup-*/
 data/wikidata-claim-targets.json
 \#*\#
 .#*
+data/dumps/

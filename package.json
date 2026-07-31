@@ -15,6 +15,7 @@
     "mustache": "2.3.0",
     "puppeteer": "^24.2.1",
     "satori": "^0.26.0",
+    "seek-bzip": "^2.0.0",
     "wtf_wikipedia": "^10.4.2"
   },
   "devDependencies": {
