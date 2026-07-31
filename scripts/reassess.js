@@ -46,6 +46,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const wtf = require('wtf_wikipedia')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
 const EN_API = 'https://en.wikipedia.org/w/api.php'
@@ -167,23 +168,26 @@ function leadScore(text) {
   return { score: 1 - m.index / Math.max(text.length, 1), term: m[1] }
 }
 
-// Wikilinks written literally in an article's own wikitext. Deliberately NOT
-// prop=links: that reads the pagelinks table, which is the rendered link set
-// and therefore includes every link a transcluded navbox emits. Measured on
-// live articles, 92-97% of a BART station's links come from templates, versus
-// 45-77% for a company or a person - so navbox links do not merely inflate the
-// inlink metric, they inflate it hardest for exactly one class of article.
-const WIKILINK_RE = /\[\[([^[\]|#]+)/g
+// Links an editor actually wrote, parsed structurally by wtf_wikipedia rather
+// than by regex. Deliberately NOT prop=links: that reads the pagelinks table,
+// which is the rendered link set and includes every link a transcluded navbox
+// emits (77% of all links; 92-97% for a BART station).
+//
+// The parser also excludes, for free, two categories that cost three hand-rolled
+// fixes to find: links inside <ref>/{{cite}} blocks (~93% of TechCrunch's inbound
+// links were citations), and links inside infobox list templates
+// ({{hlist}}/{{Ubl}} - 33 of Instagram's links were languages from one field).
+// It keeps simple infobox fields like `borough = [[Oakland, California]]`, which
+// is the distinction we want and could not draw reliably with regexes.
+//
+// Known difference from the old implementation: links inside image captions are
+// not returned (wtf's caption() strips them). Measured at ~1 per article.
+// See docs/importance-ranking-methodology.md 4.0 for the taxonomy.
 const NON_ARTICLE_NS = /^:?\s*(File|Image|Category|Media)\s*:/i
 
-// References are not topical links. Citation templates wikilink the publication
-// - {{cite web |work=[[TechCrunch]]}} - so counting them treats every footnote as
-// evidence that the citing article is ABOUT that publication. Measured: ~93% of
-// TechCrunch's inbound links are of this shape (57 of 61 on Instagram alone),
-// which floated six media outlets into the proposed top 46. Same failure as
-// navbox links: structure masquerading as relevance.
-const REF_BLOCK_RE = /<ref\b[^>]*\/>|<ref\b[^>]*>[\s\S]*?<\/ref>/gi
-const CITATION_TEMPLATE_RE = /\{\{\s*(cite[ _][^|}]*|citation|refn|sfn|harv[^|}]*)\s*(\|[\s\S]*?)?\}\}/gi
+// Non-article link targets. wtf_wikipedia returns interwiki links (":wikt:abstract")
+// alongside real page titles; those are not articles in this wiki.
+const INTERWIKI_RE = /^:?[a-z-]{2,12}:/i
 
 /**
  * Set of mainspace link targets present in raw wikitext, normalized the way
@@ -193,13 +197,12 @@ const CITATION_TEMPLATE_RE = /\{\{\s*(cite[ _][^|}]*|citation|refn|sfn|harv[^|}]
 function wikitextLinks(text) {
   const targets = new Set()
   if (!text) return targets
-  const prose = text
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(REF_BLOCK_RE, '')
-    .replace(CITATION_TEMPLATE_RE, '')
-  for (const match of prose.matchAll(WIKILINK_RE)) {
-    const target = match[1].replace(/_/g, ' ').trim().replace(/^:\s*/, '')
-    if (!target || NON_ARTICLE_NS.test(match[1].trim())) continue
+  for (const link of wtf(text).links()) {
+    const page = link.page()
+    if (!page) continue
+    const target = page.replace(/_/g, ' ').trim().replace(/^:\s*/, '')
+    // wtf keeps interwiki targets (":wikt:abstract"); those are not articles here
+    if (!target || NON_ARTICLE_NS.test(target) || INTERWIKI_RE.test(target)) continue
     targets.add(target.charAt(0).toUpperCase() + target.slice(1))
   }
   return targets

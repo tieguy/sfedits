@@ -83,9 +83,35 @@ describe('reassess', function() {
       assert.deepEqual([...links], ['Alcatraz'])
     })
 
-    it('finds a link nested inside a file caption', function() {
+    it('does not return links from inside image captions', function() {
+      // Known difference from the previous regex implementation, accepted when
+      // switching to wtf_wikipedia: its caption() strips links, so they are not
+      // recoverable. Measured at roughly one link per article - Coit Tower lost
+      // only "San Francisco Giants". Worth it for what the parser fixes below.
       const links = wikitextLinks('[[File:X.jpg|thumb|A view of [[Coit Tower]]]]')
-      assert.deepEqual([...links], ['Coit Tower'])
+      assert.deepEqual([...links], [])
+    })
+
+    it('keeps a simple infobox field that names a place', function() {
+      // `location`/`headquarters`/`borough` are exactly the claim the metric wants
+      const links = wikitextLinks(
+        '{{Infobox station\n| borough = [[Oakland, California|Oakland]]\n}}')
+      assert.deepEqual([...links], ['Oakland, California'])
+    })
+
+    it('drops infobox fields that are specification lists', function() {
+      // {{hlist}}/{{Ubl}} inside an infobox enumerate values; they are not an
+      // editorial claim that the two subjects are related. 33 of Instagram's
+      // links were languages from one such field.
+      const links = wikitextLinks(
+        '{{Infobox software\n| operating system = {{hlist|[[iOS]]|[[Android (operating system)|Android]]}}\n}}')
+      assert.deepEqual([...links], [])
+    })
+
+    it('excludes interwiki targets', function() {
+      // the parser returns ":wikt:abstract" alongside real titles
+      const links = wikitextLinks('See [[:wikt:abstract]] and [[Alcatraz]].')
+      assert.deepEqual([...links], ['Alcatraz'])
     })
 
     it('does NOT see links that only a transcluded template would render', function() {
