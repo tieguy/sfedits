@@ -6,15 +6,17 @@
   "version": "0.1.2",
   "dependencies": {
     "@atproto/api": "^0.17.3",
+    "@resvg/resvg-js": "^2.6.2",
+    "@turf/boolean-point-in-polygon": "^7.3.5",
     "async": "^2.6.3",
     "express": "^4.18.2",
-    "mastodon": "^1.1.1",
+    "mariadb": "^3.5.3",
     "maxmind": "^5.0.0",
     "minimist": "^1.2.5",
     "multer": "^1.4.5-lts.1",
     "mustache": "2.3.0",
     "puppeteer": "^24.2.1",
-    "wikichanges": "^0.2.9"
+    "satori": "^0.26.0"
   },
   "devDependencies": {
     "chai": "latest",
@@ -24,10 +26,12 @@
     "sinon": "^21.0.0"
   },
   "engines": {
-    "node": ">=6"
+    "node": ">=20"
   },
   "scripts": {
-    "test": "mocha --colors --reporter spec --exit test/**/*.js",
+    "test": "mocha --colors --reporter spec --exit --ignore 'test/helpers/**' 'test/**/*.js'",
+    "test:db:start": "scripts/test-db.sh start",
+    "test:db:stop": "scripts/test-db.sh stop",
     "start": "node page-watch.js",
     "mastodon": "node utils/mastodon.js"
   }

@@ -186,6 +186,79 @@ Create `config.json` from the template:
 
 **Important:** Never commit `config.json` - it contains credentials and is gitignored. Update it directly on the droplet when you need to change the watchlist or credentials.
 
+### Edit Collapsing
+
+When someone does an intense editing session on a watched article, posting every revision floods the feed. Edit collapsing (on by default) throttles this to at most two posts per 15-minute window per article/editor:
+
+- The **first edit** in a burst posts immediately, as before.
+- Further edits to the **same article by the same editor** within the next 15 minutes are buffered.
+- When the window closes, the buffer posts as **one combined post** ("edited 5 times by...") whose diff link and rendered image span all the buffered revisions (`?diff=<newest>&oldid=<pre-burst>`).
+- If the burst is still going, a new window opens, so sustained activity produces at most one combined post per window.
+- On Bluesky and Mastodon, combined posts are **threaded as replies** to the burst's first post (`reply.root`/`reply.parent` refs on Bluesky, `in_reply_to_id` on Mastodon), so a long session reads as one thread. The thread root stays the first post; each combined post replies to the previous one. If a post fails or is blocked on one platform, later posts thread under the last one that succeeded there (or post standalone if none did). Discord posts via incoming webhook, which cannot create replies, so collapsed posts appear there as ordinary messages — collapsing still cuts the message count.
+
+Configure per account with the optional `collapse` stanza:
+
+```json
+"collapse": {
+  "enabled": true,
+  "window_minutes": 15,
+  "template": "{{{page}}} Wikipedia article edited {{count}} times by {{{name}}} {{&url}}"
+}
+```
+
+- `enabled`: set to `false` to post every edit individually (pre-collapsing behavior).
+- `window_minutes`: collapse window length (default 15).
+- `template`: Mustache template for combined posts; `{{count}}` is the number of collapsed edits. Defaults to the template shown above.
+
+Buffered edits and thread refs are held in memory, so restarting the bot drops any not-yet-posted buffer, and a burst spanning a restart starts a fresh thread. Combined posts go through the same diff verification and PII screening as single-edit posts, applied to the combined diff. For the revdel sweeper, a combined post is recorded in the post log under **every** revision it covers, so hiding any one of them on-wiki takes the combined post down.
+
+### Dynamic Watchlist (WikiProject task forces)
+
+Instead of (or in addition to) hard-coding articles in `watchlist`, an account
+can pull its article list from a WikiProject / task force via the
+[PageAssessments API](https://www.mediawiki.org/wiki/Extension:PageAssessments):
+
+```json
+"watchlist_source": {
+  "project": "California/San Francisco Bay Area task force",
+  "wikipedia": "English Wikipedia",
+  "importance": ["Top", "High"],
+  "refresh_hours": 24
+}
+```
+
+- `project` - the PageAssessments project name (task force banners on article
+  talk pages register articles under this name)
+- `importance` - optional filter; large task forces tag 10,000+ articles, so
+  filtering to Top/High keeps the bot from becoming a firehose. Omit to watch
+  everything.
+- `refresh_hours` - how often to re-fetch the list (default 24)
+
+The fetched list is cached to `data/watchlist-<project>.json`, so restarts and
+Wikipedia API outages fall back to the last good list. Static `watchlist`
+entries are always honored in addition to the dynamic list.
+
+### Discord Setup
+
+To post to a Discord channel, create an incoming webhook (channel settings →
+Integrations → Webhooks → New Webhook) and add it to the account:
+
+```json
+"discord": {
+  "webhook_url": "https://discord.com/api/webhooks/..."
+}
+```
+
+Discord posts are rich embeds (no platform length squeeze): article title
+and Wikidata description, editor link, change counts, quoted added/removed
+excerpts, the article's lead image as a thumbnail, and the diff screenshot.
+If the structured diff isn't available (fallback screenshot path), a plain
+markdown message is posted instead.
+
+No bot user or OAuth setup is needed - webhooks are per-channel URLs. Posts
+include the edit screenshot as an attachment, with the article and editor as
+clickable links.
+
 ### Bluesky Setup
 
 To set up Bluesky posting and PII alert DMs:
@@ -207,6 +280,23 @@ To set up Mastodon posting and PII alert DMs:
 3. Copy the access token to your config.json
 
 **Note:** Without the correct scopes (`write:media` and `write:statuses`), Mastodon posting will fail silently while Bluesky continues to work.
+
+**Post visibility:** community instances often want bots posting `unlisted` so
+automated posts stay off the local timeline (posts still appear on the bot's
+profile, to followers, and in threads). Set it per account:
+
+```json
+"mastodon": {
+  "instance": "https://sfba.social",
+  "access_token": "your-access-token",
+  "visibility": "unlisted"
+}
+```
+
+Accepted values are Mastodon's: `public`, `unlisted`, `private` (followers
+only). Omit the key to use the server's default (normally public). This
+applies to regular posts, collapsed/threaded posts, and admin console
+reposts alike; PII alert DMs are always sent `direct` regardless.
 
 ## PII Screening
 

@@ -4,10 +4,12 @@ const express = require('express')
 const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
-const { takeScreenshot } = require('../lib/screenshot')
+const { captureDiffImage } = require('../lib/diff-image')
 const { createAuthenticatedAgent } = require('../lib/bluesky-client')
+const { recordPost } = require('../lib/post-log')
 const bluesky = require('../lib/bluesky-platform')
 const mastodon = require('../lib/mastodon-platform')
+const { articlesForRegion } = require('../lib/region')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -65,10 +67,14 @@ function requireAuth(req, res, next) {
   next()
 }
 
-// Load config (same as bot)
+// Load config (same as bot). SFEDITS_CONFIG (full config as a JSON env
+// var) wins; otherwise CONFIG_PATH or the repo-root config.json.
+const { loadConfig: loadSharedConfig } = require('../lib/config')
 function loadConfig() {
-  const configPath = process.env.CONFIG_PATH || path.join(__dirname, '../config.json')
-  return JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  if (process.env.SFEDITS_CONFIG) {
+    return loadSharedConfig()
+  }
+  return loadSharedConfig({ path: process.env.CONFIG_PATH || path.join(__dirname, '../config.json') })
 }
 
 // API Routes
@@ -232,15 +238,15 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
 
     const results = []
     const postedTo = draft.posted_to || []
+    let blueskyUri = null
+    let mastodonId = null
 
-    // Wait for Wikipedia diff table to fully render (same delay as bot)
-    await new Promise(r => setTimeout(r, 2000))
-
-    // Take screenshot for posting (admin console doesn't save it in draft)
-    const screenshot = await takeScreenshot(draft.diff_url)
-    if (!screenshot) {
+    // Render diff for posting (admin console doesn't save it in draft)
+    const capture = await captureDiffImage(draft.diff_url, draft.article)
+    if (!capture) {
       throw new Error('Failed to capture screenshot')
     }
+    const screenshot = capture.screenshot
 
     try {
       // Prepare metadata for posting
@@ -248,18 +254,20 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
         page: draft.article,
         name: draft.status_data.name,
         pageUrl: draft.status_data.pageUrl,
-        userUrl: draft.status_data.userUrl
+        userUrl: draft.status_data.userUrl,
+        altText: capture.altText
       }
 
       // Post to Bluesky if configured and not already posted
       if (account.bluesky && !postedTo.includes('bluesky')) {
         try {
-          await bluesky.post({
+          const result = await bluesky.post({
             account: account.bluesky,
             text: draft.text,
             screenshot,
             metadata
           })
+          blueskyUri = result?.uri || null
 
           console.log(`✓ Posted to Bluesky`)
           postedTo.push('bluesky')
@@ -275,12 +283,13 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
       // Post to Mastodon if configured and not already posted
       if (account.mastodon && !postedTo.includes('mastodon')) {
         try {
-          await mastodon.post({
+          const result = await mastodon.post({
             account: account.mastodon,
             text: draft.text,
             screenshot,
             metadata
           })
+          mastodonId = result?.data?.id || null
 
           console.log(`✓ Posted to Mastodon`)
           postedTo.push('mastodon')
@@ -297,6 +306,12 @@ app.post('/api/drafts/:id/post', requireAuth, async (req, res) => {
       if (screenshot && fs.existsSync(screenshot)) {
         fs.unlinkSync(screenshot)
       }
+    }
+
+    // Record what was posted so the bot's revdel sweeper can delete
+    // these posts if the revision is later hidden on-wiki
+    if (blueskyUri || mastodonId) {
+      recordPost({ diffUrl: draft.diff_url, page: draft.article, blueskyUri, mastodonId })
     }
 
     // Update draft with posted platforms
@@ -424,6 +439,54 @@ app.get('/screenshots/:filename', requireAuth, (req, res) => {
   }
 })
 
+
+/**
+ * Resolve a place QID for the create flow, normalizing articlesForRegion's
+ * result into a console-friendly shape. A region with no boundary of its own
+ * comes back as `needs_confirmation` carrying the container suggestion, so the
+ * UI can ask "no boundary for X - use Y?" rather than the resolver silently
+ * substituting. See docs/design-plans/2026-07-24-boundary-resolution.md.
+ */
+async function resolveForConsole(qid, options = {}) {
+  try {
+    const result = await articlesForRegion(qid, options)
+    if (result.needsConfirmation) {
+      return {
+        status: 'needs_confirmation',
+        region: { qid: result.region.qid, label: result.region.label },
+        suggestion: result.suggestion
+      }
+    }
+    return {
+      status: 'resolved',
+      region: {
+        qid: result.region.qid,
+        label: result.region.label,
+        strategy: result.region.strategy
+      },
+      count: result.articles.length,
+      approximate: result.approximate === true
+    }
+  } catch (error) {
+    return { status: 'error', error: error.message }
+  }
+}
+
+/**
+ * POST /api/region/resolve
+ * Resolve a place QID, surfacing a container suggestion when it has no boundary.
+ */
+app.post('/api/region/resolve', requireAuth, async (req, res) => {
+  const { qid, languages } = req.body || {}
+  if (!qid) {
+    return res.status(400).json({ error: 'qid required' })
+  }
+  const result = await resolveForConsole(qid, { languages })
+  res.json(result)
+})
+
+// Expose the resolver for unit tests without starting a server.
+app.resolveForConsole = resolveForConsole
 
 // Start server only if run directly (not when imported by tests)
 if (require.main === module) {

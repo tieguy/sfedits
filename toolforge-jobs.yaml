@@ -1,0 +1,67 @@
+# Toolforge job definitions. Load with:
+#
+#   become san-francisco-edit-stream
+#   toolforge jobs load toolforge-jobs.yaml
+#
+# `command` values are Procfile entry names — the build service launcher
+# resolves them, so they stay in sync with Procfile rather than duplicating
+# the node invocation here.
+
+- name: bot
+  command: bot
+  image: tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest
+  continuous: true
+  emails: onfailure
+  filelog: true
+  # filelog writes $HOME/bot.out|.err, and the jobs framework rejects
+  # filelog without the home mount
+  mount: all
+  mem: 1Gi
+  cpu: 1
+
+# Re-resolves every topic against Wikidata and set-diffs it against what is
+# stored. This is what follows page renames, picks up newly created articles,
+# and drops articles that left the region — without it a topic's list is frozen
+# at whatever the create form resolved, and a rename silently stops matching.
+#
+# Off-peak and off the hour: WDQS is a shared resource and every tool that
+# schedules "@daily" hits it at midnight together. A failed or partial resolve
+# is refused rather than applied, so a bad night leaves the old list intact.
+- name: rebuild-topics
+  command: rebuild-topics
+  image: tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest
+  schedule: "17 4 * * *"
+  emails: onfailure
+  filelog: true
+  # filelog requires the home mount (same as bot above)
+  mount: all
+  mem: 1Gi
+  cpu: 1
+
+# Polls the fork's integration branch every 15 minutes and redeploys when it
+# moves. Runs on the tool's own image so that a broken build keeps the *old*
+# autoupdate running — it can still pick up the fix commit that follows.
+#
+# mount: all is load-bearing. Build service jobs get no home directory by
+# default, and this script records the deployed SHA in $HOME/data. Without the
+# mount the SHA lands in the container's ephemeral filesystem, every tick sees
+# "nothing recorded" != remote, and the job redeploys the same commit forever.
+- name: autoupdate
+  command: autoupdate
+  image: tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest
+  schedule: "*/15 * * * *"
+  mount: all
+  emails: onfailure
+  filelog: true
+  mem: 512Mi
+  cpu: 500m
+
+# Reuses scripts/healthcheck.sh's heartbeat checks. Enable once the bot has
+# been running long enough to have a baseline; the container check inside
+# that script is Docker-specific and needs replacing with a jobs check first.
+# - name: healthcheck
+#   command: healthcheck
+#   image: tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest
+#   schedule: "*/30 * * * *"
+#   emails: onfailure
+#   filelog: true

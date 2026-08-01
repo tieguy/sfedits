@@ -10,7 +10,6 @@ const mastodon_url = 'https://botsin.space'
 // once complete you will be given a JSON stanza to add to the account
 // in your config.json that you want to have messages sent to on Mastodon
 
-const mastodon = require('mastodon')
 const oauth    = require('oauth')
 const request  = require('request')
 const readline = require('readline-sync')

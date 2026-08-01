@@ -179,6 +179,53 @@ describe('Platform Modules', function() {
       })
     })
 
+    it('includes reply refs when replyTo is provided', async function() {
+      nock('https://bsky.social')
+        .post('/xrpc/com.atproto.server.createSession')
+        .reply(200, {
+          accessJwt: 'fake-jwt',
+          refreshJwt: 'fake-refresh',
+          did: 'did:plc:fake123',
+          handle: 'test.bsky.social'
+        })
+        .post('/xrpc/com.atproto.repo.uploadBlob')
+        .reply(200, {
+          blob: {
+            $type: 'blob',
+            ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' },
+            mimeType: 'image/png',
+            size: 1234
+          }
+        })
+        .post('/xrpc/com.atproto.repo.createRecord', function(body) {
+          assert.ok(body.record.reply)
+          assert.equal(body.record.reply.root.uri, 'at://did:plc:fake123/app.bsky.feed.post/root1')
+          assert.equal(body.record.reply.parent.uri, 'at://did:plc:fake123/app.bsky.feed.post/parent1')
+          assert.equal(body.record.reply.parent.cid, 'cid-parent')
+          return true
+        })
+        .reply(200, {
+          uri: 'at://did:plc:fake123/app.bsky.feed.post/3kjqrstuqwdz2',
+          cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+        })
+
+      await blueskyPlatform.post({
+        account: { identifier: 'test', password: 'pass' },
+        text: 'Follow-up post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        },
+        replyTo: {
+          root: { uri: 'at://did:plc:fake123/app.bsky.feed.post/root1', cid: 'cid-root' },
+          parent: { uri: 'at://did:plc:fake123/app.bsky.feed.post/parent1', cid: 'cid-parent' }
+        }
+      })
+    })
+
     it('throws error when authentication fails', async function() {
       // Mock failed authentication
       nock('https://bsky.social')
@@ -280,6 +327,120 @@ describe('Platform Modules', function() {
           instance: 'https://mastodon.social'
         },
         text: 'Test post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test Article',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        }
+      })
+    })
+
+    it('includes in_reply_to_id when replyTo is provided', async function() {
+      nock('https://mastodon.social')
+        .post(/\/api\/v1\/media.*/)
+        .reply(200, { id: 'fake-media-id' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, function(uri, requestBody) {
+          if (requestBody && typeof requestBody === 'string') {
+            assert.include(requestBody, 'in_reply_to_id=12345')
+          }
+          return { id: 'fake-status-id' }
+        })
+
+      await mastodonPlatform.post({
+        account: {
+          access_token: 'fake-token',
+          instance: 'https://mastodon.social'
+        },
+        text: 'Follow-up post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test Article',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        },
+        replyTo: '12345'
+      })
+    })
+
+    it('omits in_reply_to_id when replyTo is absent', async function() {
+      nock('https://mastodon.social')
+        .post(/\/api\/v1\/media.*/)
+        .reply(200, { id: 'fake-media-id' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, function(uri, requestBody) {
+          if (requestBody && typeof requestBody === 'string') {
+            assert.notInclude(requestBody, 'in_reply_to_id')
+          }
+          return { id: 'fake-status-id' }
+        })
+
+      await mastodonPlatform.post({
+        account: {
+          access_token: 'fake-token',
+          instance: 'https://mastodon.social'
+        },
+        text: 'Standalone post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test Article',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        }
+      })
+    })
+
+    it('includes visibility when set on the account', async function() {
+      nock('https://mastodon.social')
+        .post(/\/api\/v1\/media.*/)
+        .reply(200, { id: 'fake-media-id' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, function(uri, requestBody) {
+          if (requestBody && typeof requestBody === 'string') {
+            assert.include(requestBody, 'visibility=unlisted')
+          }
+          return { id: 'fake-status-id' }
+        })
+
+      await mastodonPlatform.post({
+        account: {
+          access_token: 'fake-token',
+          instance: 'https://mastodon.social',
+          visibility: 'unlisted'
+        },
+        text: 'Bot post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test Article',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        }
+      })
+    })
+
+    it('omits visibility when not configured, keeping the server default', async function() {
+      nock('https://mastodon.social')
+        .post(/\/api\/v1\/media.*/)
+        .reply(200, { id: 'fake-media-id' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, function(uri, requestBody) {
+          if (requestBody && typeof requestBody === 'string') {
+            assert.notInclude(requestBody, 'visibility')
+          }
+          return { id: 'fake-status-id' }
+        })
+
+      await mastodonPlatform.post({
+        account: {
+          access_token: 'fake-token',
+          instance: 'https://mastodon.social'
+        },
+        text: 'Bot post',
         screenshot: testScreenshot,
         metadata: {
           page: 'Test Article',

@@ -340,6 +340,32 @@
       display: block;
     }
 
+    .region-lookup { background: white; border-radius: 8px; padding: 20px; }
+    .region-help { color: #666; margin: 0 0 14px; font-size: 14px; }
+    .region-input-row { display: flex; gap: 10px; }
+    .region-qid-input {
+      flex: 1; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px;
+    }
+    .region-resolve-btn {
+      padding: 10px 18px; border: none; border-radius: 6px; background: #2563eb; color: white;
+      font-size: 15px; cursor: pointer;
+    }
+    .region-resolve-btn:hover { background: #1d4ed8; }
+    .region-result { margin-top: 16px; }
+    .region-suggestion, .region-resolved, .region-error {
+      padding: 14px 16px; border-radius: 6px; font-size: 15px; line-height: 1.5;
+    }
+    .region-suggestion { background: #fff7ed; border: 1px solid #fed7aa; }
+    .region-suggestion p { margin: 0 0 8px; }
+    .region-resolved { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .region-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .region-approx { color: #b45309; font-size: 13px; }
+    .region-use-btn {
+      margin-top: 6px; padding: 8px 16px; border: none; border-radius: 6px;
+      background: #ea580c; color: white; font-size: 14px; cursor: pointer;
+    }
+    .region-use-btn:hover { background: #c2410c; }
+
     .cost-summary {
       background: white;
       border-radius: 8px;
@@ -558,6 +584,7 @@
       <div class="tabs">
         <div class="tab active" onclick="switchTab('drafts')">Drafts</div>
         <div class="tab" onclick="switchTab('gemini')">Gemini Log</div>
+        <div class="tab" onclick="switchTab('regions')">Regions</div>
       </div>
 
       <div id="draftsTab" class="tab-content active">
@@ -594,6 +621,20 @@
             </thead>
             <tbody id="logTableBody"></tbody>
           </table>
+        </div>
+      </div>
+
+      <div id="regionsTab" class="tab-content">
+        <div class="region-lookup">
+          <p class="region-help">Resolve a Wikidata place QID. Places without their own
+            boundary suggest the nearest containing region to confirm.</p>
+          <div class="region-input-row">
+            <input type="text" id="regionQid" class="region-qid-input"
+              placeholder="Wikidata QID, e.g. Q7469"
+              onkeydown="if (event.key === 'Enter') resolveRegionLookup()">
+            <button class="region-resolve-btn" onclick="resolveRegionLookup()">Resolve</button>
+          </div>
+          <div id="regionResult" class="region-result"></div>
         </div>
       </div>
     </div>
@@ -873,18 +914,72 @@
       modal.classList.remove('show')
     }
 
+    const TAB_ORDER = ['drafts', 'gemini', 'regions']
+
     function switchTab(tab) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'))
 
-      if (tab === 'drafts') {
-        document.querySelectorAll('.tab')[0].classList.add('active')
-        document.getElementById('draftsTab').classList.add('active')
-      } else {
-        document.querySelectorAll('.tab')[1].classList.add('active')
-        document.getElementById('geminiTab').classList.add('active')
-        loadGeminiLog()
+      const index = TAB_ORDER.indexOf(tab)
+      document.querySelectorAll('.tab')[index].classList.add('active')
+      document.getElementById(tab + 'Tab').classList.add('active')
+
+      if (tab === 'gemini') loadGeminiLog()
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    }
+
+    async function resolveRegionLookup(qidOverride) {
+      const input = document.getElementById('regionQid')
+      const qid = String(qidOverride || input.value || '').trim()
+      const resultEl = document.getElementById('regionResult')
+      if (!qid) { resultEl.innerHTML = ''; return }
+      if (qidOverride) input.value = qidOverride
+      resultEl.innerHTML = '<div class="loading">Resolving…</div>'
+
+      try {
+        const response = await fetch('/api/region/resolve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ qid, languages: ['en'] })
+        })
+        if (response.status === 401 || response.status === 403) { logout(); return }
+        const data = await response.json()
+        resultEl.innerHTML = renderRegionResult(data)
+      } catch (error) {
+        resultEl.innerHTML = `<div class="region-error">Failed: ${escapeHtml(error.message)}</div>`
       }
+    }
+
+    function renderRegionResult(data) {
+      if (data.status === 'needs_confirmation') {
+        const s = data.suggestion
+        const cls = s.class ? ` — a ${escapeHtml(s.class)}` : ''
+        return `
+          <div class="region-suggestion">
+            <p><strong>${escapeHtml(data.region.label)}</strong>
+              (${escapeHtml(data.region.qid)}) has no boundary of its own.</p>
+            <p>Did you mean <strong>${escapeHtml(s.label)}</strong>
+              (${escapeHtml(s.qid)})${cls}?</p>
+            <button class="region-use-btn"
+              onclick="resolveRegionLookup('${escapeHtml(s.qid)}')">Use ${escapeHtml(s.label)}</button>
+          </div>`
+      }
+      if (data.status === 'resolved') {
+        const approx = data.approximate
+          ? ' <span class="region-approx">(approximate — radius only)</span>' : ''
+        const n = data.count
+        return `<div class="region-resolved"><strong>${escapeHtml(data.region.label)}</strong>
+          (${escapeHtml(data.region.qid)}) — ${n} article${n === 1 ? '' : 's'}${approx}</div>`
+      }
+      return `<div class="region-error">${escapeHtml(data.error || 'Unknown error')}</div>`
     }
 
     // Pricing per million tokens (AI Studio, April 2026)

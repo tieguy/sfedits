@@ -251,15 +251,18 @@ describe('posting flow', function() {
 
       // Use proxyquire to inject mocked dependencies
       const pageWatch = proxyquire('../page-watch', {
-        './lib/screenshot': {
-          takeScreenshot: async () => {
+        './lib/diff-image': {
+          captureDiffImage: async () => {
             screenshotCalled = true
-            return fakeScreenshotPath
+            return { screenshot: fakeScreenshotPath, altText: 'Diff of Wikipedia article "Test Article": 1 line added.' }
           }
         },
         './lib/geolocation': {
           enrichIPsInText: async (text) => text, // Pass through without enrichment
           initializeReader: async () => null
+        },
+        './lib/post-log': {
+          recordPost: () => null
         }
       })
 
@@ -351,15 +354,18 @@ describe('posting flow', function() {
       let screenshotCalled = false
 
       const pageWatch = proxyquire('../page-watch', {
-        './lib/screenshot': {
-          takeScreenshot: async () => {
+        './lib/diff-image': {
+          captureDiffImage: async () => {
             screenshotCalled = true
-            return fakeScreenshotPath
+            return { screenshot: fakeScreenshotPath, altText: null }
           }
         },
         './lib/geolocation': {
           enrichIPsInText: async (text) => text,
           initializeReader: async () => null
+        },
+        './lib/post-log': {
+          recordPost: () => null
         }
       })
 
