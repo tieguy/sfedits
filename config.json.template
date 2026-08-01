@@ -74,7 +74,34 @@
         ]
       }
     }
-  ]
+  ],
+  "_topic_store_comment": [
+    "The place-bot platform's database. Omit this whole stanza to run the",
+    "single-account bot alone: the watchlist above is all it needs. With it,",
+    "the bot also serves per-topic subscriptions and /create can open.",
+    "On Toolforge, omit user and password - lib/topic-store.js falls back to",
+    "TOOL_TOOLSDB_USER and TOOL_TOOLSDB_PASSWORD, which the build service",
+    "injects. Setting them here means credentials in a file, which is the",
+    "thing SFEDITS_CONFIG exists to avoid. The database must already exist",
+    "and be named {your-toolsdb-user}__{name} - see docs/deploy-toolforge.md."
+  ],
+  "topic_store": {
+    "host": "tools.db.svc.wikimedia.cloud",
+    "port": 3306,
+    "database": "s00000__sfedits",
+    "connection_limit": 5,
+    "max_posts_per_hour": 20
+  },
+  "_web_comment": [
+    "The webservice: coverage page, place search, and the /create form.",
+    "/create stays closed unless BOTH topic_store and a non-empty",
+    "invite_codes list are present - the coverage page runs either way.",
+    "Treat invite codes as secrets: anyone holding one can create a topic."
+  ],
+  "web": {
+    "invite_codes": ["pick-something-unguessable"],
+    "max_articles": 5000
+  }
 }
 
 
