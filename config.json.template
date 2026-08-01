@@ -3,6 +3,11 @@
   "accounts": [
     {
       "template": "{{{page}}} Wikipedia article edited by {{{name}}} {{&url}}",
+      "collapse": {
+        "enabled": true,
+        "window_minutes": 15,
+        "template": "{{{page}}} Wikipedia article edited {{count}} times by {{{name}}} {{&url}}"
+      },
       "watchlist": {
         "English Wikipedia": {
           "San Francisco Board of Supervisors": true,
