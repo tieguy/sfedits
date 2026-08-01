@@ -86,16 +86,100 @@ describe('compare-diff', function() {
       ]
     }]
 
-    it('groups a line\'s highlight ranges into one display line', function() {
+    it('excerpts each side of a changed line as one readable span', function() {
       const summary = summarizeDiff(twoRangeLine)
-      assert.deepEqual(summary.addedLines, ['from … but requiring AMD to develop'])
-      assert.deepEqual(summary.removedLines, ['since … that continues to this day'])
+      assert.deepEqual(summary.addedLines, ['from but requiring AMD to develop'])
+      assert.deepEqual(summary.removedLines, ['since that continues to this day'])
     })
 
     it('keeps the flat per-highlight fragments for alt text', function() {
       const summary = summarizeDiff(twoRangeLine)
       assert.deepEqual(summary.added, ['from', 'but requiring AMD to develop'])
       assert.deepEqual(summary.removed, ['since', 'that continues to this day'])
+    })
+
+    // Build a type-3 change line from [text, 'add'|'del'|null] parts,
+    // computing wikidiff2's byte-offset highlightRanges.
+    function makeChangeLine(parts) {
+      let text = ''
+      const highlightRanges = []
+      for (const [t, kind] of parts) {
+        if (kind) {
+          highlightRanges.push({
+            start: Buffer.byteLength(text),
+            length: Buffer.byteLength(t),
+            type: kind === 'add' ? 0 : 1
+          })
+        }
+        text += t
+      }
+      return { type: 3, text, highlightRanges }
+    }
+
+    it('keeps the words between changes instead of ellipsizing every range', function() {
+      // Ryan Coogler link cleanup (diff=1367197915): five highlight ranges
+      // across one sentence used to render as "director … finance … [[ …
+      // |non-profit … organization"
+      const line = makeChangeLine([
+        ['His mother was a ', null],
+        ['[[Non-Profit|Director', 'del'],
+        ['director', 'add'],
+        [' of ', null],
+        ['Finance', 'del'],
+        ['finance', 'add'],
+        [' for a [[Non-Profit ', null],
+        ['|non-profit ', 'add'],
+        ['Organization', 'del'],
+        ['organization', 'add'],
+        [']], and his father was a counselor.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines,
+        ['director of finance for a [[Non-Profit |non-profit organization'])
+      assert.deepEqual(summary.removedLines,
+        ['[[Non-Profit|Director of Finance for a Non-Profit Organization'])
+    })
+
+    it('strips a link that spans several highlight ranges', function() {
+      // "[[Mayor]] of Oakland" -> "[[Governor]] of California": full-line
+      // stripping sees balanced [[..]] even though ranges split it
+      const line = makeChangeLine([
+        ['She became [[', null],
+        ['Mayor', 'del'],
+        ['Governor', 'add'],
+        [']] of ', null],
+        ['Oakland', 'del'],
+        ['California', 'add'],
+        [' that year.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines, ['Governor of California'])
+      assert.deepEqual(summary.removedLines, ['Mayor of Oakland'])
+    })
+
+    it('shortens only long unchanged stretches between changes', function() {
+      const gap = 'w'.repeat(300)
+      const line = makeChangeLine([
+        ['first', 'add'],
+        [` ${gap} `, null],
+        ['second', 'add']
+      ])
+      const summary = summarizeDiff([line])
+      assert.lengthOf(summary.addedLines, 1)
+      const excerpt = summary.addedLines[0]
+      assert.match(excerpt, /^first w+ … w+ second$/)
+      assert.isBelow(excerpt.length, 150)
+    })
+
+    it('excerpts nothing for a side with no visible change', function() {
+      const line = makeChangeLine([
+        ['Sentence with an ', null],
+        ['inserted word', 'add'],
+        [' only.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines, ['inserted word'])
+      assert.deepEqual(summary.removedLines, [])
     })
 
     it('keeps separate diff lines on separate display lines', function() {
