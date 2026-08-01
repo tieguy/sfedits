@@ -178,15 +178,13 @@ describe('discord-platform', function() {
       }
     }
 
-    it('builds a rich embed with description, excerpts, and thumbnail', function() {
+    it('builds a compact embed with links, summary, and copyable excerpts', function() {
       const embed = buildDiscordEmbed(metadata, 'diff.png')
       assert.equal(embed.title, 'London Breed')
       assert.equal(embed.url, metadata.pageUrl)
-      assert.include(embed.description, '*Mayor of San Francisco from 2018 to 2025*')
       assert.include(embed.description, '1 line changed')
       assert.include(embed.description, metadata.diffUrl)
       assert.equal(embed.author.name, 'Edited by AadamentAardvark')
-      assert.equal(embed.thumbnail.url, metadata.article.thumbnailUrl)
       assert.equal(embed.image.url, 'attachment://diff.png')
       assert.equal(embed.footer.text, 'English Wikipedia')
       const added = embed.fields.find(f => f.name === 'Added')
@@ -212,21 +210,32 @@ describe('discord-platform', function() {
       assert.equal(removed.value, '> since … that continues to this day')
     })
 
-    it('includes an Actions field with undo, history, editor talk, and watch links', function() {
+    it('caps long excerpt fields at Discord limits', function() {
+      const long = 'x'.repeat(3000)
+      const embed = buildDiscordEmbed({ ...metadata, summary: { ...metadata.summary, added: [long] } }, 'x.png')
+      const added = embed.fields.find(f => f.name === 'Added')
+      assert.isAtMost(added.value.length, 1024)
+    })
+
+    it('leaves the Wikidata description and lead image to the screenshot header', function() {
+      // The rendered diff image already shows both - repeating them in the
+      // embed showed the thumbnail and description slug twice per message
       const embed = buildDiscordEmbed(metadata, 'diff.png')
-      const actions = embed.fields.find(f => f.name === 'Actions')
-      assert.include(actions.value, 'action=edit&undo=1&undoafter=0')
-      assert.include(actions.value, 'action=history')
-      assert.include(actions.value, 'User_talk:AadamentAardvark')
-      assert.include(actions.value, 'action=watch')
-      // Actions come before the excerpt fields
-      assert.equal(embed.fields[0].name, 'Actions')
+      assert.notInclude(embed.description, 'Mayor of San Francisco')
+      assert.isUndefined(embed.thumbnail)
+    })
+
+    it('includes undo, history, editor talk, and watch links in the description', function() {
+      const embed = buildDiscordEmbed(metadata, 'diff.png')
+      assert.include(embed.description, 'action=edit&undo=1&undoafter=0')
+      assert.include(embed.description, 'action=history')
+      assert.include(embed.description, 'User_talk:AadamentAardvark')
+      assert.include(embed.description, 'action=watch')
     })
 
     it('links Special:Thanks for the new revision', function() {
       const embed = buildDiscordEmbed(metadata, 'diff.png')
-      const actions = embed.fields.find(f => f.name === 'Actions')
-      assert.include(actions.value, 'https://en.wikipedia.org/wiki/Special:Thanks/1')
+      assert.include(embed.description, 'https://en.wikipedia.org/wiki/Special:Thanks/1')
     })
 
     it('omits the thank link for IP editors', function() {
@@ -267,8 +276,7 @@ describe('discord-platform', function() {
       assert.include(embed.description, 'BLP')
       assert.include(embed.description, 'biography of a living person')
       assert.include(embed.description, 'https://www.wikidata.org/wiki/Q6669880')
-      const actions = embed.fields.find(f => f.name === 'Actions')
-      assert.include(actions.value, 'Biographies_of_living_persons/Noticeboard')
+      assert.include(embed.description, 'Biographies_of_living_persons/Noticeboard')
     })
 
     it('omits the Wikidata link when the qid is unknown', function() {
@@ -305,17 +313,10 @@ describe('discord-platform', function() {
       assert.equal(mix.color, 0x3366cc)
     })
 
-    it('caps long excerpt fields at Discord limits', function() {
-      const long = 'x'.repeat(3000)
-      const embed = buildDiscordEmbed({ ...metadata, summary: { ...metadata.summary, added: [long] } }, 'x.png')
-      const added = embed.fields.find(f => f.name === 'Added')
-      assert.isAtMost(added.value.length, 1024)
-    })
-
-    it('omits thumbnail and description when article meta is missing', function() {
+    it('builds the embed even when article meta is missing entirely', function() {
       const embed = buildDiscordEmbed({ ...metadata, article: null }, 'x.png')
       assert.isUndefined(embed.thumbnail)
-      assert.notInclude(embed.description, '*Mayor')
+      assert.include(embed.description, '1 line changed')
     })
   })
 

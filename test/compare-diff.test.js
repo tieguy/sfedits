@@ -86,16 +86,143 @@ describe('compare-diff', function() {
       ]
     }]
 
-    it('groups a line\'s highlight ranges into one display line', function() {
+    it('excerpts each side of a changed line as one readable span', function() {
       const summary = summarizeDiff(twoRangeLine)
-      assert.deepEqual(summary.addedLines, ['from … but requiring AMD to develop'])
-      assert.deepEqual(summary.removedLines, ['since … that continues to this day'])
+      assert.deepEqual(summary.addedLines, ['from but requiring AMD to develop'])
+      assert.deepEqual(summary.removedLines, ['since that continues to this day'])
     })
 
     it('keeps the flat per-highlight fragments for alt text', function() {
       const summary = summarizeDiff(twoRangeLine)
       assert.deepEqual(summary.added, ['from', 'but requiring AMD to develop'])
       assert.deepEqual(summary.removed, ['since', 'that continues to this day'])
+    })
+
+    // Build a type-3 change line from [text, 'add'|'del'|null] parts,
+    // computing wikidiff2's byte-offset highlightRanges.
+    function makeChangeLine(parts) {
+      let text = ''
+      const highlightRanges = []
+      for (const [t, kind] of parts) {
+        if (kind) {
+          highlightRanges.push({
+            start: Buffer.byteLength(text),
+            length: Buffer.byteLength(t),
+            type: kind === 'add' ? 0 : 1
+          })
+        }
+        text += t
+      }
+      return { type: 3, text, highlightRanges }
+    }
+
+    it('keeps the words between changes instead of ellipsizing every range', function() {
+      // Ryan Coogler link cleanup (diff=1367197915): five highlight ranges
+      // across one sentence used to render as "director … finance … [[ …
+      // |non-profit … organization"
+      const line = makeChangeLine([
+        ['His mother was a ', null],
+        ['[[Non-Profit|Director', 'del'],
+        ['director', 'add'],
+        [' of ', null],
+        ['Finance', 'del'],
+        ['finance', 'add'],
+        [' for a [[Non-Profit ', null],
+        ['|non-profit ', 'add'],
+        ['Organization', 'del'],
+        ['organization', 'add'],
+        [']], and his father was a counselor.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines,
+        ['director of finance for a [[Non-Profit |non-profit organization'])
+      assert.deepEqual(summary.removedLines,
+        ['[[Non-Profit|Director of Finance for a Non-Profit Organization'])
+    })
+
+    it('strips a link that spans several highlight ranges', function() {
+      // "[[Mayor]] of Oakland" -> "[[Governor]] of California": full-line
+      // stripping sees balanced [[..]] even though ranges split it
+      const line = makeChangeLine([
+        ['She became [[', null],
+        ['Mayor', 'del'],
+        ['Governor', 'add'],
+        [']] of ', null],
+        ['Oakland', 'del'],
+        ['California', 'add'],
+        [' that year.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines, ['Governor of California'])
+      assert.deepEqual(summary.removedLines, ['Mayor of Oakland'])
+    })
+
+    it('shortens only long unchanged stretches between changes', function() {
+      const gap = 'w'.repeat(300)
+      const line = makeChangeLine([
+        ['first', 'add'],
+        [` ${gap} `, null],
+        ['second', 'add']
+      ])
+      const summary = summarizeDiff([line])
+      assert.lengthOf(summary.addedLines, 1)
+      const excerpt = summary.addedLines[0]
+      assert.match(excerpt, /^first w+ … w+ second$/)
+      assert.isBelow(excerpt.length, 150)
+    })
+
+    it('glosses an added ref with its title and publication', function() {
+      // Johnny Mathis edit (diff-style): a citation added mid-sentence
+      // used to excerpt as just "[ref]"
+      const line = makeChangeLine([
+        ['Helen Noga.', null],
+        ['<ref>{{cite web |url=https://www.sfgate.com/music/mathis.html |title=Johnny Mathis looks back |work=[[San Francisco Chronicle]]}}</ref>', 'add'],
+        [' She became his manager.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines,
+        ['[ref: "Johnny Mathis looks back" (San Francisco Chronicle)]'])
+    })
+
+    it('glosses a wholly-added ref line', function() {
+      const summary = summarizeDiff([{
+        type: 1,
+        text: '<ref>{{cite news |title=A story |newspaper=The Examiner |url=https://www.sfexaminer.com/x}}</ref>'
+      }])
+      assert.deepEqual(summary.addedLines, ['[ref: "A story" (The Examiner)]'])
+    })
+
+    it('falls back to the cited hostname, external-link label, or prose', function() {
+      const bare = summarizeDiff([{ type: 1, text: '<ref>https://www.nytimes.com/2024/story.html</ref>' }])
+      assert.deepEqual(bare.addedLines, ['[ref: nytimes.com]'])
+
+      const labeled = summarizeDiff([{ type: 1, text: '<ref>[https://kqed.org/x Mathis at the Black Hawk]</ref>' }])
+      assert.deepEqual(labeled.addedLines, ['[ref: "Mathis at the Black Hawk" (kqed.org)]'])
+
+      const prose = summarizeDiff([{ type: 1, text: "<ref>Smith, ''Jazz in SF'' (2001), p. 44</ref>" }])
+      assert.deepEqual(prose.addedLines, ['[ref: Smith, Jazz in SF (2001), p. 44]'])
+    })
+
+    it('truncates long citation titles', function() {
+      const summary = summarizeDiff([{
+        type: 1,
+        text: `<ref>{{cite web |title=${'t'.repeat(100)} |url=https://a.com}}</ref>`
+      }])
+      const excerpt = summary.addedLines[0]
+      assert.include(excerpt, '…')
+      assert.include(excerpt, '(a.com)')
+      assert.isBelow(excerpt.length, 80)
+    })
+
+    it('excerpts nothing for a side with no visible change', function() {
+      const line = makeChangeLine([
+        ['Sentence with an ', null],
+        ['inserted word', 'add'],
+        [' only.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines, ['inserted word'])
+      assert.deepEqual(summary.removedLines, [])
     })
 
     it('keeps separate diff lines on separate display lines', function() {
@@ -157,13 +284,29 @@ describe('compare-diff', function() {
       assert.include(html, '<ins>third</ins>')
     })
 
-    it('collapses a wholly-added ref to a highlighted [ref]', function() {
+    it('collapses a wholly-added ref to a highlighted citation gloss', function() {
       const diff = [{
         type: 3,
         text: 'in 2025.<ref>{{Cite web |title=IPUMS |url=https://x.org}}</ref> Some',
         highlightRanges: [{ start: 8, length: 55, type: 0 }]
       }]
-      assert.include(renderDiffHtml(diff, 'SF'), '<ins>[ref]</ins>')
+      assert.include(renderDiffHtml(diff, 'SF'), '<ins>[ref: &quot;IPUMS&quot; (x.org)]</ins>')
+    })
+
+    it('keeps context refs terse while glossing the changed one', function() {
+      // Only the second ref is part of the edit; the first is context and
+      // glossing it would crowd the render with an unrelated citation
+      const text = 'Old claim.<ref>{{cite web |title=Old |url=https://a.com/1}}</ref> More.<ref>{{cite web |title=New source |url=https://b.com/2}}</ref>'
+      const refStart = text.indexOf(' More.') + ' More.'.length
+      const diff = [{
+        type: 3,
+        text,
+        highlightRanges: [{ start: refStart, length: Buffer.byteLength(text) - refStart, type: 0 }]
+      }]
+      const html = renderDiffHtml(diff, 'SF')
+      assert.include(html, 'Old claim.[ref] More.')
+      assert.include(html, '<ins>[ref: &quot;New source&quot; (b.com)]</ins>')
+      assert.notInclude(html, 'a.com')
     })
 
     it('keeps a ref raw when the change is inside it', function() {
