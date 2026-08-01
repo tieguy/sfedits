@@ -17,7 +17,7 @@ All figures from the 2026-07-31 run.
 
 I run [@sfedits](https://bsky.app/profile/sfedits.bsky.social), a bot that posts
 images of edits to Bay Area articles. It picks what to watch from our importance
-ratings — currently everything rated Top or High, about 500 articles.
+ratings — currently everything rated Top, High or Mid, about 2,450 articles.
 
 I should say up front that I've only been active in this task force for about a
 week, so I'm coming at this as a newcomer with a bot rather than as someone who has
@@ -316,11 +316,23 @@ reporting, and it's the most useful thing anyone could do with this.
 
 ## 6. What I'm doing, and what I'm asking
 
-**What I'm doing regardless:** pointing my bot at the top 500 of this ranking
-instead of at Top+High. That's an operator's choice about my own bot, it needs no
-consensus, and it's reversible. It changes 288 articles in and 294 out, at roughly
-the same posting volume. If the coverage looks wrong to you, that's useful feedback
-and I'll adjust.
+**What I'm doing regardless:** pointing my bot at the top 500 of this ranking.
+That's an operator's choice about my own bot, it needs no consensus, and it's
+reversible.
+
+To be straight about the size of this: the bot has been watching everything rated
+Top, High **or** Mid — 2,455 articles — and it has been far too noisy to be useful.
+The top 500 adds 81 articles and drops 2,036. That is mostly me turning the volume
+down, and only partly a claim that the ranking picks better articles. I'm not
+presenting a coverage cut as a neutral improvement.
+
+The full list is published, so you can check what left:
+[watchlist-500.json](https://san-francisco-edit-stream.toolforge.org/watchlist-500.json).
+I'm also publishing a
+[top-2500 list](https://san-francisco-edit-stream.toolforge.org/watchlist-2500.json)
+at the same ranking for anyone who wants coverage closer to the old breadth. If
+something you watch got dropped and shouldn't have been, tell me — that's useful
+feedback either about the ranking or about my cutoff, and I'll adjust.
 
 **What I'm asking:**
 
@@ -342,8 +354,16 @@ the clearly-orphaned ones — and seeing how that goes.
 
 ## Notes for Louie, not for posting
 
-- **Publish the data somewhere reachable** before posting — §6 promises it. Options:
-  a task force subpage, a Toolforge URL, or a gist. `ranking.json` is ~2 MB.
+- **The two watchlists are published** at `/watchlist-500.json` and
+  `/watchlist-2500.json` on the Toolforge webservice, and §6 links both. Still
+  unpublished: the full `ranking.json` (~2 MB) that §6's "every number is
+  reproducible and I'll publish the data" implies. Needs a home before posting —
+  a task force subpage, another Toolforge URL, or a gist.
+- **The baseline was wrong until 2026-07-31.** Earlier drafts said the switch was
+  +288/−294 against a Top+High baseline of 506. The bot was actually running
+  Top+High+Mid (2,455, verified against `/api/topics.json`), so the real change is
+  +81/−2,036. §6 now states this as a deliberate volume cut. Don't let the old
+  numbers creep back in from `docs/watchlist-switch-proposal.md`, which is superseded.
 - **The 25-most-linked table in §2** attributes articles to cities using the first
   Bay Area place name in the lead, which is a proxy. Redo via Wikidata `P131` before
   posting, or a South Bay editor will reasonably ask how articles were assigned.
