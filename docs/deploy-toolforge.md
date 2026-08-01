@@ -154,6 +154,42 @@ Notes that matter:
   deploy with the form closed; the coverage page runs either way.
 - Confirm afterwards with `toolforge envvars list` (it shows names, not values).
 
+### Changing the config later
+
+`envvars create` will not overwrite, so it is delete-then-create. Edit the
+existing value rather than retyping it — that way the credentials are never
+displayed and never re-entered:
+
+```bash
+umask 077                      # anything written below is 0600
+toolforge envvars show --raw SFEDITS_CONFIG > cfg.json
+```
+
+**`--raw` is required.** Without it `envvars show` prints a decorated table and
+`jq` chokes on it, which reads as "my config is corrupt" rather than "wrong
+output mode".
+
+```bash
+jq '.topic_store = { host: "tools.db.svc.wikimedia.cloud", port: 3306,
+                     database: "s57894__sfedits", connection_limit: 5,
+                     max_posts_per_hour: 20 }' cfg.json > cfg.new.json
+
+jq 'keys' cfg.new.json                  # expect the stanzas you meant to have
+jq '.accounts[0] | keys' cfg.new.json   # proves nothing was dropped
+
+toolforge envvars delete SFEDITS_CONFIG
+toolforge envvars create SFEDITS_CONFIG < cfg.new.json
+rm cfg.json cfg.new.json
+```
+
+Between the delete and the create the variable does not exist. Harmless before
+anything is running; once the bot is live, a restart in that window starts it
+with no config at all.
+
+`jq 'keys'` against the deployed value is also the quickest way to answer "is
+the deployed config a schema behind?" — the question that cost a failed
+`migrate` on the first deploy. See LUI-108 for the longer-term fix.
+
 ## 4. Build
 
 ```bash
