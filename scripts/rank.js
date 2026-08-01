@@ -21,10 +21,13 @@
  *
  * Method and evidence: docs/importance-ranking-methodology.md
  *
- * Usage: node scripts/rank.js [--watchlist N] [--top 0.0025] [--high 0.025] [--mid 0.15]
+ * Usage: node scripts/rank.js [--watchlist N] [--wide N]
+ *                             [--top 0.0025] [--high 0.025] [--mid 0.15]
  * Outputs (data/reassess/):
  *   ranking.json          every article, ranked, with tier and current rating
- *   watchlist.json        the top N titles, for the bot
+ *   watchlist.json        the top N titles, bare array (legacy shape)
+ *   watchlist-500.json    the bot's list, with provenance - published
+ *   watchlist-2500.json   the wide list, with provenance - published, unwatched
  *   ranking-report.md     human-readable summary + the diffs
  */
 
@@ -35,7 +38,28 @@ const {
 } = require('./reassess')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
-const DEFAULTS = { top: 0.0025, high: 0.025, mid: 0.15, watchlist: 500 }
+const DEFAULTS = { top: 0.0025, high: 0.025, mid: 0.15, watchlist: 500, wide: 2500 }
+
+// The importance filter the DEPLOYED bot runs, which is the only honest
+// baseline for the added/dropped diff below. Verified live against
+// /api/topics.json on 2026-07-31: Top+High+Mid, 2,455 articles. This was
+// ['top','high'] (506 articles) until then, which understated the size of the
+// change by an order of magnitude - the switch drops ~2,000 articles, it does
+// not swap ~290. If the live config's importance filter changes, change this.
+const LIVE_IMPORTANCE = ['top', 'high', 'mid']
+
+/**
+ * The two published cuts of one ranking. The narrow list is what the bot
+ * watches; the wide list is published for transparency and for anyone who
+ * wants fuller coverage. Narrow is always a prefix of wide, so an article
+ * never appears in the wide list but not the narrow one at a higher rank.
+ */
+function cuts(ranked, opts) {
+  return {
+    narrow: ranked.slice(0, opts.watchlist),
+    wide: ranked.slice(0, opts.wide)
+  }
+}
 
 function load(name) {
   const p = path.join(DATA_DIR, `${name}.json`)
@@ -89,17 +113,31 @@ function main() {
   const newlyTagged = ranked.filter(r => !r.tagged)
 
   // the bot watchlist: purely the top N of the ranking
-  const watchlist = ranked.slice(0, opts.watchlist)
+  const { narrow: watchlist, wide } = cuts(ranked, opts)
   const currentWatch = new Set(
-    cohort.filter(a => a.importance === 'top' || a.importance === 'high').map(a => a.title))
+    cohort.filter(a => LIVE_IMPORTANCE.includes(a.importance)).map(a => a.title))
   const watchNow = new Set(watchlist.map(r => r.title))
   const added = watchlist.filter(r => !currentWatch.has(r.title))
   const dropped = ranked.filter(r => currentWatch.has(r.title) && !watchNow.has(r.title))
     .sort((a, b) => b.inlinks - a.inlinks)
 
+  // Published lists carry provenance: a bare array is hard to audit once it is
+  // sitting on a webserver detached from the run that produced it.
+  const publish = (titles) => JSON.stringify({
+    generated_at: new Date().toISOString(),
+    method: 'https://github.com/tieguy/sfedits/blob/integration/docs/importance-ranking-methodology.md',
+    universe: ranked.length,
+    count: titles.length,
+    titles
+  })
+
   fs.writeFileSync(path.join(DATA_DIR, 'ranking.json'), JSON.stringify(ranked))
   fs.writeFileSync(path.join(DATA_DIR, 'watchlist.json'),
     JSON.stringify(watchlist.map(r => r.title)))
+  fs.writeFileSync(path.join(DATA_DIR, `watchlist-${opts.watchlist}.json`),
+    publish(watchlist.map(r => r.title)))
+  fs.writeFileSync(path.join(DATA_DIR, `watchlist-${opts.wide}.json`),
+    publish(wide.map(r => r.title)))
 
   const pct = (a, b) => `${(100 * a / b).toFixed(0)}%`
   const md = `# Bay Area article ranking
@@ -143,9 +181,14 @@ warrant human review before being applied.
 ${table(newlyTagged.filter(r => r.tier !== 'low'))}
 ## Top ${opts.watchlist} — the bot watchlist
 
-Currently the bot watches ${currentWatch.size} articles (everything rated Top or High).
-Switching to the top ${opts.watchlist} of this ranking would **add ${added.length}** and
-**drop ${dropped.length}**.
+Currently the bot watches **${currentWatch.size}** articles: everything rated
+${LIVE_IMPORTANCE.map(i => i[0].toUpperCase() + i.slice(1)).join(', ')}.
+Switching to the top ${opts.watchlist} of this ranking would **add ${added.length}**
+and **drop ${dropped.length}** — a deliberate reduction in coverage, not a swap.
+
+A wider cut of the same ranking is published alongside it as
+\`watchlist-${opts.wide}.json\` (${wide.length} articles) for anyone who wants
+fuller coverage than the bot posts.
 
 ### First 50 of the ranking
 
@@ -174,4 +217,4 @@ if (require.main === module) {
   try { main() } catch (error) { console.error(error.message); process.exit(1) }
 }
 
-module.exports = { parseArgs, DEFAULTS }
+module.exports = { parseArgs, DEFAULTS, LIVE_IMPORTANCE, cuts }
