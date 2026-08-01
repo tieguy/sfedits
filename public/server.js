@@ -397,6 +397,21 @@ app.get('/matrix', (req, res) => {
   res.sendFile(path.join(__dirname, 'matrix-untagged.html'))
 })
 
+// The published article ranking, generated locally by scripts/rank.js and
+// committed. Two cuts of one ranking: -500 is what the bot watches (it fetches
+// this URL through watchlist_source.titles_url), -2500 is published for
+// anyone wanting fuller coverage than the bot posts.
+//
+// Serving the bot's own watchlist from the bot's own webservice is a little
+// circular, but the alternative - an on-wiki page - adds a parse step and a
+// second failure mode, and watchlist-sync already falls back to its last-good
+// cache if this 404s or goes away.
+for (const cut of ['500', '2500']) {
+  app.get(`/watchlist-${cut}.json`, (req, res) => {
+    res.sendFile(path.join(__dirname, `watchlist-${cut}.json`))
+  })
+}
+
 app.get('/api/topics.json', (req, res) => {
   if (!app.locals.topics) {
     return res.status(503).json({ error: 'Topics are still loading' })

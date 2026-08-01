@@ -14,13 +14,19 @@ const path = require('path')
 
 const {
   fetchProjectArticles,
+  fetchTitlesList,
   refreshWatchlist,
+  startWatchlistSync,
   isWatched,
   cachePath
 } = require('../lib/watchlist-sync')
 
 const API_HOST = 'https://en.wikipedia.org'
 const API_PATH = '/w/api.php'
+
+const LIST_HOST = 'https://san-francisco-edit-stream.toolforge.org'
+const LIST_PATH = '/watchlist-500.json'
+const LIST_URL = `${LIST_HOST}${LIST_PATH}`
 
 function apiPage(title, ns = 0, importance = null) {
   const page = { pageid: Math.abs(title.length * 7919), ns, title }
@@ -246,6 +252,130 @@ describe('watchlist-sync', function() {
       }
       await refreshWatchlist(account, { dataDir })
       assert.isTrue(account.dynamicWatchlist['German Wikipedia'].has('Artikel'))
+    })
+  })
+
+  describe('fetchTitlesList', function() {
+    it('fetches a bare JSON array of titles', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(200, ['Alpha', 'Beta'])
+
+      const titles = await fetchTitlesList({ titles_url: LIST_URL })
+
+      assert.deepEqual(titles, ['Alpha', 'Beta'])
+    })
+
+    it('fetches a { titles: [...] } envelope', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(200, {
+        generated_at: '2026-08-01T00:00:00Z',
+        titles: ['Alpha', 'Beta']
+      })
+
+      const titles = await fetchTitlesList({ titles_url: LIST_URL })
+
+      assert.deepEqual(titles, ['Alpha', 'Beta'])
+    })
+
+    it('throws on HTTP errors', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(503)
+
+      try {
+        await fetchTitlesList({ titles_url: LIST_URL })
+        assert.fail('should have thrown')
+      } catch (e) {
+        assert.include(e.message, '503')
+      }
+    })
+
+    it('throws when the payload is not a list of titles', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(200, { unexpected: 'shape' })
+
+      try {
+        await fetchTitlesList({ titles_url: LIST_URL })
+        assert.fail('should have thrown')
+      } catch (e) {
+        assert.include(e.message, 'title list')
+      }
+    })
+
+    it('reads from a local file when titles_file is set', async function() {
+      const file = path.join(dataDir, 'top500.json')
+      fs.writeFileSync(file, JSON.stringify(['From Disk']))
+
+      const titles = await fetchTitlesList({ titles_file: file })
+
+      assert.deepEqual(titles, ['From Disk'])
+    })
+  })
+
+  describe('refreshWatchlist with a titles_url source', function() {
+    it('populates the dynamic watchlist and writes a cache file', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(200, ['Golden Gate Bridge'])
+
+      const account = { watchlist_source: { titles_url: LIST_URL } }
+      const count = await refreshWatchlist(account, { dataDir })
+
+      assert.equal(count, 1)
+      assert.isTrue(account.dynamicWatchlist['English Wikipedia'].has('Golden Gate Bridge'))
+
+      const cache = JSON.parse(fs.readFileSync(cachePath(dataDir, LIST_URL), 'utf8'))
+      assert.deepEqual(cache.titles, ['Golden Gate Bridge'])
+    })
+
+    it('never calls the PageAssessments API', async function() {
+      // Any request to the API host is an unmocked call and will throw.
+      nock(LIST_HOST).get(LIST_PATH).reply(200, ['Only From The List'])
+
+      const account = {
+        watchlist_source: { titles_url: LIST_URL, project: 'Ignored Project' }
+      }
+      const count = await refreshWatchlist(account, { dataDir })
+
+      assert.equal(count, 1)
+      assert.isTrue(account.dynamicWatchlist['English Wikipedia'].has('Only From The List'))
+    })
+
+    it('treats an empty list as a failure and falls back to cache', async function() {
+      fs.writeFileSync(cachePath(dataDir, LIST_URL), JSON.stringify({ titles: ['From Cache'] }))
+      nock(LIST_HOST).get(LIST_PATH).reply(200, [])
+
+      const account = { watchlist_source: { titles_url: LIST_URL } }
+      const count = await refreshWatchlist(account, { dataDir })
+
+      assert.equal(count, 1)
+      assert.isTrue(account.dynamicWatchlist['English Wikipedia'].has('From Cache'))
+    })
+
+    it('respects a custom wikipedia feed name', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(200, ['Artikel'])
+
+      const account = {
+        watchlist_source: { titles_url: LIST_URL, wikipedia: 'German Wikipedia' }
+      }
+      await refreshWatchlist(account, { dataDir })
+
+      assert.isTrue(account.dynamicWatchlist['German Wikipedia'].has('Artikel'))
+    })
+  })
+
+  describe('startWatchlistSync source validation', function() {
+    it('starts a titles_url account that declares no project', async function() {
+      nock(LIST_HOST).get(LIST_PATH).reply(200, ['Alpha'])
+
+      const config = { accounts: [{ watchlist_source: { titles_url: LIST_URL } }] }
+      const timers = await startWatchlistSync(config, { dataDir })
+      timers.forEach(t => clearInterval(t))
+
+      assert.equal(timers.length, 1)
+      assert.isTrue(config.accounts[0].dynamicWatchlist['English Wikipedia'].has('Alpha'))
+    })
+
+    it('skips a source that declares neither project nor a title list', async function() {
+      const config = { accounts: [{ watchlist_source: { refresh_hours: 24 } }] }
+      const timers = await startWatchlistSync(config, { dataDir })
+      timers.forEach(t => clearInterval(t))
+
+      assert.equal(timers.length, 0)
+      assert.isUndefined(config.accounts[0].dynamicWatchlist)
     })
   })
 

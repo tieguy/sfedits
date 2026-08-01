@@ -10,10 +10,17 @@
           "London Breed": true
         }
       },
+      "_watchlist_source_comment": [
+        "Two source types. Use titles_url to watch a published list of titles,",
+        "or project+importance to watch a PageAssessments importance filter.",
+        "titles_url wins if both are set. The SFBA deployment uses titles_url",
+        "because its task-force importance ratings are measurably uncalibrated",
+        "- see docs/importance-ranking-methodology.md. Other regions may find",
+        "their ratings perfectly good and should just use project+importance."
+      ],
       "watchlist_source": {
-        "project": "California/San Francisco Bay Area task force",
+        "titles_url": "https://san-francisco-edit-stream.toolforge.org/watchlist-500.json",
         "wikipedia": "English Wikipedia",
-        "importance": ["Top", "High"],
         "refresh_hours": 24
       },
       "bluesky": {

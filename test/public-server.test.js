@@ -189,6 +189,32 @@ describe('public-server', function() {
       assert.include(html, 'Data snapshot:')
     })
 
+    // The bot fetches its own watchlist from here, so these two routes are a
+    // runtime dependency of the deployment, not just a transparency page.
+    it('GET /watchlist-500.json serves the published bot watchlist', async function() {
+      const res = await fetch(`${base}/watchlist-500.json`)
+      assert.equal(res.status, 200)
+      const data = await res.json()
+      assert.equal(data.count, 500)
+      assert.lengthOf(data.titles, 500)
+      assert.isOk(data.generated_at)
+      assert.isOk(data.method)
+    })
+
+    it('GET /watchlist-2500.json serves the published wide list', async function() {
+      const res = await fetch(`${base}/watchlist-2500.json`)
+      assert.equal(res.status, 200)
+      const data = await res.json()
+      assert.equal(data.count, 2500)
+      assert.lengthOf(data.titles, 2500)
+    })
+
+    it('publishes the bot list as a strict prefix of the wide list', async function() {
+      const narrow = await (await fetch(`${base}/watchlist-500.json`)).json()
+      const wide = await (await fetch(`${base}/watchlist-2500.json`)).json()
+      assert.deepEqual(narrow.titles, wide.titles.slice(0, narrow.titles.length))
+    })
+
     it('GET / returns 503 when topics have not loaded yet', async function() {
       const saved = app.locals.topics
       app.locals.topics = null
