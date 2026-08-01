@@ -62,23 +62,42 @@ become san-francisco-edit-stream
 
 ## 2. Create the ToolsDB database
 
+**Done for this tool 2026-07-31: the database is `s57894__sfedits`.** The rest
+of this section is how it was arrived at, and what a different operator would
+do.
+
 The topic store needs a database, and tool-created databases must be named
-`{user}__{name}`. Your credentials are in `$HOME/replica.my.cnf`:
+`{user}__{name}` — the `{user}` prefix is assigned per tool, so it is never the
+same as the example in someone else's documentation. Find yours:
 
 ```bash
-# your database user, e.g. s51234
-grep user $HOME/replica.my.cnf
-
-sql tools
+sql tools "SELECT SUBSTRING_INDEX(USER(), \"@\", 1)"   # -> s57894 for this tool
+grep user $HOME/replica.my.cnf                          # same value
 ```
 
-```sql
-CREATE DATABASE s51234__sfedits CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+Then create it, substituting your own prefix:
+
+```bash
+sql tools "CREATE DATABASE s57894__sfedits CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
 ```
 
-Use the exact user string from `replica.my.cnf` as the prefix. Note the
-collation: `utf8mb4_bin`, matching `db/migrations/001-initial-schema.sql`,
-because MediaWiki titles are case-sensitive after the first character.
+The collation is not optional: `utf8mb4_bin` matches
+`db/migrations/001-initial-schema.sql`, because MediaWiki titles are
+case-sensitive after the first character.
+
+Two things about the `sql` helper, each of which costs a confusing error:
+
+- It takes the query as **one positional argument**. `--execute "..."` is parsed
+  as query words and silently joined.
+- Its first argument is `tools` or a wiki name — **not** a database name.
+  `sql s57894__sfedits "SHOW TABLES"` returns "Could not find requested
+  database", which is the helper refusing the argument, not ToolsDB saying the
+  database is missing. To look inside it: `sql tools "SHOW TABLES FROM
+  s57894__sfedits"`.
+
+The database name here must match `topic_store.database` in `SFEDITS_CONFIG`
+exactly. A mismatch surfaces as a connection failure in the bot's logs and
+reads like a credentials problem.
 
 ## 3. Write the config
 
@@ -102,7 +121,7 @@ cat > /tmp/sfedits-config.json <<'JSON'
   ],
   "topic_store": {
     "host": "tools.db.svc.wikimedia.cloud",
-    "database": "s51234__sfedits",
+    "database": "s57894__sfedits",
     "connection_limit": 5,
     "max_posts_per_hour": 20
   },

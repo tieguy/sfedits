@@ -8,7 +8,7 @@ did before the place-bot platform work.
   "topic_store": {
     "host": "tools.db.svc.wikimedia.cloud",
     "port": 3306,
-    "database": "s51234__sfedits",
+    "database": "s57894__sfedits",
     "connection_limit": 5
   }
 }
