@@ -34,7 +34,8 @@
       },
       "mastodon": {
         "instance": "https://your-instance.social",
-        "access_token": "your-access-token"
+        "access_token": "your-access-token",
+        "visibility": "unlisted"
       },
       "discord": {
         "webhook_url": "https://discord.com/api/webhooks/your-webhook-id/your-webhook-token"

@@ -281,6 +281,23 @@ To set up Mastodon posting and PII alert DMs:
 
 **Note:** Without the correct scopes (`write:media` and `write:statuses`), Mastodon posting will fail silently while Bluesky continues to work.
 
+**Post visibility:** community instances often want bots posting `unlisted` so
+automated posts stay off the local timeline (posts still appear on the bot's
+profile, to followers, and in threads). Set it per account:
+
+```json
+"mastodon": {
+  "instance": "https://sfba.social",
+  "access_token": "your-access-token",
+  "visibility": "unlisted"
+}
+```
+
+Accepted values are Mastodon's: `public`, `unlisted`, `private` (followers
+only). Omit the key to use the server's default (normally public). This
+applies to regular posts, collapsed/threaded posts, and admin console
+reposts alike; PII alert DMs are always sent `direct` regardless.
+
 ## PII Screening
 
 The bot automatically screens all edits for personally identifiable information (PII) before posting to prevent malicious actors from using the bot to amplify private data.
