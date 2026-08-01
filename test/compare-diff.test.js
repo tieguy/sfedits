@@ -171,6 +171,49 @@ describe('compare-diff', function() {
       assert.isBelow(excerpt.length, 150)
     })
 
+    it('glosses an added ref with its title and publication', function() {
+      // Johnny Mathis edit (diff-style): a citation added mid-sentence
+      // used to excerpt as just "[ref]"
+      const line = makeChangeLine([
+        ['Helen Noga.', null],
+        ['<ref>{{cite web |url=https://www.sfgate.com/music/mathis.html |title=Johnny Mathis looks back |work=[[San Francisco Chronicle]]}}</ref>', 'add'],
+        [' She became his manager.', null]
+      ])
+      const summary = summarizeDiff([line])
+      assert.deepEqual(summary.addedLines,
+        ['[ref: "Johnny Mathis looks back" (San Francisco Chronicle)]'])
+    })
+
+    it('glosses a wholly-added ref line', function() {
+      const summary = summarizeDiff([{
+        type: 1,
+        text: '<ref>{{cite news |title=A story |newspaper=The Examiner |url=https://www.sfexaminer.com/x}}</ref>'
+      }])
+      assert.deepEqual(summary.addedLines, ['[ref: "A story" (The Examiner)]'])
+    })
+
+    it('falls back to the cited hostname, external-link label, or prose', function() {
+      const bare = summarizeDiff([{ type: 1, text: '<ref>https://www.nytimes.com/2024/story.html</ref>' }])
+      assert.deepEqual(bare.addedLines, ['[ref: nytimes.com]'])
+
+      const labeled = summarizeDiff([{ type: 1, text: '<ref>[https://kqed.org/x Mathis at the Black Hawk]</ref>' }])
+      assert.deepEqual(labeled.addedLines, ['[ref: "Mathis at the Black Hawk" (kqed.org)]'])
+
+      const prose = summarizeDiff([{ type: 1, text: "<ref>Smith, ''Jazz in SF'' (2001), p. 44</ref>" }])
+      assert.deepEqual(prose.addedLines, ['[ref: Smith, Jazz in SF (2001), p. 44]'])
+    })
+
+    it('truncates long citation titles', function() {
+      const summary = summarizeDiff([{
+        type: 1,
+        text: `<ref>{{cite web |title=${'t'.repeat(100)} |url=https://a.com}}</ref>`
+      }])
+      const excerpt = summary.addedLines[0]
+      assert.include(excerpt, '…')
+      assert.include(excerpt, '(a.com)')
+      assert.isBelow(excerpt.length, 80)
+    })
+
     it('excerpts nothing for a side with no visible change', function() {
       const line = makeChangeLine([
         ['Sentence with an ', null],
@@ -241,13 +284,29 @@ describe('compare-diff', function() {
       assert.include(html, '<ins>third</ins>')
     })
 
-    it('collapses a wholly-added ref to a highlighted [ref]', function() {
+    it('collapses a wholly-added ref to a highlighted citation gloss', function() {
       const diff = [{
         type: 3,
         text: 'in 2025.<ref>{{Cite web |title=IPUMS |url=https://x.org}}</ref> Some',
         highlightRanges: [{ start: 8, length: 55, type: 0 }]
       }]
-      assert.include(renderDiffHtml(diff, 'SF'), '<ins>[ref]</ins>')
+      assert.include(renderDiffHtml(diff, 'SF'), '<ins>[ref: &quot;IPUMS&quot; (x.org)]</ins>')
+    })
+
+    it('keeps context refs terse while glossing the changed one', function() {
+      // Only the second ref is part of the edit; the first is context and
+      // glossing it would crowd the render with an unrelated citation
+      const text = 'Old claim.<ref>{{cite web |title=Old |url=https://a.com/1}}</ref> More.<ref>{{cite web |title=New source |url=https://b.com/2}}</ref>'
+      const refStart = text.indexOf(' More.') + ' More.'.length
+      const diff = [{
+        type: 3,
+        text,
+        highlightRanges: [{ start: refStart, length: Buffer.byteLength(text) - refStart, type: 0 }]
+      }]
+      const html = renderDiffHtml(diff, 'SF')
+      assert.include(html, 'Old claim.[ref] More.')
+      assert.include(html, '<ins>[ref: &quot;New source&quot; (b.com)]</ins>')
+      assert.notInclude(html, 'a.com')
     })
 
     it('keeps a ref raw when the change is inside it', function() {
