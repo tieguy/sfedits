@@ -96,6 +96,32 @@ describe('public-server', function() {
       assert.equal(topics.claims.placeCount, 10)
     })
 
+    // The coverage page has to describe whatever source the bot is actually
+    // using. Under a titles_url config it was querying PageAssessments with an
+    // undefined project name and rendering "undefined WikiProject listing".
+    it('describes a titles_url source without touching PageAssessments', async function() {
+      nock('https://san-francisco-edit-stream.toolforge.org')
+        .get('/watchlist-500.json')
+        .reply(200, { count: 2, titles: ['Ohlone', 'Golden Gate Bridge'] })
+      mockSparql()
+
+      const listConfig = {
+        accounts: [{
+          watchlist_source: {
+            titles_url: 'https://san-francisco-edit-stream.toolforge.org/watchlist-500.json'
+          },
+          wikidata_claims: { properties: ['P19'] }
+        }]
+      }
+      const topics = await buildTopics(listConfig, { dataDir: tmpDir })
+
+      assert.deepEqual(topics.dynamic.articles, ['Golden Gate Bridge', 'Ohlone'])
+      assert.isNull(topics.dynamic.importance)
+      assert.notInclude(String(topics.dynamic.project), 'undefined')
+      assert.include(renderPage(topics), 'Golden Gate Bridge')
+      assert.notInclude(renderPage(topics), 'undefined')
+    })
+
     it('handles accounts with no claim watch or dynamic source', async function() {
       const bare = { accounts: [{ watchlist: { 'English Wikipedia': { 'Cat': true } } }] }
       const topics = await buildTopics(bare, { dataDir: tmpDir })

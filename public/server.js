@@ -21,7 +21,7 @@
 const express = require('express')
 const path = require('path')
 const { loadConfig } = require('../lib/config')
-const { fetchProjectArticles } = require('../lib/watchlist-sync')
+const { fetchSourceTitles } = require('../lib/watchlist-sync')
 const { refreshTargetSets, DEFAULT_PROPERTIES } = require('../lib/wikidata-claim-watch')
 const { createTopicStore } = require('../lib/topic-store')
 const { createBot, estimateRegion, CreateError } = require('../lib/topic-create')
@@ -61,12 +61,15 @@ async function buildTopics(config, { dataDir }) {
     const source = account.watchlist_source
     let articles = []
     try {
-      articles = (await fetchProjectArticles(source)).sort()
+      articles = (await fetchSourceTitles(source)).sort()
     } catch (error) {
       console.error('Topics: dynamic list fetch failed:', error.message)
     }
     dynamic = {
-      project: source.project,
+      // A published title list has no project name and no importance filter;
+      // describe it by where it came from instead.
+      project: source.project || null,
+      titles_url: source.titles_url || null,
       importance: source.importance || null,
       articles
     }
@@ -111,15 +114,27 @@ function renderPage(topics) {
        <ul class="cols">${titles.map(t => `<li>${articleLink(t)}</li>`).join('')}</ul>`)
     .join('')
 
+  // Two source types, two very different provenance stories: a WikiProject
+  // listing changes as editors re-assess, a published ranking changes when the
+  // ranking is regenerated. Saying "WikiProject listing" for both would be a lie.
+  const dynamicProvenance = topics.dynamic && topics.dynamic.titles_url
+    ? `<p>${n(topics.dynamic.articles.length)} articles from a published ranking:
+        <a href="${escapeHtml(topics.dynamic.titles_url)}">${escapeHtml(topics.dynamic.titles_url)}</a>.
+        Ranked by how many other Bay Area articles link to each one from prose
+        - see the
+        <a href="https://github.com/tieguy/sfedits/blob/integration/docs/importance-ranking-methodology.md">method</a>.
+        Refreshed daily; the list changes when the ranking is regenerated.</p>`
+    : topics.dynamic ? `<p>${n(topics.dynamic.articles.length)} articles from the
+        <strong>${escapeHtml(topics.dynamic.project)}</strong> WikiProject listing${
+          topics.dynamic.importance
+            ? `, importance ${topics.dynamic.importance.map(escapeHtml).join(' / ')}`
+            : ''}.
+        Refreshed daily - articles enter and leave as Wikipedia editors
+        re-tag and re-assess them.</p>` : ''
+
   const dynamicSection = topics.dynamic ? `
     <h2>Dynamic watchlist</h2>
-    <p>${n(topics.dynamic.articles.length)} articles from the
-      <strong>${escapeHtml(topics.dynamic.project)}</strong> WikiProject listing${
-        topics.dynamic.importance
-          ? `, importance ${topics.dynamic.importance.map(escapeHtml).join(' / ')}`
-          : ''}.
-      Refreshed daily - articles enter and leave as Wikipedia editors
-      re-tag and re-assess them.</p>
+    ${dynamicProvenance}
     <details>
       <summary>Show all ${n(topics.dynamic.articles.length)} articles</summary>
       <ul class="cols">${topics.dynamic.articles.map(t => `<li>${articleLink(t)}</li>`).join('')}</ul>
