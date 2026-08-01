@@ -156,4 +156,12 @@ if [ "$RESTART_WEBSERVICE" = "yes" ]; then
 fi
 
 echo "$REMOTE_SHA" > "$SHA_FILE"
+
+# Best-effort: append this deploy (with its PR titles, via the GitHub
+# compare API) to the changelog the webservice serves at /changelog. A
+# GitHub API hiccup must not fail a deploy that already succeeded.
+SFEDITS_STATE_DIR="$STATE_DIR" SFEDITS_DEPLOY_REPO="$REPO_URL" \
+  node "$SCRIPT_DIR/record-deploy.js" "$DEPLOYED_SHA" "$REMOTE_SHA" || \
+  log "record-deploy failed; /changelog will miss this deploy"
+
 log "deployed ${REMOTE_SHA:0:8}"
