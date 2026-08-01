@@ -50,6 +50,12 @@ records nothing and retries on the next tick, so a push is a deploy but a bad
 push is not a broken deploy. Step 5 below is only needed for the **first**
 deploy, before the poller exists.
 
+Each successful deploy is also appended (SHA, time, and the PR titles it
+shipped, via the GitHub compare API) to `$HOME/data/changelog.json`, which the
+webservice serves at [/changelog](https://san-francisco-edit-stream.toolforge.org/changelog) —
+so "has my PR gone live?" is answerable from a browser instead of a bastion
+shell.
+
 ## 1. Create the tool and log in
 
 Create the tool at <https://toolsadmin.wikimedia.org/tools/> (one-time, in a

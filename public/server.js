@@ -19,6 +19,8 @@
  */
 
 const express = require('express')
+const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const { loadConfig } = require('../lib/config')
 const { fetchSourceTitles } = require('../lib/watchlist-sync')
@@ -90,6 +92,23 @@ async function buildTopics(config, { dataDir }) {
   }
 
   return { staticWatchlist, dynamic, claims, updated_at: new Date().toISOString() }
+}
+
+// Where scripts/record-deploy.js (run by the autoupdate job) appends deploy
+// records. Both processes see the same $HOME because job and webservice run
+// with mount=all. Resolved per request so the page always reflects the file
+// and tests can point it elsewhere.
+const REPO_WEB = (process.env.SFEDITS_DEPLOY_REPO || 'https://github.com/tieguy/sfedits.git')
+  .replace(/\.git$/, '')
+
+function readChangelog() {
+  const stateDir = process.env.SFEDITS_STATE_DIR || path.join(os.homedir(), 'data')
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(stateDir, 'changelog.json'), 'utf8'))
+    return Array.isArray(parsed) ? parsed : []
+  } catch (e) {
+    return []
+  }
 }
 
 function escapeHtml(s) {
@@ -187,9 +206,64 @@ ${claimsSection}
   <p>Updated ${escapeHtml(topics.updated_at)} ·
      <a href="/api/topics.json">JSON</a> ·
      <a href="/matrix">untagged-article matrix</a> ·
+     <a href="/changelog">changelog</a> ·
      <a href="https://github.com/tieguy/sfedits">source</a> ·
      a fork of <a href="https://github.com/mrfinnsmith/sfedits">mrfinnsmith/sfedits</a> ·
      runs on <a href="https://toolforge.org">Toolforge</a></p>
+</footer>
+</body>
+</html>`
+}
+
+/**
+ * The deploy changelog: what the autoupdater has shipped to this
+ * instance, newest first, so "is my PR live yet?" is answerable from a
+ * browser instead of a bastion shell.
+ */
+function renderChangelog(deploys) {
+  const entries = deploys.slice().reverse().map((d, i) => {
+    const sha = String(d.sha || '')
+    const when = d.deployed_at
+      ? escapeHtml(String(d.deployed_at).replace('T', ' ').replace(/(\.\d+)?Z?$/, '') + ' UTC')
+      : 'unknown time'
+    const live = i === 0 ? ' <span class="live">live</span>' : ''
+    const changes = (d.changes || []).map(c => {
+      const pr = Number(c.pr)
+      const link = pr
+        ? ` <a href="${REPO_WEB}/pull/${pr}">#${pr}</a>`
+        : ''
+      return `<li>${escapeHtml(c.title || '')}${link}</li>`
+    }).join('')
+    return `<section>
+      <h2>${when}${live}</h2>
+      <p class="hint">deployed <a href="${REPO_WEB}/commit/${escapeHtml(sha)}"><code>${escapeHtml(sha.slice(0, 8))}</code></a></p>
+      ${changes ? `<ul>${changes}</ul>` : '<p class="hint">change list unavailable for this deploy</p>'}
+    </section>`
+  }).join('\n')
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>San Francisco Edit Stream - changelog</title>
+<style>${PAGE_STYLE}
+  .live { font-size: .7em; font-weight: 600; vertical-align: middle; padding: .1rem .45rem; border-radius: 1rem; background: #22863a; color: #fff; }
+  section h2 { margin-bottom: .1rem; }
+  section .hint { margin-top: 0; }
+</style>
+</head>
+<body>
+<h1>Changelog</h1>
+<p>Each entry is one automatic deploy of this instance: the autoupdater
+   polls the <a href="${REPO_WEB}/tree/integration">integration branch</a>
+   every 15 minutes and redeploys when it moves, then records what went
+   live here.</p>
+${entries || '<p>No deploys recorded yet - entries appear with the first autoupdate after this page shipped.</p>'}
+<footer>
+  <p><a href="/changelog.json">JSON</a> ·
+     <a href="/">coverage page</a> ·
+     <a href="${REPO_WEB}">source</a></p>
 </footer>
 </body>
 </html>`
@@ -412,6 +486,15 @@ app.get('/matrix', (req, res) => {
   res.sendFile(path.join(__dirname, 'matrix-untagged.html'))
 })
 
+// Deploy history, written by the autoupdate job via scripts/record-deploy.js
+app.get('/changelog', (req, res) => {
+  res.type('html').send(renderChangelog(readChangelog()))
+})
+
+app.get('/changelog.json', (req, res) => {
+  res.json({ deploys: readChangelog() })
+})
+
 // The published article ranking, generated locally by scripts/rank.js and
 // committed. Two cuts of one ranking: -500 is what the bot watches (it fetches
 // this URL through watchlist_source.titles_url), -2500 is published for
@@ -586,4 +669,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { app, buildTopics, renderPage, renderCreatePage, startCreation, searchPlaces }
+module.exports = { app, buildTopics, renderPage, renderCreatePage, renderChangelog, startCreation, searchPlaces }
