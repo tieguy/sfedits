@@ -31,6 +31,7 @@ const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-wa
 const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
 const { recordPost } = require('./lib/post-log')
+const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser')
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
 
@@ -335,7 +336,8 @@ function getStatus(edit, name, template) {
   const text = Mustache.render(template, {
     name,
     url: edit.url,
-    page: edit.page
+    page: edit.page,
+    count: edit.collapsedCount || 1
   })
 
   return {
@@ -399,7 +401,19 @@ async function deliverToTopics({ topicStore: store, topicIds }, payload) {
   return results
 }
 
-async function sendStatus(account, statusData, edit, topicIds = []) {
+/**
+ * Post an edit to all configured platforms and matching topic subscriptions.
+ *
+ * @param {Object} [thread] - Optional thread refs from earlier posts in an
+ *   edit burst: { root, parent }, each { bluesky: {uri, cid}|null,
+ *   mastodon: <status id>|null }. When present, Bluesky and Mastodon posts
+ *   are created as replies so a burst reads as one thread. Discord posts via
+ *   webhook, which cannot reply, so collapsed posts stand alone there.
+ * @returns {Object|null} Refs of the posts just made (same per-platform
+ *   shape), or null if nothing was posted (noop mode, blocked, or all
+ *   platforms failed).
+ */
+async function sendStatus(account, statusData, edit, topicIds = [], thread = null) {
   try {
     console.log(statusData.text)
 
@@ -412,7 +426,7 @@ async function sendStatus(account, statusData, edit, topicIds = []) {
       const verification = verifyDiffPage(diffHtml, edit.page)
       if (!verification.match) {
         console.error(`Post blocked: diff is for "${verification.actualPage}", not "${edit.page}"`)
-        return
+        return null
       }
 
       // PII screening before posting
@@ -420,7 +434,7 @@ async function sendStatus(account, statusData, edit, topicIds = []) {
 
       if (!screeningResult.safe) {
         console.error(`Post blocked: ${screeningResult.reason}`)
-        return
+        return null
       }
 
       // Enrich IP addresses with country flags
@@ -448,40 +462,68 @@ async function sendStatus(account, statusData, edit, topicIds = []) {
           article: capture.article
         }
 
+        // Post to each platform independently so one failing doesn't stop
+        // the others, and so thread refs survive partial failures.
+
         // Post to Bluesky
-        let blueskyUri = null
+        let blueskyRef = null
         if (account.bluesky) {
-          const result = await bluesky.post({
-            account: account.bluesky,
-            text: enrichedText,
-            screenshot,
-            metadata
-          })
-          blueskyUri = result?.uri || null
+          try {
+            // Bluesky replies need both root and parent refs; if the thread
+            // root never made it to Bluesky, anchor the thread at the parent.
+            let replyTo = null
+            if (thread && thread.parent && thread.parent.bluesky) {
+              replyTo = {
+                root: (thread.root && thread.root.bluesky) || thread.parent.bluesky,
+                parent: thread.parent.bluesky
+              }
+            }
+            const result = await bluesky.post({
+              account: account.bluesky,
+              text: enrichedText,
+              screenshot,
+              metadata,
+              replyTo
+            })
+            if (result?.uri) {
+              blueskyRef = { uri: result.uri, cid: result.cid }
+            }
+          } catch (error) {
+            console.error('Bluesky post failed:', error.message)
+          }
         }
 
         // Post to Mastodon
         let mastodonId = null
         if (account.mastodon) {
-          const result = await mastodon.post({
-            account: account.mastodon,
-            text: enrichedText,
-            screenshot,
-            metadata
-          })
-          mastodonId = result?.data?.id || null
+          try {
+            const result = await mastodon.post({
+              account: account.mastodon,
+              text: enrichedText,
+              screenshot,
+              metadata,
+              replyTo: (thread && thread.parent && thread.parent.mastodon) || null
+            })
+            mastodonId = result?.data?.id || null
+          } catch (error) {
+            console.error('Mastodon post failed:', error.message)
+          }
         }
 
-        // Post to Discord
+        // Post to Discord (webhooks can't reply, so no threading here)
         let discordMessageId = null
         if (account.discord) {
-          const result = await discord.post({
-            account: account.discord,
-            text: enrichedText,
-            screenshot,
-            metadata
-          })
-          discordMessageId = result?.id || null
+          try {
+            const result = await discord.post({
+              account: account.discord,
+              text: enrichedText,
+              screenshot,
+              metadata
+            })
+            discordMessageId = result?.id || null
+          } catch (error) {
+            console.error('Discord post failed:', error.message)
+          }
         }
 
         // Fan out to topic subscriptions, reusing the single render above.
@@ -494,10 +536,19 @@ async function sendStatus(account, statusData, edit, topicIds = []) {
         })
 
         // Record what was posted so the revdel sweeper can delete these
-        // posts if the revision is later hidden on-wiki
-        recordPost({ diffUrl: edit.url, page: edit.page, blueskyUri, mastodonId, discordMessageId })
-
-        writeHeartbeat('post')
+        // posts if the revision is later hidden on-wiki. A collapsed post
+        // publicizes every buffered revision, so record it under each one:
+        // hiding ANY constituent revision must take the combined post down.
+        if (blueskyRef || mastodonId || discordMessageId) {
+          const blueskyUri = blueskyRef ? blueskyRef.uri : null
+          const recordUrls = edit.collapsedUrls || [edit.url]
+          for (const diffUrl of recordUrls) {
+            recordPost({ diffUrl, page: edit.page, blueskyUri, mastodonId, discordMessageId })
+          }
+          writeHeartbeat('post')
+          return { bluesky: blueskyRef, mastodon: mastodonId }
+        }
+        return null
       } finally {
         // Always clean up screenshot, even if posting fails
         if (screenshot && fs.existsSync(screenshot)) {
@@ -505,9 +556,54 @@ async function sendStatus(account, statusData, edit, topicIds = []) {
         }
       }
     }
+    return null
   } catch (error) {
     console.error('Posting failed:', error)
+    return null
   }
+}
+
+const DEFAULT_COLLAPSE_TEMPLATE = '{{{page}}} Wikipedia article edited {{count}} times by {{{name}}} {{&url}}'
+
+async function postEdit(account, edit, count, thread) {
+  const template = count > 1
+    ? (account.collapse && account.collapse.template) || DEFAULT_COLLAPSE_TEMPLATE
+    : account.template
+  const statusData = getStatus(edit, edit.user, template)
+  // Topic membership is recomputed at post time: for a combined edit the
+  // page is unchanged, and this picks up index refreshes during the window.
+  const topicIds = topicIndex ? topicIndex.topicsForEdit(edit) : []
+  try {
+    return await sendStatus(account, statusData, edit, topicIds, thread)
+  } catch (error) {
+    console.error('Failed to process edit:', edit.page, error.message)
+    return null
+  }
+}
+
+// One collapser per account, created lazily so tests can call inspect()
+// with ad-hoc account objects.
+const collapsers = new Map()
+
+function getCollapser(account) {
+  let collapser = collapsers.get(account)
+  if (!collapser) {
+    const cfg = account.collapse || {}
+    const windowMinutes = cfg.window_minutes || DEFAULT_WINDOW_MINUTES
+    collapser = new EditCollapser({
+      windowMs: windowMinutes * 60 * 1000,
+      postEdit: (edit, count, thread) => {
+        if (count > 1) {
+          console.log(`Collapsed ${count} edits to "${edit.page}" by ${edit.user} into one post`)
+        }
+        // Returns post refs so follow-up posts in the burst thread under
+        // the first one; postEdit resolves to null on failure/block.
+        return postEdit(account, edit, count, thread)
+      }
+    })
+    collapsers.set(account, collapser)
+  }
+  return collapser
 }
 
 async function inspect(account, edit) {
@@ -530,11 +626,13 @@ async function inspect(account, edit) {
     const topicIds = topicIndex ? topicIndex.topicsForEdit(edit) : []
 
     if (watched || topicIds.length > 0) {
-      const statusData = getStatus(edit, edit.user, account.template)
-      try {
-        await sendStatus(account, statusData, edit, topicIds)
-      } catch (error) {
-        console.error('Failed to process edit:', edit.page, error.message)
+      if (account.collapse && account.collapse.enabled === false) {
+        await postEdit(account, edit, 1, null)
+      } else {
+        const result = getCollapser(account).add(edit)
+        if (result.action === 'buffered') {
+          console.log(`Buffered edit to "${edit.page}" by ${edit.user} (${result.pending} pending in collapse window)`)
+        }
       }
     }
   }
@@ -633,6 +731,7 @@ module.exports = {
   getUserContributionsUrl,
   buildFacets,
   inspect,
+  postEdit,
   sendStatus,
   extractDiffText,
   analyzeForPII,
