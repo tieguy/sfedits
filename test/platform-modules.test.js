@@ -394,6 +394,63 @@ describe('Platform Modules', function() {
       })
     })
 
+    it('includes visibility when set on the account', async function() {
+      nock('https://mastodon.social')
+        .post(/\/api\/v1\/media.*/)
+        .reply(200, { id: 'fake-media-id' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, function(uri, requestBody) {
+          if (requestBody && typeof requestBody === 'string') {
+            assert.include(requestBody, 'visibility=unlisted')
+          }
+          return { id: 'fake-status-id' }
+        })
+
+      await mastodonPlatform.post({
+        account: {
+          access_token: 'fake-token',
+          instance: 'https://mastodon.social',
+          visibility: 'unlisted'
+        },
+        text: 'Bot post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test Article',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        }
+      })
+    })
+
+    it('omits visibility when not configured, keeping the server default', async function() {
+      nock('https://mastodon.social')
+        .post(/\/api\/v1\/media.*/)
+        .reply(200, { id: 'fake-media-id' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, function(uri, requestBody) {
+          if (requestBody && typeof requestBody === 'string') {
+            assert.notInclude(requestBody, 'visibility')
+          }
+          return { id: 'fake-status-id' }
+        })
+
+      await mastodonPlatform.post({
+        account: {
+          access_token: 'fake-token',
+          instance: 'https://mastodon.social'
+        },
+        text: 'Bot post',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Test Article',
+          name: 'User',
+          pageUrl: 'https://example.com',
+          userUrl: 'https://example.com'
+        }
+      })
+    })
+
     it('throws error when media upload fails', async function() {
       // Mock failed media upload
       nock('https://mastodon.social')
