@@ -48,7 +48,7 @@ side by side.
 
 | Article | Links from other Bay Area articles | Rating |
 |---|---|---|
-| **Oakland Raiders** — NFL franchise, 1960–2019 | **200** | **Low** |
+| **Oakland Raiders** — NFL franchise, 1960–2019 | **195** | **Low** |
 | **Food First** — food-policy nonprofit in Oakland | **3** | **Top** |
 
 Food First is a perfectly good article and someone was right to write it. The point
@@ -61,12 +61,12 @@ Rated below where their prominence sits:
 
 | Article | Links | Rating |
 |---|---|---|
-| Stanford, California | 434 | Low |
-| Mission District, San Francisco | 317 | Mid |
-| Market Street, San Francisco | 225 | Mid |
-| **Ohlone** — the Bay Area's indigenous people, Good Article | **221** | **Mid** |
-| Oracle Park | 210 | Mid |
-| Candlestick Park | 206 | Mid |
+| Stanford, California | 201 | Low |
+| Mission District, San Francisco | 306 | Mid |
+| Market Street, San Francisco | 214 | Mid |
+| **Ohlone** — the Bay Area's indigenous people, Good Article | **217** | **Mid** |
+| Oracle Park | 199 | Mid |
+| Candlestick Park | 199 | Mid |
 
 And rated Top:
 
@@ -77,7 +77,7 @@ And rated Top:
 | History of San Francisco State University | 0 |
 
 Ohlone is the one that bothers me most. The indigenous people of this region, a
-Good Article, linked from 221 other Bay Area articles — rated Mid.
+Good Article, linked from 217 other Bay Area articles — rated Mid.
 
 ### Our own rule, applied unevenly
 
@@ -86,9 +86,9 @@ list)."* Six of the nine follow it. Three don't:
 
 | County | Seat | Links | Rating |
 |---|---|---|---|
-| Contra Costa | Martinez | 140 | Mid |
-| San Mateo | Redwood City | 321 | Mid |
-| Solano | Fairfield | 102 | Mid |
+| Contra Costa | Martinez | 126 | Mid |
+| San Mateo | Redwood City | 314 | Mid |
+| Solano | Fairfield | 95 | Mid |
 
 ### What it adds up to
 
@@ -129,13 +129,11 @@ strip several kinds out before the numbers meant anything:
 | Citation | `{{cite web \|work=[[TechCrunch]]}}` names a source | ~93% of TechCrunch's |
 | Redirect | `[[California Gold Rush]]` and `[[California gold rush]]` are the same act | 14% of edges |
 
-What's left is the thing worth counting: an editor decided these two subjects belong
-connected.
+| Infobox list | `operating system = {{hlist\|[[iOS]]\|[[Android]]}}` enumerates values | 33 links on one article |
 
-**One I know about and haven't fixed:** infobox fields that list values
-(`operating system = {{hlist|[[iOS]]|[[Android]]}}`) still count. This mostly
-affects technology products, which are somewhat over-ranked as a result. It's a
-known defect, not a surprise waiting to happen.
+What's left is the thing worth counting: an editor decided these two subjects belong
+connected. A field like `headquarters = [[San Jose]]` still counts, because that
+*is* an editorial claim; a list of supported platforms isn't.
 
 ### Why this measure
 
@@ -144,8 +142,8 @@ anything else I tried. Grouping every rated article by its current tier:
 
 | Current rating | Median incoming links |
 |---|---|
-| Top | 236 |
-| High | 36 |
+| Top | 222 |
+| High | 34 |
 | Mid | 10 |
 | Low | 3 |
 
@@ -193,27 +191,31 @@ bands originally from the SFBA that are not well connected to it."*
 Tier *sizes* are a judgement call the data cannot make. This is a proposal, and it's
 the part I'd most like argued with:
 
-| Tier | Share | Articles | Link cutoff | vs today |
-|---|---|---|---|---|
-| Top | 0.37% | 68 | ≥239 | same as today's 68 |
-| High | 2.5% | 394 | ≥58 | today's 438 |
-| Mid | 15% | 2,309 | ≥11 | today's 1,949 |
-| Low | rest | 15,703 | | |
+| Tier | Articles | Link cutoff | vs today |
+|---|---|---|---|
+| Top | 68 | ≥222 | same as today's 68 |
+| High | 394 | ≥55 | today's 438 |
+| Mid | 2,309 | ≥11 | today's 1,949 |
+| Low | 15,703 | | |
 
-I chose the Top cut to match our current Top exactly — 68 articles — for two
-reasons. It keeps the proposal about *which* articles are Top rather than *how
-many*, and a tighter cut starts dropping things our own criteria name as Top. At
-0.25% the Golden Gate Bridge falls out of the top tier, along with the 1989 Loma
-Prieta earthquake, Napa County, Solano County and the Presidio. That seemed like the
-wrong error to make.
+**Top is set to exactly the size of our current Top tier** — 68 articles. That keeps
+the proposal about *which* articles are Top rather than *how many*, which seems like
+the smaller argument to have first.
+
+It also happens to be about the tightest defensible cut. A smaller Top starts
+breaking our own criteria, which say Top "includes counties": at 49 articles,
+**Solano County falls out** while the other eight counties stay in. Given §2 already
+shows Solano is the thinnest-covered part of the region, that would be a poor place
+to draw the line. The Golden Gate Bridge sits at rank 49 for what it's worth, so a
+tighter cut would keep it — but not Solano.
 
 ### Effect on existing ratings
 
 | | |
 |---|---|
-| Unchanged | **9,156 (78%)** |
-| Promoted | 1,286 |
-| Demoted | 1,361 |
+| Unchanged | **9,158 (78%)** |
+| Promoted | 1,292 |
+| Demoted | 1,353 |
 | Currently unassessed, would get a rating | 2,601 |
 
 Four articles in five keep the rating they have. This isn't a proposal to overturn
@@ -221,30 +223,29 @@ the list; it's a proposal to make the fifth one consistent with the rest.
 
 ### Newly tagged
 
-4,070 articles would gain a task force tag. **3,845 of them at Low**, where a wrong
-tag costs almost nothing. 204 at Mid, and **21 at Top or High** — small enough to
+4,070 articles would gain a task force tag. **3,843 of them at Low**, where a wrong
+tag costs almost nothing. 207 at Mid, and **20 at Top or High** — small enough to
 review by hand, and I think that review is genuinely needed:
 
 ```
-241  top   University of California, Davis      101  high  Internet Archive
-183  high  U.S. Route 101 in California          94  high  Ninth Circuit Court of Appeals
-177  high  Western Assoc. of Schools & Colleges  93  high  El Camino Real (California)
-159  high  California State Route 1              75  high  Port of Oakland
-152  high  California county routes in zone G    67  high  California State Route 123
-138  high  Interstate 80 in California           67  high  Regents of the Univ. of California
-120  high  Interstate 580 (California)           64  high  San Pablo, California
+237  top   University of California, Davis       93  high  Ninth Circuit Court of Appeals
+176  high  Western Assoc. of Schools & Colleges  91  high  California county routes in zone G
+175  high  U.S. Route 101 in California          91  high  El Camino Real (California)
+154  high  California State Route 1              72  high  Port of Oakland
+126  high  Interstate 80 in California           67  high  Regents of the Univ. of California
 118  high  Neighborhoods in San Francisco        63  high  State Bar of California
-104  high  Sierra Club                           62  high  California State Route 84
-                                                 62  high  VMware
-                                                 61  high  Yountville, California
-                                                 59  high  Cox Stadium
+112  high  Interstate 580 (California)           59  high  California State Route 123
+ 98  high  Sierra Club                           59  high  San Pablo, California
+ 97  high  Internet Archive                      59  high  VMware
+                                                 58  high  California State Route 84
+                                                 58  high  Yountville, California
 ```
 
 Some are clearly ours — San Pablo and Yountville are Bay Area towns, Internet
 Archive is headquartered in the Richmond District, VMware is in Palo Alto, Port of
 Oakland is the successor to an article we already rate Top.
 
-Others are genuinely arguable. **Eight of the 21 are long state highways** that
+Others are genuinely arguable. **Seven of the 20 are long state highways** that
 qualify because they cross Bay Area counties, and several are statewide bodies that
 happen to be headquartered here. **I don't think I should decide those alone.** A
 rule excluding linear features that cross many counties would be easy to write, but
@@ -317,7 +318,7 @@ reporting, and it's the most useful thing anyone could do with this.
 
 **What I'm doing regardless:** pointing my bot at the top 500 of this ranking
 instead of at Top+High. That's an operator's choice about my own bot, it needs no
-consensus, and it's reversible. It changes 287 articles in and 293 out, at roughly
+consensus, and it's reversible. It changes 288 articles in and 294 out, at roughly
 the same posting volume. If the coverage looks wrong to you, that's useful feedback
 and I'll adjust.
 
@@ -325,7 +326,7 @@ and I'll adjust.
 
 1. **Is our scope nine counties or twelve?**
 2. **Do the tier cuts look right?** 68 Top and 394 High, or different?
-3. **Are the 21 proposed new Top/High articles ours?** Particularly the state
+3. **Are the 20 proposed new Top/High articles ours?** Particularly the state
    highways.
 4. **Anything obviously wrong in the ranking?** Every number is reproducible and I'll
    publish the data.
@@ -346,8 +347,9 @@ the clearly-orphaned ones — and seeing how that goes.
 - **The 25-most-linked table in §2** attributes articles to cities using the first
   Bay Area place name in the lead, which is a proxy. Redo via Wikidata `P131` before
   posting, or a South Bay editor will reasonably ask how articles were assigned.
-- **Infobox links are still counted** (§3 says so). If LUI-99/LUI-95 land first,
-  regenerate and drop that caveat.
+- **Numbers are from the 2026-07-31 regeneration** with the wtf_wikipedia parser
+  (commit f85299a). Infobox specification links are now excluded; earlier drafts of
+  this document said otherwise.
 - **Post the scope question first**, separately and early — the answer changes the
   universe, and asking it on its own reads as collaborative rather than as a caveat
   buried in a long proposal.
