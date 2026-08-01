@@ -36,10 +36,16 @@
 # Polls the fork's integration branch every 15 minutes and redeploys when it
 # moves. Runs on the tool's own image so that a broken build keeps the *old*
 # autoupdate running — it can still pick up the fix commit that follows.
+#
+# mount: all is load-bearing. Build service jobs get no home directory by
+# default, and this script records the deployed SHA in $HOME/data. Without the
+# mount the SHA lands in the container's ephemeral filesystem, every tick sees
+# "nothing recorded" != remote, and the job redeploys the same commit forever.
 - name: autoupdate
   command: autoupdate
   image: tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest
   schedule: "*/15 * * * *"
+  mount: all
   emails: onfailure
   filelog: true
   mem: 512Mi
