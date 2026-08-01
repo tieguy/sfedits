@@ -178,7 +178,7 @@ describe('discord-platform', function() {
       }
     }
 
-    it('builds a compact embed: links and summary only, no fields', function() {
+    it('builds a compact embed with links, summary, and copyable excerpts', function() {
       const embed = buildDiscordEmbed(metadata, 'diff.png')
       assert.equal(embed.title, 'London Breed')
       assert.equal(embed.url, metadata.pageUrl)
@@ -187,17 +187,42 @@ describe('discord-platform', function() {
       assert.equal(embed.author.name, 'Edited by AadamentAardvark')
       assert.equal(embed.image.url, 'attachment://diff.png')
       assert.equal(embed.footer.text, 'English Wikipedia')
-      assert.isUndefined(embed.fields)
+      const added = embed.fields.find(f => f.name === 'Added')
+      const removed = embed.fields.find(f => f.name === 'Removed')
+      assert.equal(added.value, '> passport')
+      assert.equal(removed.value, '> mandate')
     })
 
-    it('leaves the Wikidata description and excerpts to the screenshot header', function() {
-      // The rendered diff image already shows the description, lead image,
-      // and changed lines - repeating them in the embed doubled everything
+    it('quotes one changed line per line, not one per highlight range', function() {
+      const embed = buildDiscordEmbed({
+        ...metadata,
+        summary: {
+          ...metadata.summary,
+          added: ['from', 'but requiring AMD to develop'],
+          removed: ['since', 'that continues to this day'],
+          addedLines: ['from … but requiring AMD to develop'],
+          removedLines: ['since … that continues to this day']
+        }
+      }, 'diff.png')
+      const added = embed.fields.find(f => f.name === 'Added')
+      const removed = embed.fields.find(f => f.name === 'Removed')
+      assert.equal(added.value, '> from … but requiring AMD to develop')
+      assert.equal(removed.value, '> since … that continues to this day')
+    })
+
+    it('caps long excerpt fields at Discord limits', function() {
+      const long = 'x'.repeat(3000)
+      const embed = buildDiscordEmbed({ ...metadata, summary: { ...metadata.summary, added: [long] } }, 'x.png')
+      const added = embed.fields.find(f => f.name === 'Added')
+      assert.isAtMost(added.value.length, 1024)
+    })
+
+    it('leaves the Wikidata description and lead image to the screenshot header', function() {
+      // The rendered diff image already shows both - repeating them in the
+      // embed showed the thumbnail and description slug twice per message
       const embed = buildDiscordEmbed(metadata, 'diff.png')
       assert.notInclude(embed.description, 'Mayor of San Francisco')
       assert.isUndefined(embed.thumbnail)
-      assert.notInclude(embed.description, 'passport')
-      assert.notInclude(embed.description, 'mandate')
     })
 
     it('includes undo, history, editor talk, and watch links in the description', function() {
