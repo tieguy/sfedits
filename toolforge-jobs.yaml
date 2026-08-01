@@ -13,6 +13,9 @@
   continuous: true
   emails: onfailure
   filelog: true
+  # filelog writes $HOME/bot.out|.err, and the jobs framework rejects
+  # filelog without the home mount
+  mount: all
   mem: 1Gi
   cpu: 1
 
@@ -30,6 +33,8 @@
   schedule: "17 4 * * *"
   emails: onfailure
   filelog: true
+  # filelog requires the home mount (same as bot above)
+  mount: all
   mem: 1Gi
   cpu: 1
 
