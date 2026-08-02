@@ -16,7 +16,7 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
    - Posts to Bluesky and Mastodon
 
 2. **Admin console** (Node.js/Express)
-   - Bluesky DM authentication (passwordless login)
+   - Bluesky DM authentication (disabled: the DM recipient config was removed with PII screening; the console cannot currently be logged into)
    - Review and post queued drafts (nothing currently enqueues drafts; the producer was removed with PII screening)
    - Posts to Bluesky and Mastodon with retry logic
    - Exposed on port 3000

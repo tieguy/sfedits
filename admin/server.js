@@ -406,7 +406,6 @@ app.resolveForConsole = resolveForConsole
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Admin server running on port ${PORT}`)
-    console.log(`Passwordless authentication via Bluesky DM enabled`)
   })
 }
 

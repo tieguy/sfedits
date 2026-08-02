@@ -1,14 +1,12 @@
 /**
- * Admin authentication import verification and auth endpoint testing
+ * Admin server import and auth endpoint verification
  *
- * CRITICAL: This test would have caught the bug from commit 9330e41
- * where createAuthenticatedAgent import was removed but still used on line 98
+ * Verifies that the admin server loads without import errors and that
+ * the request-code endpoint properly returns 501 with a disabled message.
  */
 
 const { describe, it, before, after } = require('mocha')
 const { assert } = require('chai')
-const fs = require('fs')
-const path = require('path')
 
 describe('Admin Server - Import Verification', function() {
   it('loads without ReferenceError (catches missing imports)', function() {
