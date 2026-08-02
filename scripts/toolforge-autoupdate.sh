@@ -33,6 +33,7 @@ RESTART_WEBSERVICE="${SFEDITS_RESTART_WEBSERVICE:-yes}"
 # "no" only to debug a deploy; skipping them ships code against an old schema.
 RUN_MIGRATIONS="${SFEDITS_RUN_MIGRATIONS:-yes}"
 MIGRATE_JOB="${SFEDITS_MIGRATE_JOB:-migrate}"
+MIGRATE_TIMEOUT="${SFEDITS_MIGRATE_TIMEOUT:-600}"   # seconds, API mode only
 IMAGE="${SFEDITS_IMAGE:-tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest}"
 
 # In build-service containers $HOME is not the tool's NFS home (mount=all puts
@@ -89,12 +90,62 @@ if ! flock -n 9; then
   exit 0
 fi
 
-command -v toolforge >/dev/null 2>&1 || {
-  # The CLI ships in bastions and (per the Toolforge changelog) in build
-  # service containers. If this fires, the job image predates that rollout —
-  # fall back to running this script from a bastion.
-  alert "toolforge CLI not found in this environment"
+# --- toolforge access --------------------------------------------------
+#
+# Bastions have the toolforge CLI; build-service job containers do not (no
+# CLI, no kubectl, no python — verified 2026-08-02 via `webservice shell`).
+# What those containers do have is node and, with mount=all, the tool's TLS
+# client certs in .toolskube. Prefer the CLI where it exists; otherwise
+# drive the same API gateway through scripts/toolforge-api.js.
+TF_CERT_DIR="${TOOL_DATA_DIR:-$HOME}/.toolskube"
+if command -v toolforge >/dev/null 2>&1; then
+  TF_MODE=cli
+elif [ -f "$TF_CERT_DIR/client.crt" ] && [ -n "$NODE" ]; then
+  TF_MODE=api
+else
+  alert "no toolforge CLI, and no client certs + node for API access"
   exit 1
+fi
+log "toolforge access: $TF_MODE"
+
+tf_api() { "$NODE" "$SCRIPT_DIR/toolforge-api.js" "$@"; }
+
+tf_build_start() {
+  if [ "$TF_MODE" = cli ]; then toolforge build start --ref "$BRANCH" "$REPO_URL"
+  else tf_api build-start "$REPO_URL" "$BRANCH"; fi
+}
+
+# One status line per call; the polling loop pattern-matches it. CLI prints
+# "Status: ok" style, the API prints raw states like BUILD_SUCCESS — the
+# case patterns below cover both.
+tf_build_status() {
+  if [ "$TF_MODE" = cli ]; then toolforge build show 2>/dev/null | grep -iE '^\s*status' | head -1 || true
+  else tf_api build-status 2>/dev/null || true; fi
+}
+
+tf_migrate_delete() {
+  if [ "$TF_MODE" = cli ]; then toolforge jobs delete "$MIGRATE_JOB" >/dev/null 2>&1
+  else tf_api job-delete "$MIGRATE_JOB" >/dev/null 2>&1; fi
+}
+
+tf_migrate_run() {
+  if [ "$TF_MODE" = cli ]; then toolforge jobs run "$MIGRATE_JOB" --command "$MIGRATE_JOB" --image "$IMAGE" --wait
+  else tf_api job-run-wait "$MIGRATE_JOB" "$MIGRATE_JOB" "$IMAGE" "$MIGRATE_TIMEOUT"; fi
+}
+
+tf_migrate_logs() {
+  if [ "$TF_MODE" = cli ]; then toolforge jobs logs "$MIGRATE_JOB" 2>/dev/null
+  else tf_api job-logs "$MIGRATE_JOB" 2>/dev/null; fi
+}
+
+tf_bot_restart() {
+  if [ "$TF_MODE" = cli ]; then toolforge jobs restart "$BOT_JOB"
+  else tf_api job-restart "$BOT_JOB"; fi
+}
+
+tf_webservice_restart() {
+  if [ "$TF_MODE" = cli ]; then toolforge webservice restart
+  else tf_api webservice-restart; fi
 }
 
 # Not fatal — the deploy itself is all toolforge CLI calls, and refusing to ship
@@ -121,7 +172,7 @@ log "deploying $BRANCH: ${DEPLOYED_SHA:0:8}${DEPLOYED_SHA:+ -> }${REMOTE_SHA:0:8
 
 # --- build -------------------------------------------------------------
 
-if ! toolforge build start --ref "$BRANCH" "$REPO_URL"; then
+if ! tf_build_start; then
   alert "build failed to start for ${REMOTE_SHA:0:8}"
   exit 1
 fi
@@ -134,7 +185,7 @@ while :; do
     exit 1
   fi
   sleep 20
-  STATUS="$(toolforge build show 2>/dev/null | grep -iE '^\s*status' | head -1 || true)"
+  STATUS="$(tf_build_status)"
   case "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" in
     *ok*|*success*|*complete*) log "build succeeded"; break ;;
     *fail*|*error*|*cancel*|*timeout*)
@@ -159,18 +210,17 @@ if [ "$RUN_MIGRATIONS" = "yes" ]; then
   log "applying migrations"
   # `jobs run` refuses a name that already exists, and the previous deploy's
   # finished job still holds the name.
-  toolforge jobs delete "$MIGRATE_JOB" >/dev/null 2>&1 || true
+  tf_migrate_delete || true
 
-  if ! toolforge jobs run "$MIGRATE_JOB" \
-       --command "$MIGRATE_JOB" --image "$IMAGE" --wait; then
-    toolforge jobs logs "$MIGRATE_JOB" 2>/dev/null | tail -20 || true
+  if ! tf_migrate_run; then
+    tf_migrate_logs | tail -20 || true
     alert "migrations failed for ${REMOTE_SHA:0:8}; not restarting"
     exit 1
   fi
 
   # The exit status of a --wait job is not always the migration's own status,
   # so surface the output either way; migrate.js prints what it applied.
-  toolforge jobs logs "$MIGRATE_JOB" 2>/dev/null | tail -5 || true
+  tf_migrate_logs | tail -5 || true
 fi
 
 # --- restart -----------------------------------------------------------
@@ -179,14 +229,14 @@ fi
 # from its own state on start, so the window is a gap in coverage, not data
 # loss — but it is why this runs on a schedule rather than on every push.
 log "restarting job $BOT_JOB"
-if ! toolforge jobs restart "$BOT_JOB"; then
+if ! tf_bot_restart; then
   alert "built ${REMOTE_SHA:0:8} but failed to restart $BOT_JOB"
   exit 1
 fi
 
 if [ "$RESTART_WEBSERVICE" = "yes" ]; then
   log "restarting webservice"
-  toolforge webservice restart || alert "webservice restart failed after ${REMOTE_SHA:0:8}"
+  tf_webservice_restart || alert "webservice restart failed after ${REMOTE_SHA:0:8}"
 fi
 
 echo "$REMOTE_SHA" > "$SHA_FILE"
