@@ -36,9 +36,18 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 
 ### 1. Create configuration
 
+Non-secret config is committed in `config.base.json`. Secrets and local overrides go in `config.json` (gitignored):
+
 ```bash
-cp config.json.template config.json
-# Edit with your Bluesky/Mastodon credentials and article watchlist
+# Option 1: Local file overrides (for development)
+cp config.base.json config.json
+# Then edit config.json with your credentials
+
+# Option 2: Environment variables (for Toolforge/CI)
+export SFEDITS_BLUESKY_PASSWORD="your-password"
+export SFEDITS_MASTODON_ACCESS_TOKEN="your-token"
+export SFEDITS_DISCORD_WEBHOOK_URL="your-webhook-url"
+export SFEDITS_INVITE_CODES="code1,code2"
 ```
 
 ### 2. Run locally
@@ -81,9 +90,9 @@ cat > .env << 'EOF'
 DROPLET_IP=YOUR_DROPLET_IP
 EOF
 
-# Create config.json with credentials
-cp config.json.template config.json
-nano config.json  # Edit with your credentials
+# Create local config.json with secrets (optional; env vars work too)
+cp config.base.json config.json
+nano config.json  # Edit to add your Bluesky/Mastodon credentials and webhook URLs
 
 # Start all services
 docker-compose up -d

@@ -36,8 +36,7 @@ const path = require('path')
 
 const argv = minimist(process.argv.slice(2), {
   default: {
-    verbose: false,
-    config: './config.json'
+    verbose: false
   }
 })
 
@@ -50,12 +49,11 @@ function writeHeartbeat(name) {
   }
 }
 
-function getConfig(configPath) {
-  // The minimist default is './config.json'; only a non-default value is
-  // an explicit request for a file. Otherwise lib/config.js may take the
-  // config from the SFEDITS_CONFIG environment variable (e.g. Toolforge).
-  const explicit = configPath && configPath !== './config.json' ? configPath : null
-  return loadConfig({ path: explicit })
+function getConfig() {
+  // Load config from config.base.json (committed) + config.json (local overlay, optional)
+  // + SFEDITS_* secret env vars. Both files resolve from the current working directory,
+  // which is the repo root when the bot starts.
+  return loadConfig()
 }
 
 // Builds Wikipedia article URL from edit URL. Returns null if URL is malformed.
@@ -390,7 +388,7 @@ function checkConfig(config, error) {
 }
 
 async function main() {
-  const config = getConfig(argv.config)
+  const config = getConfig()
 
   // Initialize geolocation database before listening for edits
   await initializeReader()

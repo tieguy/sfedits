@@ -66,14 +66,11 @@ function requireAuth(req, res, next) {
   next()
 }
 
-// Load config (same as bot). SFEDITS_CONFIG (full config as a JSON env
-// var) wins; otherwise CONFIG_PATH or the repo-root config.json.
+// Load config from config.base.json (committed) + config.json (local overlay, optional)
+// + SFEDITS_* secret env vars. Files resolve from the repo root.
 const { loadConfig: loadSharedConfig } = require('../lib/config')
 function loadConfig() {
-  if (process.env.SFEDITS_CONFIG) {
-    return loadSharedConfig()
-  }
-  return loadSharedConfig({ path: process.env.CONFIG_PATH || path.join(__dirname, '../config.json') })
+  return loadSharedConfig({ baseDir: path.join(__dirname, '..') })
 }
 
 // API Routes
