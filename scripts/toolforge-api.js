@@ -147,8 +147,14 @@ async function jobDelete(name) {
   await api('DELETE', `${jobsBase()}/${encodeURIComponent(name)}`)
 }
 
-/** Mirrors the CLI payload for `jobs run` of a buildservice image (mount
- * defaults to none there; the migrate job needs no NFS). */
+/** One-off job for the migrate step (mount defaults to none in the CLI too;
+ * the migrate job needs no NFS).
+ *
+ * The payload is the minimal NewOneOffJob, not a mirror of every CLI field:
+ * the API validator rejects null where it expects a string (memory, cpu) and
+ * forbids fields belonging to other job types (schedule, continuous, replicas,
+ * port, health_check) — sending them all cost the 2026-08-02 16:45Z deploy a
+ * 422 at the migrate step. Absent means "default"; null does not. */
 async function jobRunWait(name, cmd, image, timeoutSeconds) {
   if (!name || !cmd || !image) throw new Error('usage: job-run-wait <name> <cmd> <image> [timeout]')
   const timeout = Number(timeoutSeconds) || 600
@@ -157,17 +163,8 @@ async function jobRunWait(name, cmd, image, timeoutSeconds) {
     imagename: image,
     cmd,
     filelog: false,
-    filelog_stdout: null,
-    filelog_stderr: null,
-    memory: null,
-    cpu: null,
     emails: 'none',
     retry: 0,
-    continuous: false,
-    schedule: null,
-    replicas: null,
-    port: null,
-    health_check: null,
     mount: 'none'
   })
   const deadline = Date.now() + timeout * 1000
