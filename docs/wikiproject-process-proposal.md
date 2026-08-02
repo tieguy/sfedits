@@ -92,18 +92,22 @@ list)."* Six of the nine follow it. Three don't:
 
 ### What it adds up to
 
-Taking the 25 most-linked rated articles for each place and counting how many are
-Top or High:
+Taking the 25 most-linked rated articles located in each place — per Wikidata's
+*located in the administrative territorial entity* (P131), followed transitively,
+so a neighborhood's articles count toward its city; Solano is measured at the
+county level — and counting how many are Top or High:
 
-| San Francisco | Oakland | Berkeley | San Jose | Solano |
+| San Francisco | Oakland | Berkeley | San Jose | Solano County |
 |---|---|---|---|---|
-| 21 of 25 | 13 of 25 | 11 of 25 | 6 of 25 | 1 of 25 |
+| 18 of 25 | 8 of 25 | 4 of 25 | 3 of 25 | 5 of 25 |
 
 I want to be careful with this one. It is **not** evidence that anyone deliberately
 neglected a region — the individual examples above run in both directions across the
 whole Bay Area. It's the aggregate symptom of ratings that were never calibrated
 against each other. But the practical effect is real: anything built from Top and
-High, as my bot is, gets much thinner coverage of the South Bay and Solano.
+High, as my bot is, gets much thinner coverage of the South Bay and the East Bay.
+San Jose — the region's most populous city — has three of its twenty-five
+most-linked articles rated Top or High.
 
 None of this is anyone's fault. These ratings were made article by article, by
 different people, over about nineteen years, without a shared reference for what
@@ -205,8 +209,8 @@ the smaller argument to have first.
 It also happens to be about the tightest defensible cut. A smaller Top starts
 breaking our own criteria, which say Top "includes counties": at 49 articles,
 **Solano County falls out** while the other eight counties stay in. Given §2 already
-shows Solano is the thinnest-covered part of the region, that would be a poor place
-to draw the line. The Golden Gate Bridge sits at rank 49 for what it's worth, so a
+shows Solano is among the thinnest-covered parts of the region, that would be a poor
+place to draw the line. The Golden Gate Bridge sits at rank 49 for what it's worth, so a
 tighter cut would keep it — but not Solano.
 
 ### Effect on existing ratings
@@ -364,9 +368,17 @@ the clearly-orphaned ones — and seeing how that goes.
   Top+High+Mid (2,455, verified against `/api/topics.json`), so the real change is
   +81/−2,036. §6 now states this as a deliberate volume cut. Don't let the old
   numbers creep back in from `docs/watchlist-switch-proposal.md`, which is superseded.
-- **The 25-most-linked table in §2** attributes articles to cities using the first
-  Bay Area place name in the lead, which is a proxy. Redo via Wikidata `P131` before
-  posting, or a South Bay editor will reasonably ask how articles were assigned.
+- **The 25-most-linked table in §2 was redone via Wikidata `P131` on 2026-08-02**,
+  replacing the first-place-name-in-lead proxy. Method: one WDQS `wdt:P131*` query
+  per place (verified QIDs: SF Q62, Oakland Q17042, Berkeley Q484678, San Jose
+  Q16553, Solano County Q108083), intersected with the rated cohort via
+  `data/reassess/qids.json`; item sets cached at `data/reassess/analysis/p131-*.json`.
+  Numbers moved from 21/13/11/6/1 to 18/8/4/3/5 — the pattern holds, but **San Jose
+  replaced Solano as the thinnest-covered place** (Solano rose to 5 because county-level
+  attribution catches Vallejo, I-680, the Napa River). Results identical with
+  unknown-importance articles included or excluded. Note the semantics changed:
+  P131 covers things *located in* a place, so people and companies attributed by
+  lead mention are out of the pools (SF pool 4,599 → 1,095).
 - **Numbers are from the 2026-07-31 regeneration** with the wtf_wikipedia parser
   (commit f85299a). Infobox specification links are now excluded; earlier drafts of
   this document said otherwise.
