@@ -88,8 +88,8 @@ app.post('/api/auth/request-code', async (req, res) => {
     const config = loadConfig()
     const account = config.accounts[0]
 
-    if (!account.bluesky?.identifier) {
-      return res.status(500).json({ error: 'Bluesky not configured' })
+    if (!account.bluesky?.identifier || !account.pii_alerts?.bluesky_recipient) {
+      return res.status(501).json({ error: 'Admin DM login is not configured' })
     }
 
     // Generate 6-digit code
@@ -120,11 +120,11 @@ app.post('/api/auth/request-code', async (req, res) => {
     }
 
     const convo = convosData.convos.find(c =>
-      c.members.some(m => m.handle === account.bluesky.identifier)
+      c.members.some(m => m.handle === account.pii_alerts.bluesky_recipient)
     )
 
     if (!convo) {
-      console.error(`No existing Bluesky conversation with ${account.bluesky.identifier}`)
+      console.error(`No existing Bluesky conversation with ${account.pii_alerts.bluesky_recipient}`)
       return res.status(500).json({ error: 'No DM conversation found' })
     }
 

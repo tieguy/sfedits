@@ -1,6 +1,6 @@
 # SF Edits
 
-A Wikipedia edit monitoring bot that watches for edits to San Francisco-related articles and posts screenshots to Bluesky and Mastodon. Includes geolocation enrichment for anonymous edits and a web UI for drafts.
+A Wikipedia edit monitoring bot that watches for edits to San Francisco-related articles and posts screenshots to Bluesky and Mastodon. Includes geolocation enrichment for anonymous edits.
 
 Based on [anon](https://github.com/edsu/anon), originally created for @congressedits.
 
@@ -16,7 +16,6 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
    - Posts to Bluesky and Mastodon
 
 2. **Admin console** (Node.js/Express)
-   - Web UI for drafts
    - Bluesky DM authentication (passwordless login)
    - Posts to Bluesky and Mastodon with retry logic
    - Exposed on port 3000

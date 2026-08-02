@@ -6,11 +6,9 @@ const minimist = require('minimist')
 const Mastodon = require('./lib/mastodon-client')
 const Mustache = require('mustache')
 const { EditStream } = require('./lib/edit-stream')
-const { saveDraft } = require('./lib/draft-manager')
 const { enrichIPsInText, initializeReader } = require('./lib/geolocation')
 const { captureDiffImage } = require('./lib/diff-image')
 const { buildFacets } = require('./lib/bluesky-utils')
-const { createAuthenticatedAgent } = require('./lib/bluesky-client')
 const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
 const discord = require('./lib/discord-platform')
@@ -80,38 +78,6 @@ function getUserContributionsUrl(editUrl, username) {
   } catch {
     return null
   }
-}
-
-
-/**
- * Extract text content from Wikipedia diff HTML
- * @param {string} html - Diff page HTML
- * @returns {string} - Concatenated diff cell text
- */
-function extractDiffText(html) {
-  // Extract text from diff table cells
-  const diffMatches = (html || '').match(/<td[^>]*class="[^"]*diff-[^"]*"[^>]*>(.*?)<\/td>/gs)
-
-  if (!diffMatches) {
-    return ''
-  }
-
-  let diffText = ''
-  for (const match of diffMatches) {
-    // Remove HTML tags and decode entities
-    let text = match
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    diffText += text + ' '
-  }
-
-  return diffText.trim()
 }
 
 function getStatus(edit, name, template) {
@@ -509,8 +475,7 @@ module.exports = {
   buildFacets,
   inspect,
   postEdit,
-  sendStatus,
-  extractDiffText
+  sendStatus
 }
 module.exports.deliverToTopics = deliverToTopics
 module.exports._setTopicStateForTest = (store, index) => {

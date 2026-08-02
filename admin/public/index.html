@@ -583,7 +583,6 @@
 
       <div class="tabs">
         <div class="tab active" onclick="switchTab('drafts')">Drafts</div>
-        <div class="tab" onclick="switchTab('gemini')">Gemini Log</div>
         <div class="tab" onclick="switchTab('regions')">Regions</div>
       </div>
 
@@ -602,26 +601,6 @@
           <p>All caught up! PII-blocked posts will appear here.</p>
         </div>
         <div id="draftList" class="draft-list"></div>
-      </div>
-
-      <div id="geminiTab" class="tab-content">
-        <div id="geminiLoading" class="loading">Loading Gemini log...</div>
-        <div id="geminiContent" style="display: none;">
-          <div id="costSummary" class="cost-summary"></div>
-          <table class="log-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Article</th>
-                <th>Presidio Flags</th>
-                <th>Verdict</th>
-                <th>Model</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody id="logTableBody"></tbody>
-          </table>
-        </div>
       </div>
 
       <div id="regionsTab" class="tab-content">
@@ -914,7 +893,7 @@
       modal.classList.remove('show')
     }
 
-    const TAB_ORDER = ['drafts', 'gemini', 'regions']
+    const TAB_ORDER = ['drafts', 'regions']
 
     function switchTab(tab) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
@@ -923,8 +902,6 @@
       const index = TAB_ORDER.indexOf(tab)
       document.querySelectorAll('.tab')[index].classList.add('active')
       document.getElementById(tab + 'Tab').classList.add('active')
-
-      if (tab === 'gemini') loadGeminiLog()
     }
 
     function escapeHtml(value) {
@@ -980,141 +957,6 @@
           (${escapeHtml(data.region.qid)}) — ${n} article${n === 1 ? '' : 's'}${approx}</div>`
       }
       return `<div class="region-error">${escapeHtml(data.error || 'Unknown error')}</div>`
-    }
-
-    // Pricing per million tokens (AI Studio, April 2026)
-    const PRICING = {
-      'gemini-2.5-pro': { input: 1.25, output: 10.00 },
-      'gemini-2.0-flash': { input: 0.10, output: 0.40 }
-    }
-
-    async function loadGeminiLog() {
-      const loadingEl = document.getElementById('geminiLoading')
-      const contentEl = document.getElementById('geminiContent')
-
-      loadingEl.style.display = 'block'
-      contentEl.style.display = 'none'
-
-      try {
-        const response = await fetch('/api/gemini-log', {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        })
-
-        if (response.status === 401 || response.status === 403) {
-          logout()
-          return
-        }
-
-        const data = await response.json()
-        const entries = data.entries
-
-        loadingEl.style.display = 'none'
-        contentEl.style.display = 'block'
-
-        renderCostSummary(entries)
-        renderLogTable(entries)
-      } catch (error) {
-        loadingEl.style.display = 'none'
-        console.error('Error loading gemini log:', error)
-        alert('Failed to load Gemini log: ' + error.message)
-      }
-    }
-
-    function renderCostSummary(entries) {
-      const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-      const monthEntries = entries.filter(e => new Date(e.timestamp) >= monthStart)
-
-      let totalCost = 0
-      let totalTokens = 0
-
-      for (const entry of monthEntries) {
-        if (!entry.model) continue
-        const pricing = PRICING[entry.model] || PRICING['gemini-2.5-pro']
-        const promptTokens = entry.promptTokenCount || 0
-        const outputTokens = (entry.totalTokenCount || 0) - promptTokens
-        totalTokens += (entry.totalTokenCount || 0)
-        totalCost += (promptTokens * pricing.input + outputTokens * pricing.output) / 1_000_000
-      }
-
-      const falsePositives = monthEntries.filter(e => e.status === 'false_positive').length
-      const confirmed = monthEntries.filter(e => e.status === 'confirmed').length
-      const unavailable = monthEntries.filter(e => e.status === 'unavailable').length
-
-      const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' })
-
-      document.getElementById('costSummary').innerHTML = `
-        <div>
-          <div class="cost-label">Estimated Cost (${escapeHtml(monthName)})</div>
-          <div class="cost-amount">$${totalCost.toFixed(2)}</div>
-          <div class="cost-detail">~${totalTokens.toLocaleString()} tokens across ${monthEntries.length} checks</div>
-        </div>
-        <div class="stat-group">
-          <div class="stat">
-            <div class="stat-value green">${falsePositives}</div>
-            <div class="stat-label">False Positives</div>
-          </div>
-          <div class="stat">
-            <div class="stat-value red">${confirmed}</div>
-            <div class="stat-label">Confirmed PII</div>
-          </div>
-          <div class="stat">
-            <div class="stat-value yellow">${unavailable}</div>
-            <div class="stat-label">Unavailable</div>
-          </div>
-        </div>
-        <a href="https://aistudio.google.com" target="_blank" style="font-size: 13px; color: #007bff; text-decoration: none;">View in AI Studio &rarr;</a>
-      `
-    }
-
-    function renderLogTable(entries) {
-      const tbody = document.getElementById('logTableBody')
-      tbody.innerHTML = ''
-
-      for (const entry of entries) {
-        const tr = document.createElement('tr')
-        tr.className = entry.status === 'false_positive' ? 'false-positive' : entry.status === 'confirmed' ? 'confirmed' : ''
-
-        const time = new Date(entry.timestamp)
-        const timeStr = time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' +
-                        time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-
-        const article = entry.articleName || extractArticleName(entry.postText || '')
-        const entitySummary = summarizeEntities(entry.entities || [])
-
-        const verdictClass = entry.status === 'false_positive' ? 'false-positive' :
-                            entry.status === 'confirmed' ? 'confirmed' : 'unavailable'
-
-        tr.innerHTML = `
-          <td style="white-space: nowrap;">${escapeHtml(timeStr)}</td>
-          <td>${escapeHtml(article)}</td>
-          <td>${escapeHtml(entitySummary)}</td>
-          <td><span class="verdict-badge ${verdictClass}">${escapeHtml(entry.status || 'unknown')}</span></td>
-          <td>${escapeHtml(entry.model || 'unknown')}</td>
-          <td style="color: #888;">${escapeHtml(entry.reason || '')}</td>
-        `
-
-        tbody.appendChild(tr)
-      }
-    }
-
-    function extractArticleName(postText) {
-      if (!postText) return 'Unknown'
-      const match = postText.match(/^(.+?)\s+(?:Wikipedia article edited|edited)/)
-      if (match) return match[1]
-      return '(pre-fix entry)'
-    }
-
-    function summarizeEntities(entities) {
-      if (!entities || entities.length === 0) return 'none'
-      const counts = {}
-      for (const e of entities) {
-        const type = e.type || e.entity_type || 'UNKNOWN'
-        counts[type] = (counts[type] || 0) + 1
-      }
-      return Object.entries(counts)
-        .map(([type, count]) => count > 1 ? `${type} x${count}` : type)
-        .join(', ')
     }
 
     function getSelectedIds() {
