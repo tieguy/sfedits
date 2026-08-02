@@ -138,9 +138,12 @@ describe('toolforge-api.js', function () {
       name: 'migrate',
       cmd: 'migrate',
       imagename: 'tool-testtool/tool-testtool:latest',
-      continuous: false,
       mount: 'none'
     })
+    // The API 422s on nulls where it expects strings, and forbids fields
+    // from other job types on a one-off — absent means default, null does not.
+    expect(created).to.not.have.any.keys(
+      'memory', 'cpu', 'schedule', 'continuous', 'replicas', 'port', 'health_check')
   })
 
   it('job-run-wait fails when the job fails, with the long status', async function () {

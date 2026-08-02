@@ -5,15 +5,14 @@
  *
  * Usage: node send-alert.js "your alert message"
  *
- * Reads credentials from config.json (same as the bot).
- * Compatible with Node 12+ (no optional chaining, no fetch).
+ * Reads credentials the same way the bot does (lib/config.js): an explicit
+ * CONFIG_PATH wins, then the SFEDITS_CONFIG environment variable — the only
+ * source that exists inside Toolforge job containers — then ./config.json.
  */
 
-var path = require('path')
-var fs = require('fs')
 var https = require('https')
+var loadConfig = require('../lib/config.js').loadConfig
 
-var CONFIG_PATH = process.env.CONFIG_PATH || path.join(__dirname, '..', 'config.json')
 var message = process.argv[2]
 
 if (!message) {
@@ -23,7 +22,7 @@ if (!message) {
 
 var rawConfig
 try {
-  rawConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+  rawConfig = loadConfig({ path: process.env.CONFIG_PATH || null })
 } catch (err) {
   console.error('Failed to read config:', err.message)
   process.exit(1)
