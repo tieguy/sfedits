@@ -45,12 +45,37 @@ BUILD_TIMEOUT="${SFEDITS_BUILD_TIMEOUT:-900}"   # seconds
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
+# The buildpack launcher puts node on PATH for direct process types (`bot: node
+# page-watch.js`), but this job runs a shell script and gets an environment
+# without it — `node: command not found` on the 2026-08-02 deploy. That failure
+# surfaced as a missing /changelog entry, but the same gap silently disables
+# alert() below, which is the part that matters. Resolve the interpreter once,
+# by search, so neither call site depends on PATH.
+find_node() {
+  if command -v node 2>/dev/null; then
+    return 0
+  fi
+  local candidate
+  for candidate in /layers/*/*/bin/node /layers/*/bin/node /usr/local/bin/node /usr/bin/node; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+NODE="$(find_node || true)"
+
 alert() {
   local msg="$1"
   log "ALERT: $msg"
   # send-alert.js reads config.json the same way the bot does; if it is
   # unavailable we still want the non-zero exit for the job's failure email.
-  node "$SCRIPT_DIR/send-alert.js" "sfedits autoupdate: $msg" || \
+  if [ -z "$NODE" ]; then
+    log "(no node interpreter found; relying on job failure email)"
+    return 0
+  fi
+  "$NODE" "$SCRIPT_DIR/send-alert.js" "sfedits autoupdate: $msg" || \
     log "(send-alert.js failed; relying on job failure email)"
 }
 
@@ -71,6 +96,12 @@ command -v toolforge >/dev/null 2>&1 || {
   alert "toolforge CLI not found in this environment"
   exit 1
 }
+
+# Not fatal — the deploy itself is all toolforge CLI calls, and refusing to ship
+# over a missing changelog would be worse than shipping without one. But it does
+# mean alert() is reduced to the job's failure email, so say so once per tick
+# rather than leaving it to be inferred from a later fallback line.
+[ -n "$NODE" ] || log "WARNING: no node interpreter found; alerts and /changelog are degraded this run"
 
 REMOTE_SHA="$(git ls-remote "$REPO_URL" "refs/heads/$BRANCH" | awk '{print $1}')"
 if [ -z "$REMOTE_SHA" ]; then
@@ -163,8 +194,10 @@ echo "$REMOTE_SHA" > "$SHA_FILE"
 # Best-effort: append this deploy (with its PR titles, via the GitHub
 # compare API) to the changelog the webservice serves at /changelog. A
 # GitHub API hiccup must not fail a deploy that already succeeded.
-SFEDITS_STATE_DIR="$STATE_DIR" SFEDITS_DEPLOY_REPO="$REPO_URL" \
-  node "$SCRIPT_DIR/record-deploy.js" "$DEPLOYED_SHA" "$REMOTE_SHA" || \
-  log "record-deploy failed; /changelog will miss this deploy"
+if [ -n "$NODE" ]; then
+  SFEDITS_STATE_DIR="$STATE_DIR" SFEDITS_DEPLOY_REPO="$REPO_URL" \
+    "$NODE" "$SCRIPT_DIR/record-deploy.js" "$DEPLOYED_SHA" "$REMOTE_SHA" || \
+    log "record-deploy failed; /changelog will miss this deploy"
+fi
 
 log "deployed ${REMOTE_SHA:0:8}"
