@@ -196,10 +196,9 @@ toolforge build show                 # watch until it reports success
 
 The buildpack reads `Procfile` for `web` and `bot`, and `engines.node` from
 `package.json` (now `>=20` — the codebase assumes global `fetch` and
-`AbortSignal.timeout`). `.npmrc` sets `puppeteer_skip_download=true` so the
-build does not pull ~150MB of Chromium for a renderer this fork never uses; the
-native satori/resvg path is what runs. The `Dockerfile` in the repo is **not**
-used by the build service — it is for local container runs only.
+`AbortSignal.timeout`). Diff rendering uses only satori and resvg (no Chromium
+fetched). The `Dockerfile` in the repo is **not** used by the build service — it
+is for local container runs only.
 
 ## 5. Migrate the database
 

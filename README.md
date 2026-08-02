@@ -12,7 +12,7 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
    - Monitors Wikipedia IRC feed for real-time edits
    - Watches configured SF-related articles
    - Enriches anonymous IPs with country flags (MaxMind GeoLite2-City)
-   - Takes screenshots with Puppeteer
+   - Renders diff images via satori and resvg (no browser)
    - Posts to Bluesky and Mastodon
 
 2. **Admin console** (Node.js/Express)
@@ -236,8 +236,6 @@ Integrations → Webhooks → New Webhook) and add it to the account:
 Discord posts are rich embeds (no platform length squeeze): article title
 and Wikidata description, editor link, change counts, quoted added/removed
 excerpts, the article's lead image as a thumbnail, and the diff screenshot.
-If the structured diff isn't available (fallback screenshot path), a plain
-markdown message is posted instead.
 
 No bot user or OAuth setup is needed - webhooks are per-channel URLs. Posts
 include the edit screenshot as an attachment, with the article and editor as
