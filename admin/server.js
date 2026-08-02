@@ -5,7 +5,6 @@ const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 const { captureDiffImage } = require('../lib/diff-image')
-const { createAuthenticatedAgent } = require('../lib/bluesky-client')
 const { recordPost } = require('../lib/post-log')
 const bluesky = require('../lib/bluesky-platform')
 const mastodon = require('../lib/mastodon-platform')
@@ -81,72 +80,18 @@ function loadConfig() {
 
 /**
  * POST /api/auth/request-code
- * Request a login code via Bluesky DM
+ * DISABLED: Admin DM login was removed during PII alert removal phase
+ *
+ * The Bluesky DM endpoint was originally implemented to DM the login code to
+ * whoever most recently contacted the bot. Without a configured recipient (removed
+ * with PII alerts), this became an authentication bypass: any client could request
+ * a code to an unbounded DM recipient.
+ *
+ * TODO: Re-enable once a proper recipient config key is added in a follow-up phase.
+ * For now, this endpoint is hard-disabled.
  */
-app.post('/api/auth/request-code', async (req, res) => {
-  try {
-    const config = loadConfig()
-    const account = config.accounts[0]
-
-    if (!account.bluesky?.identifier) {
-      return res.status(501).json({ error: 'Admin DM login is not configured' })
-    }
-
-    // Generate 6-digit code
-    const code = crypto.randomInt(100000, 999999).toString()
-    const now = Date.now()
-
-    loginCodes.set(code, {
-      created: now,
-      expires: now + CODE_DURATION
-    })
-
-    // Send code via Bluesky DM
-    const agent = await createAuthenticatedAgent(account.bluesky)
-    const accessJwt = agent.session.accessJwt
-
-    // Get conversation
-    const convoResponse = await fetch('https://api.bsky.chat/xrpc/chat.bsky.convo.listConvos?limit=100', {
-      headers: {
-        'Authorization': `Bearer ${accessJwt}`
-      }
-    })
-
-    const convosData = await convoResponse.json()
-
-    if (convosData.error) {
-      console.error('Failed to list Bluesky conversations:', convosData.error)
-      return res.status(500).json({ error: 'Failed to send code' })
-    }
-
-    const convo = convosData.convos[0]
-
-    if (!convo) {
-      console.error('No existing Bluesky conversations found')
-      return res.status(500).json({ error: 'No DM conversation found' })
-    }
-
-    // Send code
-    await fetch('https://api.bsky.chat/xrpc/chat.bsky.convo.sendMessage', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessJwt}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        convoId: convo.id,
-        message: {
-          text: `Admin login code: ${code}\n\nExpires in 10 minutes.`
-        }
-      })
-    })
-
-    console.log(`✓ Login code sent via Bluesky DM`)
-    res.json({ success: true, expiresIn: CODE_DURATION })
-  } catch (error) {
-    console.error('Error sending login code:', error)
-    res.status(500).json({ error: 'Failed to send code', details: error.message })
-  }
+app.post('/api/auth/request-code', (req, res) => {
+  res.status(501).json({ error: 'Admin DM login is not configured' })
 })
 
 /**
