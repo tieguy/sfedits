@@ -243,6 +243,67 @@ describe('posting flow', function() {
       nock.cleanAll()
     })
 
+    it('truncates over-limit text for Bluesky only, keeping metadata.page in sync', async function() {
+      this.timeout(10000)
+
+      const graphemes = s =>
+        [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(s)].length
+
+      // Long enough that template + name + URL blows past 300 graphemes
+      const longTitle = 'A'.repeat(280)
+
+      let blueskyArgs = null
+      const pageWatch = proxyquire('../page-watch', {
+        './lib/diff-image': {
+          captureDiffImage: async () => ({
+            screenshot: fakeScreenshotPath,
+            altText: 'alt', summary: null, article: null
+          })
+        },
+        './lib/geolocation': {
+          enrichIPsInText: async (text) => text,
+          initializeReader: async () => null
+        },
+        './lib/post-log': { recordPost: () => null },
+        './lib/bluesky-platform': {
+          post: async (opts) => {
+            blueskyArgs = opts
+            return { uri: 'at://did:plc:fake/app.bsky.feed.post/1', cid: 'fakecid' }
+          }
+        }
+      })
+
+      nock('https://en.wikipedia.org')
+        .get('/w/index.php')
+        .query({ diff: '123', oldid: '456' })
+        .reply(200, `<script>RLCONF={"wgPageName":"${longTitle}"};</script>`)
+
+      const fakeAccount = {
+        bluesky: { identifier: 'top500.thebay.wiki', password: 'fake' },
+        template: '{{page}} Wikipedia article edited by {{name}} {{&url}}',
+        pii_blocking: { enabled: false }
+      }
+      const fakeEdit = {
+        page: longTitle,
+        user: 'TestUser',
+        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+      }
+
+      const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+      assert.isAbove(graphemes(statusData.text), 300, 'test setup must exceed the limit')
+
+      await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
+
+      assert.exists(blueskyArgs, 'Bluesky post should have been attempted')
+      assert.isAtMost(graphemes(blueskyArgs.text), 300,
+        'Bluesky text must fit the 300-grapheme limit')
+      assert.isTrue(blueskyArgs.text.endsWith(fakeEdit.url),
+        'the diff URL must survive truncation intact')
+      assert.include(blueskyArgs.text, blueskyArgs.metadata.page,
+        'metadata.page must match the truncated title so the facet still lands')
+      assert.match(blueskyArgs.metadata.page, /…$/)
+    })
+
     it('posts to Bluesky and Mastodon without errors', async function() {
       this.timeout(10000)
 

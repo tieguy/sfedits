@@ -7,7 +7,7 @@
 
 const { describe, it } = require('mocha')
 const { assert } = require('chai')
-const { buildFacets } = require('../lib/bluesky-utils')
+const { buildFacets, fitBlueskyText } = require('../lib/bluesky-utils')
 
 describe('lib/bluesky-utils', function() {
   describe('buildFacets()', function() {
@@ -223,6 +223,113 @@ describe('lib/bluesky-utils', function() {
       assert.isArray(pageFacet.features)
       assert.equal(pageFacet.features[0].$type, 'app.bsky.richtext.facet#link')
       assert.property(pageFacet.features[0], 'uri')
+    })
+  })
+
+  describe('fitBlueskyText()', function() {
+    // Count graphemes the way Bluesky does
+    const graphemes = s => [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(s)].length
+
+    const DIFF_URL = 'https://en.wikipedia.org/w/index.php?diff=1310000000&oldid=1309999999'
+
+    function makeText(page, name) {
+      return `${page} Wikipedia article edited by ${name} ${DIFF_URL}`
+    }
+
+    it('returns text and page unchanged when within the limit', function() {
+      const text = makeText('Cat', 'ExampleUser')
+      const result = fitBlueskyText(text, 'Cat')
+      assert.equal(result.text, text)
+      assert.equal(result.page, 'Cat')
+    })
+
+    it('returns text unchanged at exactly the limit', function() {
+      const page = 'x'.repeat(300 - graphemes(makeText('', 'User')))
+      const text = makeText(page, 'User')
+      assert.equal(graphemes(text), 300)
+      const result = fitBlueskyText(text, page)
+      assert.equal(result.text, text)
+      assert.equal(result.page, page)
+    })
+
+    it('truncates the title with an ellipsis so the text fits, keeping the URL intact', function() {
+      const page = 'A'.repeat(250)
+      const text = makeText(page, 'ExampleUser')
+      assert.isAbove(graphemes(text), 300)
+
+      const result = fitBlueskyText(text, page)
+      assert.isAtMost(graphemes(result.text), 300)
+      assert.match(result.page, /…$/)
+      assert.include(result.text, result.page)
+      // The diff URL must survive whole at the end
+      assert.isTrue(result.text.endsWith(DIFF_URL))
+      // Everything after the title is untouched
+      assert.include(result.text, ' Wikipedia article edited by ExampleUser ')
+    })
+
+    it('produces output buildFacets can still facet the title in', function() {
+      const page = 'B'.repeat(250)
+      const text = makeText(page, 'ExampleUser')
+      const result = fitBlueskyText(text, page)
+
+      const facets = buildFacets(
+        result.text,
+        result.page,
+        'ExampleUser',
+        'https://en.wikipedia.org/wiki/Foo',
+        'https://en.wikipedia.org/wiki/Special:Contributions/ExampleUser'
+      )
+      const pageFacet = facets.find(f => f.features[0].uri === 'https://en.wikipedia.org/wiki/Foo')
+      assert.exists(pageFacet)
+      // Byte range covers exactly the truncated title at the start of the text
+      assert.equal(pageFacet.index.byteStart, 0)
+      assert.equal(pageFacet.index.byteEnd, Buffer.byteLength(result.page, 'utf8'))
+    })
+
+    it('counts graphemes, not code units: flag emoji do not trigger truncation', function() {
+      // Each regional-indicator flag is 1 grapheme but 4 UTF-16 code units
+      const name = '2001:db8::1 [🇺🇸]'
+      const page = 'x'.repeat(300 - graphemes(makeText('', name)))
+      const text = makeText(page, name)
+      assert.equal(graphemes(text), 300)
+      assert.isAbove(text.length, 300) // over the limit if you count code units
+
+      const result = fitBlueskyText(text, page)
+      assert.equal(result.text, text)
+    })
+
+    it('truncates multi-byte titles on grapheme boundaries', function() {
+      const page = '金門公園'.repeat(70) // 280 graphemes, 840 bytes
+      const text = makeText(page, 'ExampleUser')
+      const result = fitBlueskyText(text, page)
+
+      assert.isAtMost(graphemes(result.text), 300)
+      assert.notInclude(result.text, '�')
+      // Truncated title is a clean prefix of the original plus ellipsis
+      const stem = result.page.slice(0, -1)
+      assert.isTrue(page.startsWith(stem))
+    })
+
+    it('falls back to tail truncation when the title is not in the text', function() {
+      const text = 'z'.repeat(400)
+      const result = fitBlueskyText(text, 'Unrelated Title')
+      assert.isAtMost(graphemes(result.text), 300)
+      assert.match(result.text, /…$/)
+    })
+
+    it('falls back to tail truncation when the title cannot absorb the overflow', function() {
+      // Title is short; the rest of the text alone exceeds the limit
+      const text = makeText('Cat', 'u'.repeat(350))
+      const result = fitBlueskyText(text, 'Cat')
+      assert.isAtMost(graphemes(result.text), 300)
+    })
+
+    it('respects a custom limit argument', function() {
+      const page = 'C'.repeat(80)
+      const text = makeText(page, 'User')
+      const result = fitBlueskyText(text, page, 100)
+      assert.isAtMost(graphemes(result.text), 100)
+      assert.isTrue(result.text.endsWith(DIFF_URL) || /…$/.test(result.text))
     })
   })
 })

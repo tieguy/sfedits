@@ -9,7 +9,7 @@ const { EditStream } = require('./lib/edit-stream')
 const { saveDraft } = require('./lib/draft-manager')
 const { enrichIPsInText, initializeReader } = require('./lib/geolocation')
 const { captureDiffImage } = require('./lib/diff-image')
-const { buildFacets } = require('./lib/bluesky-utils')
+const { buildFacets, fitBlueskyText } = require('./lib/bluesky-utils')
 const { createAuthenticatedAgent } = require('./lib/bluesky-client')
 const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
@@ -478,11 +478,16 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
                 parent: thread.parent.bluesky
               }
             }
+            // Bluesky caps posts at 300 graphemes (Mastodon's 500 never
+            // bites with this template, so only this platform truncates).
+            // The shortened title goes into metadata too: buildFacets finds
+            // the title by searching the text, so they must match.
+            const fitted = fitBlueskyText(enrichedText, metadata.page)
             const result = await bluesky.post({
               account: account.bluesky,
-              text: enrichedText,
+              text: fitted.text,
               screenshot,
-              metadata,
+              metadata: { ...metadata, page: fitted.page },
               replyTo
             })
             if (result?.uri) {
