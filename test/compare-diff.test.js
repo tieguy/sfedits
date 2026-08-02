@@ -547,6 +547,27 @@ describe('compare-diff', function() {
     })
   })
 
+  describe('article meta in output', function() {
+    it('returns description and imageDataUri in model when provided', function() {
+      const diff = [{ type: 1, text: 'new text' }]
+      const model = buildDiffModel(diff, 'Gavin Newsom', {
+        description: 'Governor of California since 2019',
+        imageDataUri: 'data:image/png;base64,AAAA'
+      })
+      assert.equal(model.description, 'Governor of California since 2019')
+      assert.equal(model.imageDataUri, 'data:image/png;base64,AAAA')
+      assert.equal(model.page, 'Gavin Newsom')
+    })
+
+    it('returns null for meta fields when not provided', function() {
+      const diff = [{ type: 1, text: 'x' }]
+      const model = buildDiffModel(diff, 'Cat')
+      assert.isNull(model.description)
+      assert.isNull(model.imageDataUri)
+      assert.equal(model.page, 'Cat')
+    })
+  })
+
   describe('blpFromClaims', function() {
     it('flags a living human as BLP', function() {
       assert.deepEqual(blpFromClaims(['Q5'], null), { isBlp: true, reason: 'living' })
@@ -572,6 +593,23 @@ describe('compare-diff', function() {
       // e.g. San Francisco Board of Supervisors: instance of legislature
       assert.deepEqual(blpFromClaims(['Q11204'], null), { isBlp: false, reason: null })
       assert.deepEqual(blpFromClaims([], null), { isBlp: false, reason: null })
+    })
+  })
+
+  describe('diff highlights in model', function() {
+    it('includes segments with add and delete highlights in rows', function() {
+      const model = buildDiffModel(fixture.diff, 'Test Article')
+      // Verify there's at least one segment with 'add' highlight and one with 'delete'
+      let hasAdd = false
+      let hasDelete = false
+      for (const row of model.rows) {
+        for (const segment of row.segments) {
+          if (segment.highlight === 'add') hasAdd = true
+          if (segment.highlight === 'delete') hasDelete = true
+        }
+      }
+      assert.isTrue(hasAdd, 'Should have at least one segment with add highlight')
+      assert.isTrue(hasDelete, 'Should have at least one segment with delete highlight')
     })
   })
 })
