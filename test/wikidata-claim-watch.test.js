@@ -8,6 +8,7 @@ const {
   parseClaimEdit,
   matchClaim,
   RateCap,
+  ClaimDedupe,
   refreshTargetSets,
   handleWikidataEdit
 } = require('../lib/wikidata-claim-watch')
@@ -105,6 +106,47 @@ describe('wikidata-claim-watch', function() {
       assert.equal(summary, 2)
       assert.isTrue(cap.tryTake())
       assert.equal(cap.suppressed, 0)
+    })
+  })
+
+  describe('ClaimDedupe', function() {
+    const claim = { page: 'Q1', property: 'P19', value: 'Q62' }
+
+    it('suppresses a changed action repeating a recent post', function() {
+      let fakeNow = 1000000
+      const dedupe = new ClaimDedupe({ ttlMs: 45000, now: () => fakeNow })
+      dedupe.record({ ...claim, action: 'added' })
+      fakeNow += 5000
+      assert.isTrue(dedupe.isDuplicate({ ...claim, action: 'changed' }))
+    })
+
+    it('suppresses an identical repeated action (stream replay)', function() {
+      let fakeNow = 1000000
+      const dedupe = new ClaimDedupe({ ttlMs: 45000, now: () => fakeNow })
+      dedupe.record({ ...claim, action: 'added' })
+      assert.isTrue(dedupe.isDuplicate({ ...claim, action: 'added' }))
+    })
+
+    it('lets a removal through right after an addition', function() {
+      const dedupe = new ClaimDedupe({ ttlMs: 45000, now: () => 1000000 })
+      dedupe.record({ ...claim, action: 'added' })
+      assert.isFalse(dedupe.isDuplicate({ ...claim, action: 'removed' }))
+    })
+
+    it('forgets entries once the TTL passes', function() {
+      let fakeNow = 1000000
+      const dedupe = new ClaimDedupe({ ttlMs: 45000, now: () => fakeNow })
+      dedupe.record({ ...claim, action: 'added' })
+      fakeNow += 45001
+      assert.isFalse(dedupe.isDuplicate({ ...claim, action: 'changed' }))
+    })
+
+    it('keys on page, property, and value independently', function() {
+      const dedupe = new ClaimDedupe({ ttlMs: 45000, now: () => 1000000 })
+      dedupe.record({ ...claim, action: 'added' })
+      assert.isFalse(dedupe.isDuplicate({ ...claim, page: 'Q2', action: 'changed' }))
+      assert.isFalse(dedupe.isDuplicate({ ...claim, property: 'P20', action: 'changed' }))
+      assert.isFalse(dedupe.isDuplicate({ ...claim, value: 'Q17042', action: 'changed' }))
     })
   })
 
@@ -259,6 +301,128 @@ describe('wikidata-claim-watch', function() {
       const second = await handleWikidataEdit(account, edit, { sets, noop: false, rateCap: cap })
       assert.isNull(second)
       assert.equal(cap.suppressed, 1)
+    })
+
+    // Old revision 1 held P19 = Q18013 (Fresno) in these helpers
+    function nockOldRevision(claims) {
+      nock('https://www.wikidata.org')
+        .get('/w/api.php')
+        .query(q => q.action === 'query')
+        .reply(200, {
+          query: {
+            pages: [{
+              revisions: [{
+                slots: { main: { content: JSON.stringify({ claims }) } }
+              }]
+            }]
+          }
+        })
+    }
+
+    function nockLabels(entities) {
+      nock('https://www.wikidata.org')
+        .get('/w/api.php')
+        .query(q => q.action === 'wbgetentities')
+        .reply(200, { entities })
+    }
+
+    function nockDiscord(capture) {
+      nock('https://discord.com')
+        .post('/api/webhooks/123/abc', body => { capture.body = body; return true })
+        .query(true)
+        .reply(204)
+    }
+
+    const changedEdit = {
+      ...edit,
+      comment: '/* wbsetclaim-update:2||1 */ [[Property:P19]]: [[Q62]]'
+    }
+
+    it('shows old → new when a changed claim had one prior value', async function() {
+      nockOldRevision({ P19: [{ mainsnak: { datavalue: { value: { id: 'Q18013' } } } }] })
+      nockLabels({
+        Q4910791: { labels: { en: { value: 'Barry Zito' } } },
+        Q62: { labels: { en: { value: 'San Francisco' } } },
+        Q18013: { labels: { en: { value: 'Fresno' } } },
+        P19: { labels: { en: { value: 'place of birth' } } }
+      })
+      const capture = {}
+      nockDiscord(capture)
+
+      const result = await handleWikidataEdit(account, changedEdit, { sets, noop: false })
+      assert.isOk(result)
+      assert.include(capture.body.embeds[0].description, 'Fresno → San Francisco')
+      assert.include(capture.body.embeds[0].description, 'Changed')
+      assert.notInclude(capture.body.embeds[0].description, 'Changed to')
+    })
+
+    it('labels a reference/qualifier-only edit as Edited, not Changed to', async function() {
+      // Old revision already held the same value the autocomment carries
+      nockOldRevision({ P19: [{ mainsnak: { datavalue: { value: { id: 'Q62' } } } }] })
+      nockLabels({
+        Q62: { labels: { en: { value: 'San Francisco' } } },
+        P19: { labels: { en: { value: 'place of birth' } } }
+      })
+      const capture = {}
+      nockDiscord(capture)
+
+      const result = await handleWikidataEdit(account, changedEdit, { sets, noop: false })
+      assert.isOk(result)
+      assert.include(capture.body.embeds[0].description, 'Edited')
+      assert.include(capture.body.embeds[0].description, 'reference or qualifier')
+      assert.notInclude(capture.body.embeds[0].description, 'Changed to')
+    })
+
+    it('falls back to Changed to when the old revision is unreadable', async function() {
+      nock('https://www.wikidata.org')
+        .get('/w/api.php')
+        .query(q => q.action === 'query')
+        .reply(500)
+      nockLabels({
+        Q62: { labels: { en: { value: 'San Francisco' } } },
+        P19: { labels: { en: { value: 'place of birth' } } }
+      })
+      const capture = {}
+      nockDiscord(capture)
+
+      const result = await handleWikidataEdit(account, changedEdit, { sets, noop: false })
+      assert.isOk(result)
+      assert.include(capture.body.embeds[0].description, 'Changed to')
+    })
+
+    it('dedupes the create-then-refine burst into one post', async function() {
+      const dedupe = new ClaimDedupe({ ttlMs: 45000 })
+      nockLabels({})
+      const capture = {}
+      nockDiscord(capture)
+
+      const first = await handleWikidataEdit(account, edit, { sets, noop: false, dedupe })
+      assert.isOk(first)
+      assert.isOk(capture.body, 'first edit should post')
+
+      // Seconds later the same user attaches a reference: same claim,
+      // wbsetclaim-update comment. No nocks armed - a second fetch would throw.
+      const second = await handleWikidataEdit(account, changedEdit, { sets, noop: false, dedupe })
+      assert.isNull(second)
+    })
+
+    it('still posts a removal that follows an addition', async function() {
+      const dedupe = new ClaimDedupe({ ttlMs: 45000 })
+      nockLabels({})
+      const capture = {}
+      nockDiscord(capture)
+
+      const first = await handleWikidataEdit(account, edit, { sets, noop: false, dedupe })
+      assert.isOk(first)
+
+      nockLabels({})
+      const capture2 = {}
+      nockDiscord(capture2)
+      const removal = await handleWikidataEdit(account,
+        { ...edit, comment: '/* wbremoveclaims-remove:1| */ [[Property:P19]]: [[Q62]]' },
+        { sets, noop: false, dedupe })
+      assert.isOk(removal)
+      assert.include(capture2.body.embeds[0].description, 'Removed')
     })
 
     it('falls back to Q-ids when labels are unavailable', async function() {
