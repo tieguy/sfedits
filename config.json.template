@@ -44,40 +44,6 @@
         "properties": ["P19", "P20", "P131", "P159", "P276", "P937"],
         "refresh_hours": 24,
         "rate_cap": { "max": 5, "window_minutes": 10 }
-      },
-      "pii_alerts": {
-        "bluesky_recipient": "yourpersonalhandle.bsky.social",
-        "mastodon_recipient": "yourpersonalhandle"
-      },
-      "pii_blocking": {
-        "enabled": true,
-        "blocked_entity_types": [
-          "EMAIL_ADDRESS",
-          "PHONE_NUMBER",
-          "CREDIT_CARD",
-          "US_SSN",
-          "US_PASSPORT",
-          "US_DRIVER_LICENSE",
-          "CRYPTO",
-          "IBAN_CODE",
-          "IP_ADDRESS",
-          "URL",
-          "PERSON",
-          "LOCATION",
-          "DATE_TIME",
-          "NRP",
-          "ORGANIZATION",
-          "US_BANK_NUMBER",
-          "AU_ABN",
-          "AU_ACN",
-          "AU_TFN",
-          "AU_MEDICARE",
-          "IN_PAN",
-          "IN_AADHAAR",
-          "IN_VEHICLE_REGISTRATION",
-          "SG_NRIC_FIN",
-          "UK_NHS"
-        ]
       }
     }
   ],

@@ -272,11 +272,6 @@ describe('posting flow', function() {
         .query({ diff: '123', oldid: '456' })
         .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
 
-      // Mock PII service HTTP endpoint
-      nock('http://pii-service:5000')
-        .post('/analyze')
-        .reply(200, { has_pii: false, entities: [] })
-
       // Mock Bluesky API
       const blueskyScope = nock('https://bsky.social')
         .post('/xrpc/com.atproto.server.createSession')
@@ -322,8 +317,7 @@ describe('posting flow', function() {
           access_token: 'fake-mastodon-token',
           instance: 'https://mastodon.example.com'
         },
-        template: '{{page}} edited by {{name}} {{&url}}',
-        pii_blocking: { enabled: false } // Disable PII blocking for test
+        template: '{{page}} edited by {{name}} {{&url}}'
       }
 
       const fakeEdit = {
@@ -384,8 +378,7 @@ describe('posting flow', function() {
       const fakeAccount = {
         bluesky: { identifier: 'testuser.bsky.social', password: 'p', service: 'https://bsky.social' },
         mastodon: { access_token: 't', instance: 'https://mastodon.example.com' },
-        template: '{{page}} edited by {{name}} {{&url}}',
-        pii_blocking: { enabled: false }
+        template: '{{page}} edited by {{name}} {{&url}}'
       }
 
       const fakeEdit = {

@@ -118,7 +118,6 @@ cat > /tmp/sfedits-config.json <<'JSON'
     {
       "template": "{{page}} was edited by {{name}}",
       "discord": { "webhook_url": "https://discord.com/api/webhooks/…" },
-      "pii_blocking": { "enabled": false },
       "watchlist_source": {
         "project": "California/San Francisco Bay Area task force",
         "importance": ["Top", "High"]
@@ -148,8 +147,6 @@ Notes that matter:
   `TOOL_TOOLSDB_USER` and `TOOL_TOOLSDB_PASSWORD`, and `lib/topic-store.js`
   reads those when the config omits them. Keeping credentials out of the config
   is the entire reason `SFEDITS_CONFIG` exists.
-- `pii_blocking.enabled: false` is deliberate and settled — this fork relies on
-  the revdel sweeper, not the Presidio sidecar. See the design plan.
 - **`web.invite_codes` is what opens `/create`.** Omit the whole `web` stanza to
   deploy with the form closed; the coverage page runs either way.
 - Confirm afterwards with `toolforge envvars list` (it shows names, not values).
@@ -336,4 +333,3 @@ toolforge jobs run migrate --command "node scripts/migrate.js" \
 - **The admin console** (`admin/server.js`). Its Bluesky-DM login cannot work on
   a Discord-only account, so the web process deliberately serves only
   `public/server.js`.
-- **The PII sidecar.** Settled: this fork uses the revdel sweeper instead.

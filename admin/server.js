@@ -88,7 +88,7 @@ app.post('/api/auth/request-code', async (req, res) => {
     const config = loadConfig()
     const account = config.accounts[0]
 
-    if (!account.bluesky || !account.pii_alerts?.bluesky_recipient) {
+    if (!account.bluesky?.identifier) {
       return res.status(500).json({ error: 'Bluesky not configured' })
     }
 
@@ -120,11 +120,11 @@ app.post('/api/auth/request-code', async (req, res) => {
     }
 
     const convo = convosData.convos.find(c =>
-      c.members.some(m => m.handle === account.pii_alerts.bluesky_recipient)
+      c.members.some(m => m.handle === account.bluesky.identifier)
     )
 
     if (!convo) {
-      console.error(`No existing Bluesky conversation with ${account.pii_alerts.bluesky_recipient}`)
+      console.error(`No existing Bluesky conversation with ${account.bluesky.identifier}`)
       return res.status(500).json({ error: 'No DM conversation found' })
     }
 
@@ -394,35 +394,6 @@ app.post('/api/drafts/bulk-delete', requireAuth, (req, res) => {
   } catch (error) {
     console.error('Error bulk deleting drafts:', error)
     res.status(500).json({ error: 'Failed to delete drafts' })
-  }
-})
-
-/**
- * GET /api/gemini-log
- * Return parsed Gemini PII check log entries
- */
-app.get('/api/gemini-log', requireAuth, (req, res) => {
-  try {
-    const logPath = path.join(__dirname, '../data/gemini-pii-checks.log')
-
-    if (!fs.existsSync(logPath)) {
-      return res.json({ entries: [], count: 0 })
-    }
-
-    const raw = fs.readFileSync(logPath, 'utf8')
-    const entries = raw.split('\n')
-      .filter(Boolean)
-      .map(line => {
-        try { return JSON.parse(line) }
-        catch { return null }
-      })
-      .filter(Boolean)
-      .reverse() // newest first
-
-    res.json({ entries, count: entries.length })
-  } catch (error) {
-    console.error('Error reading gemini log:', error)
-    res.status(500).json({ error: 'Failed to read log' })
   }
 })
 

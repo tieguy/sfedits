@@ -28,7 +28,6 @@ let topicIndex = null
 let subscriptionLimiter = null
 const subscriptionHealth = createHealthTracker()
 const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-watch')
-const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
 const { recordPost } = require('./lib/post-log')
 const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser')
@@ -113,220 +112,6 @@ function extractDiffText(html) {
   }
 
   return diffText.trim()
-}
-
-/**
- * Analyze diff text for PII using PII microservice
- */
-async function analyzeForPII(text, blockedEntityTypes = null) {
-  try {
-    const body = { text }
-    if (blockedEntityTypes) {
-      body.blocked_entity_types = blockedEntityTypes
-    }
-
-    const response = await fetch('http://pii-service:5000/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000)
-    })
-
-    if (!response.ok) {
-      throw new Error(`PII service returned ${response.status}`)
-    }
-
-    return await response.json()
-  } catch (error) {
-    // On timeout/error, log but allow post through
-    // Blocking every post on infrastructure issues defeats the purpose
-    console.error('PII analysis error:', error.message)
-    console.error('⚠ Allowing post through - PII screening unavailable')
-    return {
-      has_pii: false,
-      entities: []
-    }
-  }
-}
-
-/**
- * Log blocked edit to file for manual review
- */
-function logBlockedEdit(edit, statusData, piiResult) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    article: edit.page,
-    editor: statusData.name,
-    diff_url: edit.url,
-    post_text: statusData.text,
-    detected_pii: piiResult.entities
-  }
-
-  const logLine = JSON.stringify(logEntry) + '\n'
-  fs.appendFileSync('pii-blocks.log', logLine)
-}
-
-/**
- * Send DM alert via Bluesky
- * Uses api.bsky.chat service directly (not routed through bsky.social PDS)
- */
-async function sendBlueskyAlert(account, edit, statusData, _piiResult) {
-  if (!account.pii_alerts?.bluesky_recipient) return
-
-  try {
-    const agent = await createAuthenticatedAgent(account.bluesky)
-    const accessJwt = agent.session.accessJwt
-
-    // Build facets for clickable links (same as regular post)
-    const alertText = `PII: ${statusData.text}`
-    const facets = buildFacets(
-      alertText,
-      statusData.page,
-      statusData.name,
-      statusData.pageUrl,
-      statusData.userUrl
-    )
-
-    // Get conversation - chat API is at api.bsky.chat
-    const convoResponse = await fetch('https://api.bsky.chat/xrpc/chat.bsky.convo.listConvos?limit=100', {
-      headers: {
-        'Authorization': `Bearer ${accessJwt}`
-      }
-    })
-
-    const convosData = await convoResponse.json()
-
-    if (convosData.error) {
-      console.error('Failed to list Bluesky conversations:', convosData.error)
-      return
-    }
-
-    const convo = convosData.convos.find(c =>
-      c.members.some(m => m.handle === account.pii_alerts.bluesky_recipient)
-    )
-
-    if (!convo) {
-      console.error(`No existing Bluesky conversation with ${account.pii_alerts.bluesky_recipient}`)
-      return
-    }
-
-    // Send message - chat API is at api.bsky.chat
-    await fetch('https://api.bsky.chat/xrpc/chat.bsky.convo.sendMessage', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessJwt}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        convoId: convo.id,
-        message: {
-          text: alertText,
-          facets: facets
-        }
-      })
-    })
-
-    console.log('✓ Bluesky alert sent')
-  } catch (error) {
-    console.error('Bluesky alert failed:', error.message)
-  }
-}
-
-/**
- * Send DM alert via Mastodon
- */
-async function sendMastodonAlert(account, edit, statusData, _piiResult) {
-  if (!account.pii_alerts?.mastodon_recipient) return
-
-  try {
-    const M = Mastodon.client({
-      access_token: account.mastodon.access_token,
-      instance: account.mastodon.instance
-    })
-
-    // Same message as regular post, just prefixed with "PII: "
-    const alertText = `PII: ${statusData.text}`
-
-    await M.postStatus({
-      status: `@${account.pii_alerts.mastodon_recipient} ${alertText}`,
-      visibility: 'direct'
-    })
-
-    console.log('✓ Mastodon alert sent')
-  } catch (error) {
-    console.error('Mastodon alert failed:', error.message)
-  }
-}
-
-/**
- * Screen edit for PII before posting
- */
-async function screenForPII(account, edit, statusData, diffHtml) {
-  try {
-    // Check if PII blocking is enabled
-    if (account.pii_blocking && !account.pii_blocking.enabled) {
-      return { safe: true }
-    }
-
-    // Extract diff text from the already-fetched diff HTML
-    const diffText = extractDiffText(diffHtml || '')
-
-    if (!diffText) {
-      console.error('⚠ Could not extract diff text - blocking as precaution')
-      return { safe: false, reason: 'Could not extract diff text' }
-    }
-
-    // Get blocked entity types from config
-    const blockedTypes = account.pii_blocking?.blocked_entity_types || null
-
-    // Analyze for PII
-    const piiResult = await analyzeForPII(diffText, blockedTypes)
-
-    if (piiResult.has_pii) {
-      console.error('⚠ Presidio flagged PII - verifying with Gemini...')
-      console.error(`   Article: ${edit.page}`)
-      console.error(`   Detected: ${piiResult.entities.map(e => e.type).join(', ')}`)
-
-      // Second check: ask Gemini if this is real PII
-      // 'false_positive' = safe to post, 'confirmed' = real PII, 'unavailable' = fall back to blocking
-      const geminiVerdict = await verifyPIIWithGemini(diffText, piiResult.entities, edit.page)
-      if (geminiVerdict === 'false_positive') {
-        console.log('✓ Gemini says false positive - allowing post through')
-        return { safe: true }
-      }
-
-      const reason = geminiVerdict === 'confirmed' ? 'PII confirmed by Gemini' : 'Gemini unavailable, blocking as precaution'
-      console.error(`🚫 Blocking post - ${reason}`)
-
-      // Get PII types and max confidence
-      const piiTypes = [...new Set(piiResult.entities.map(e => e.type))]
-      const maxConfidence = Math.max(...piiResult.entities.map(e => e.score))
-
-      // Save draft (screenshot taken later if admin chooses to post)
-      saveDraft({
-        text: statusData.text,
-        diffUrl: edit.url,
-        article: edit.page,
-        editor: statusData.name,
-        piiDetected: piiTypes,
-        piiConfidence: maxConfidence,
-        statusData: statusData
-      })
-
-      // Log and send text-only alerts
-      logBlockedEdit(edit, statusData, piiResult)
-      await sendBlueskyAlert(account, edit, statusData, piiResult)
-      await sendMastodonAlert(account, edit, statusData, piiResult)
-
-      return { safe: false, reason: 'PII detected', piiResult }
-    }
-
-    return { safe: true }
-  } catch (error) {
-    // Fail-safe: block on any error
-    console.error('⚠ PII screening error - blocking as precaution:', error.message)
-    return { safe: false, reason: 'Screening error' }
-  }
 }
 
 function getStatus(edit, name, template) {
@@ -418,7 +203,7 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
     console.log(statusData.text)
 
     if (!argv.noop) {
-      // Fetch the diff once; reused for page verification and PII screening
+      // Fetch the diff once; reused for page verification
       const diffHtml = await fetchDiffHtml(edit.url)
 
       // Guard against the IRC feed parser splicing a stale page title onto a
@@ -426,14 +211,6 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       const verification = verifyDiffPage(diffHtml, edit.page)
       if (!verification.match) {
         console.error(`Post blocked: diff is for "${verification.actualPage}", not "${edit.page}"`)
-        return null
-      }
-
-      // PII screening before posting
-      const screeningResult = await screenForPII(account, edit, statusData, diffHtml)
-
-      if (!screeningResult.safe) {
-        console.error(`Post blocked: ${screeningResult.reason}`)
         return null
       }
 
@@ -733,9 +510,7 @@ module.exports = {
   inspect,
   postEdit,
   sendStatus,
-  extractDiffText,
-  analyzeForPII,
-  screenForPII
+  extractDiffText
 }
 module.exports.deliverToTopics = deliverToTopics
 module.exports._setTopicStateForTest = (store, index) => {

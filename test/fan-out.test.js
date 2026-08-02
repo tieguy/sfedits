@@ -91,12 +91,7 @@ describe('fan-out', function() {
     }
     const statusData = pageWatch.getStatus(edit, edit.user, '{{page}} edited')
 
-    // pii_blocking must be present and disabled - matching this fork's real
-    // config. With no stanza at all, screenForPII cannot extract diff text from
-    // the fixture and blocks the post, returning BEFORE captureDiffImage. The
-    // render would never happen and the assertion below would fail for the
-    // wrong reason.
-    const account = { pii_blocking: { enabled: false } }
+    const account = {}
 
     await pageWatch.sendStatus(account, statusData, edit, [1, 2])
 
@@ -119,7 +114,7 @@ describe('fan-out', function() {
         wikipedia: 'en', page: 'Alpha', user: 'Editor',
         url: 'https://en.wikipedia.org/w/index.php?diff=1&oldid=2'
       }
-      const account = { pii_blocking: { enabled: false } }
+      const account = {}
       await pageWatch.sendStatus(account, pageWatch.getStatus(edit, edit.user, '{{page}}'),
         edit, [])
 

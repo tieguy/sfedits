@@ -1,6 +1,6 @@
 # SF Edits
 
-A Wikipedia edit monitoring bot that watches for edits to San Francisco-related articles and posts screenshots to Bluesky and Mastodon. Includes automated PII screening, geolocation enrichment for anonymous edits, and a web UI for reviewing blocked posts.
+A Wikipedia edit monitoring bot that watches for edits to San Francisco-related articles and posts screenshots to Bluesky and Mastodon. Includes geolocation enrichment for anonymous edits and a web UI for drafts.
 
 Based on [anon](https://github.com/edsu/anon), originally created for @congressedits.
 
@@ -11,24 +11,17 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 1. **Bot service** (Node.js)
    - Monitors Wikipedia IRC feed for real-time edits
    - Watches configured SF-related articles
-   - Screens edits for PII before posting
    - Enriches anonymous IPs with country flags (MaxMind GeoLite2-City)
    - Takes screenshots with Puppeteer
    - Posts to Bluesky and Mastodon
 
-2. **PII service** (Python/Flask)
-   - Persistent analyzer with pre-loaded spaCy model
-   - Screens edits for personally identifiable information
-   - Responds in ~100-200ms via HTTP API
-   - Used by bot and admin console
-
-3. **Admin console** (Node.js/Express)
-   - Web UI for reviewing PII-blocked drafts
+2. **Admin console** (Node.js/Express)
+   - Web UI for drafts
    - Bluesky DM authentication (passwordless login)
    - Posts to Bluesky and Mastodon with retry logic
    - Exposed on port 3000
 
-4. **MaxMind updater** (curl)
+3. **MaxMind updater** (curl)
    - Downloads latest IP geolocation database weekly
    - Runs continuously in background
    - Updates transparently - no restarts needed
@@ -36,10 +29,8 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 ## How it works
 
 1. Bot detects Wikipedia edit
-2. Fetches diff HTML and extracts text
-3. Sends text to PII service for screening
-4. **If PII detected:** Block post, save draft, send DM alerts
-5. **If clean:** Enrich IP with country flag, take screenshot, post to both platforms
+2. Fetches diff HTML and verifies it matches the claimed article
+3. Enriches IP with country flag, takes screenshot, posts to both platforms
 
 ## Setup
 
@@ -57,13 +48,11 @@ cp config.json.template config.json
 docker-compose up -d
 ```
 
-**Node.js (requires Python/PII service separate):**
+**Node.js:**
 ```bash
 npm install
 node page-watch.js --noop  # Test mode - doesn't post
 ```
-
-The PII service will take ~20-30 seconds to load spaCy models on first start. The bot waits for the PII service to be healthy before starting.
 
 ### 3. Deploy to production
 
@@ -124,7 +113,6 @@ docker-compose ps
 # View logs
 docker-compose logs -f
 docker-compose logs -f bot
-docker-compose logs -f pii-service
 docker-compose logs -f admin
 
 # Restart services
@@ -175,10 +163,6 @@ Create `config.json` from the template:
     "mastodon": {
       "instance": "https://your-instance.social",
       "access_token": "your-access-token"
-    },
-    "pii_alerts": {
-      "bluesky_recipient": "yourhandle.bsky.social",
-      "mastodon_recipient": "yourhandle"
     }
   }]
 }
@@ -210,7 +194,7 @@ Configure per account with the optional `collapse` stanza:
 - `window_minutes`: collapse window length (default 15).
 - `template`: Mustache template for combined posts; `{{count}}` is the number of collapsed edits. Defaults to the template shown above.
 
-Buffered edits and thread refs are held in memory, so restarting the bot drops any not-yet-posted buffer, and a burst spanning a restart starts a fresh thread. Combined posts go through the same diff verification and PII screening as single-edit posts, applied to the combined diff. For the revdel sweeper, a combined post is recorded in the post log under **every** revision it covers, so hiding any one of them on-wiki takes the combined post down.
+Buffered edits and thread refs are held in memory, so restarting the bot drops any not-yet-posted buffer, and a burst spanning a restart starts a fresh thread. Combined posts go through the same diff verification as single-edit posts, applied to the combined diff. For the revdel sweeper, a combined post is recorded in the post log under **every** revision it covers, so hiding any one of them on-wiki takes the combined post down.
 
 ### Dynamic Watchlist (WikiProject task forces)
 
@@ -261,25 +245,20 @@ clickable links.
 
 ### Bluesky Setup
 
-To set up Bluesky posting and PII alert DMs:
+To set up Bluesky posting:
 
 1. Go to Bluesky Settings → App Passwords → Add App Password
-2. **Critical:** Check "Allow access to your direct messages" (required for PII alerts)
-3. Copy the app password to your config.json
-
-**Note:** If PII alerts don't work, regenerate the app password with DM access enabled.
+2. Copy the app password to your config.json
 
 ### Mastodon Setup
 
-To set up Mastodon posting and PII alert DMs:
+To set up Mastodon posting:
 
 1. Go to your Mastodon instance's settings → Development → New Application
-2. **Critical:** When selecting scopes, choose:
+2. When selecting scopes, choose:
    - `write:media` - upload media files
    - `write:statuses` - publish posts
 3. Copy the access token to your config.json
-
-**Note:** Without the correct scopes (`write:media` and `write:statuses`), Mastodon posting will fail silently while Bluesky continues to work.
 
 **Post visibility:** community instances often want bots posting `unlisted` so
 automated posts stay off the local timeline (posts still appear on the bot's
@@ -295,94 +274,7 @@ profile, to followers, and in threads). Set it per account:
 
 Accepted values are Mastodon's: `public`, `unlisted`, `private` (followers
 only). Omit the key to use the server's default (normally public). This
-applies to regular posts, collapsed/threaded posts, and admin console
-reposts alike; PII alert DMs are always sent `direct` regardless.
-
-## PII Screening
-
-The bot automatically screens all edits for personally identifiable information (PII) before posting to prevent malicious actors from using the bot to amplify private data.
-
-### How it works
-
-1. Bot fetches Wikipedia diff HTML and extracts text
-2. Sends text to PII microservice (Python/Flask with Microsoft Presidio)
-3. PII service analyzes for:
-   - Email addresses
-   - Phone numbers
-   - Social Security Numbers
-   - Credit card numbers
-4. **If PII found:** Block post, save draft, send DM alerts, log to file
-5. **If clean:** Post normally to Bluesky/Mastodon
-
-The PII service runs continuously with pre-loaded spaCy models, providing fast analysis (~100-200ms per edit).
-
-### Setup
-
-Add `pii_alerts` to your `config.json` (shown in Configuration section above) with your personal handles:
-
-```json
-"pii_alerts": {
-  "bluesky_recipient": "yourhandle.bsky.social",
-  "mastodon_recipient": "yourhandle@instance.social"
-}
-```
-
-**Important setup steps:**
-1. **Bluesky:** Create a DM conversation between your bot account and your personal Bluesky account (send a DM manually in the app first)
-2. **Bluesky:** Ensure the bot's app password has "Allow access to your direct messages" checked
-3. **Mastodon:** Use format `username@instance.social` for cross-instance DMs (e.g., if bot is on `sfba.social` but you're on `mastodon.social`, use `you@mastodon.social`)
-
-### When PII is detected
-
-You'll receive DMs on both Bluesky and Mastodon with:
-- Article name and editor
-- Diff URL
-- The text that would have been posted
-- What PII was detected (type and confidence score)
-
-The blocked edit is also logged to `pii-blocks.log` for SSH review.
-
-### Admin Console for Draft Review
-
-When PII is detected, posts are blocked and saved as drafts. The admin console is a web UI for reviewing and posting drafts.
-
-**Deployment:**
-
-The admin console is automatically deployed as part of `docker-compose up -d`. No separate deployment needed.
-
-**Requirements:**
-- Bot's Bluesky app password has "Allow access to your direct messages" enabled
-- DM conversation exists between bot and recipient (start manually in Bluesky app)
-- `pii_alerts.bluesky_recipient` is set in config.json
-- Port 3000 is accessible
-
-**Access:**
-- URL: `http://your-droplet-ip:3000`
-- Click "Send Code to Bluesky" → Check DMs → Enter 6-digit code
-- Session lasts 24 hours
-
-**Features:**
-- Review blocked posts with screenshots
-- See detected PII types and confidence scores
-- Post to both platforms with one click
-- Automatic retry if one platform fails
-
-### Fail-safe design
-
-The system blocks posts if:
-- PII is detected with any confidence level
-- Diff text cannot be extracted from Wikipedia
-- PII service is unreachable or times out (5s timeout)
-- Any unexpected error occurs during screening
-
-If the PII service is unavailable, the bot allows posts through with a warning log (avoiding complete service outage). The persistent microservice architecture makes this scenario rare.
-
-### Accuracy
-
-Based on testing with Wikipedia-style content:
-- **87.5% accuracy** overall
-- **0% false positives** on clean Wikipedia edits
-- **100% detection** on emails, phone numbers, and SSNs
+applies to regular posts and collapsed/threaded posts.
 
 ## Monitored Articles
 
