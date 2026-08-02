@@ -17,6 +17,7 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 
 2. **Admin console** (Node.js/Express)
    - Bluesky DM authentication (passwordless login)
+   - Review and post queued drafts
    - Posts to Bluesky and Mastodon with retry logic
    - Exposed on port 3000
 

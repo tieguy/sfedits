@@ -1,7 +1,6 @@
 services:
   bot:
     build: .
-    environment:
     volumes:
       - ./config.json:/opt/sfedits/config.json:ro
       - ./drafts:/opt/sfedits/drafts

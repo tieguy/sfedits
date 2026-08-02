@@ -184,18 +184,6 @@
       word-break: break-word;
     }
 
-    .draft-pii {
-      background: #fff3cd;
-      border-left: 4px solid #ffc107;
-      padding: 10px;
-      margin-bottom: 15px;
-      font-size: 14px;
-    }
-
-    .draft-pii strong {
-      color: #856404;
-    }
-
     .draft-actions {
       display: flex;
       gap: 10px;
@@ -573,7 +561,7 @@
     <div class="container">
       <header>
         <div>
-          <h1>PII Draft Review</h1>
+          <h1>Draft Review</h1>
         </div>
         <div style="display: flex; gap: 10px; align-items: center;">
           <span id="draftCount" class="draft-count">0 drafts</span>
@@ -598,7 +586,7 @@
         <div id="loading" class="loading">Loading drafts...</div>
         <div id="emptyState" class="empty-state" style="display: none;">
           <h2>No pending drafts</h2>
-          <p>All caught up! PII-blocked posts will appear here.</p>
+          <p>All caught up!</p>
         </div>
         <div id="draftList" class="draft-list"></div>
       </div>
@@ -797,10 +785,6 @@
                 <span>${timeAgo}</span>
               </div>
               <div class="draft-text">${renderTextWithLinks(draft)}</div>
-              <div class="draft-pii">
-                <strong>PII Detected:</strong> ${escapeHtml(draft.pii_detected.join(', '))}
-                (${Math.round(draft.pii_confidence * 100)}% confidence)
-              </div>
               <div class="draft-actions">
                 <button class="btn btn-primary" onclick="window.open('${escapeHtml(draft.diff_url)}', '_blank')">View Diff</button>
                 <button class="btn btn-success" onclick="postDraft('${draft.id}')">Post</button>
