@@ -512,6 +512,14 @@ for (const cut of ['500', '2500']) {
   })
 }
 
+// The full ranking behind both watchlist cuts - every article in the universe
+// with its current on-wiki importance and its link count, so anyone can check
+// the numbers in the on-wiki proposal rather than take them on faith. Nothing
+// on the runtime path reads this; it exists to be linked from the discussion.
+app.get('/ranking.json', (req, res) => {
+  res.sendFile(path.join(__dirname, 'ranking.json'))
+})
+
 app.get('/api/topics.json', (req, res) => {
   if (!app.locals.topics) {
     return res.status(503).json({ error: 'Topics are still loading' })

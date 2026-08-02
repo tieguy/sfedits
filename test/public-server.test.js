@@ -235,6 +235,18 @@ describe('public-server', function() {
       assert.lengthOf(data.titles, 2500)
     })
 
+    it('GET /ranking.json serves the full published ranking', async function() {
+      const res = await fetch(`${base}/ranking.json`)
+      assert.equal(res.status, 200)
+      const data = await res.json()
+      assert.isOk(data.generated_at)
+      assert.isOk(data.method)
+      assert.equal(data.count, data.articles.length)
+      assert.equal(data.universe, data.articles.length)
+      const first = data.articles[0]
+      assert.containsAllKeys(first, ['title', 'importance', 'inlinks', 'tier'])
+    })
+
     it('publishes the bot list as a strict prefix of the wide list', async function() {
       const narrow = await (await fetch(`${base}/watchlist-500.json`)).json()
       const wide = await (await fetch(`${base}/watchlist-2500.json`)).json()
