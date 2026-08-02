@@ -23,7 +23,7 @@ services:
       - ./drafts:/opt/sfedits/drafts
       - ./data:/opt/sfedits/data
     restart: unless-stopped
-    # Memory limits for admin web UI (needs 256MB for Puppeteer/Chromium)
+    # Memory limits for admin web UI
     mem_limit: 256m
     mem_reservation: 128m
 
