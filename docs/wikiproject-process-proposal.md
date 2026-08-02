@@ -344,8 +344,9 @@ feedback either about the ranking or about my cutoff, and I'll adjust.
 2. **Do the tier cuts look right?** 68 Top and 394 High, or different?
 3. **Are the 20 proposed new Top/High articles ours?** Particularly the state
    highways.
-4. **Anything obviously wrong in the ranking?** Every number is reproducible and I'll
-   publish the data.
+4. **Anything obviously wrong in the ranking?** Every number is reproducible, and the
+   full ranking — every article with its current rating and link count — is published at
+   [ranking.json](https://san-francisco-edit-stream.toolforge.org/ranking.json).
 
 **What I'm not proposing:** that anyone bot-apply 1,286 promotions and 1,361
 demotions to talk pages. That's a much bigger conversation, and there is essentially
@@ -358,11 +359,12 @@ the clearly-orphaned ones — and seeing how that goes.
 
 ## Notes for Louie, not for posting
 
-- **The two watchlists are published** at `/watchlist-500.json` and
-  `/watchlist-2500.json` on the Toolforge webservice, and §6 links both. Still
-  unpublished: the full `ranking.json` (~2 MB) that §6's "every number is
-  reproducible and I'll publish the data" implies. Needs a home before posting —
-  a task force subpage, another Toolforge URL, or a gist.
+- **All three data files have homes**: `/watchlist-500.json` and
+  `/watchlist-2500.json` were already live; `/ranking.json` was added on
+  `integration` (commit `815b016`, 2026-08-02) with the same provenance envelope.
+  **Not yet deployed** — the commit is unpushed because other sessions are working
+  on the code, and `integration` has diverged from `fork/integration` (ahead 2,
+  behind 2). The URL 404s until that push lands; push before posting on-wiki.
 - **The baseline was wrong until 2026-07-31.** Earlier drafts said the switch was
   +288/−294 against a Top+High baseline of 506. The bot was actually running
   Top+High+Mid (2,455, verified against `/api/topics.json`), so the real change is
