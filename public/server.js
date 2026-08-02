@@ -95,14 +95,16 @@ async function buildTopics(config, { dataDir }) {
 }
 
 // Where scripts/record-deploy.js (run by the autoupdate job) appends deploy
-// records. Both processes see the same $HOME because job and webservice run
-// with mount=all. Resolved per request so the page always reflects the file
-// and tests can point it elsewhere.
+// records. Both processes see the same tool home because job and webservice
+// run with mount=all — reached via $TOOL_DATA_DIR, since $HOME does not point
+// at the NFS home in build-service containers. Resolved per request so the
+// page always reflects the file and tests can point it elsewhere.
 const REPO_WEB = (process.env.SFEDITS_DEPLOY_REPO || 'https://github.com/tieguy/sfedits.git')
   .replace(/\.git$/, '')
 
 function readChangelog() {
-  const stateDir = process.env.SFEDITS_STATE_DIR || path.join(os.homedir(), 'data')
+  const stateDir = process.env.SFEDITS_STATE_DIR ||
+    path.join(process.env.TOOL_DATA_DIR || os.homedir(), 'data')
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(stateDir, 'changelog.json'), 'utf8'))
     return Array.isArray(parsed) ? parsed : []
