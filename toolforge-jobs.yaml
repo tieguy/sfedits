@@ -43,8 +43,9 @@
 # autoupdate running — it can still pick up the fix commit that follows.
 #
 # mount: all is load-bearing. Build service jobs get no home directory by
-# default, and this script records the deployed SHA in $HOME/data. Without the
-# mount the SHA lands in the container's ephemeral filesystem, every tick sees
+# default, and this script records the deployed SHA in $TOOL_DATA_DIR/data
+# (the NFS tool home — $HOME does not point there in build-service
+# containers). Without the mount there is no NFS home at all, every tick sees
 # "nothing recorded" != remote, and the job redeploys the same commit forever.
 - name: autoupdate
   command: autoupdate

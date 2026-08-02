@@ -114,8 +114,10 @@ async function main() {
   }
 
   const repoUrl = process.env.SFEDITS_DEPLOY_REPO || 'https://github.com/tieguy/sfedits.git'
+  // TOOL_DATA_DIR is the tool's NFS home in build-service containers, where
+  // $HOME does not point at it; $HOME covers bastion runs.
   const stateDir = process.env.SFEDITS_STATE_DIR ||
-    path.join(process.env.HOME || '.', 'data')
+    path.join(process.env.TOOL_DATA_DIR || process.env.HOME || '.', 'data')
 
   let changes = []
   try {

@@ -35,7 +35,10 @@ RUN_MIGRATIONS="${SFEDITS_RUN_MIGRATIONS:-yes}"
 MIGRATE_JOB="${SFEDITS_MIGRATE_JOB:-migrate}"
 IMAGE="${SFEDITS_IMAGE:-tool-san-francisco-edit-stream/tool-san-francisco-edit-stream:latest}"
 
-STATE_DIR="${SFEDITS_STATE_DIR:-$HOME/data}"
+# In build-service containers $HOME is not the tool's NFS home (mount=all puts
+# it at /data/project/<tool>, exposed as $TOOL_DATA_DIR). $HOME remains the
+# fallback for bastion runs, where the two coincide.
+STATE_DIR="${SFEDITS_STATE_DIR:-${TOOL_DATA_DIR:-$HOME}/data}"
 SHA_FILE="$STATE_DIR/deployed-sha"
 LOCK_FILE="$STATE_DIR/autoupdate.lock"
 BUILD_TIMEOUT="${SFEDITS_BUILD_TIMEOUT:-900}"   # seconds
