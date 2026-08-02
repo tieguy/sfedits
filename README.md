@@ -6,7 +6,7 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 
 ## Architecture
 
-**Four-service microservice architecture (docker-compose):**
+**Three-service microservice architecture (docker-compose):**
 
 1. **Bot service** (Node.js)
    - Monitors Wikipedia IRC feed for real-time edits
