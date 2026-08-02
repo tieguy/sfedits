@@ -9,7 +9,8 @@
 #   as a job:        toolforge jobs load toolforge-jobs.yaml  (see that file)
 #
 # Behaviour:
-#   1. git ls-remote the tracked branch
+#   1. resolve the tracked branch's head (git ls-remote, or the GitHub API
+#      where the container has no git)
 #   2. if the SHA matches the last deployed SHA, exit 0 silently
 #   3. otherwise build, wait for the build, then restart the bot job
 #   4. record the SHA only after the restart succeeds
@@ -154,7 +155,34 @@ tf_webservice_restart() {
 # rather than leaving it to be inferred from a later fallback line.
 [ -n "$NODE" ] || log "WARNING: no node interpreter found; alerts and /changelog are degraded this run"
 
-REMOTE_SHA="$(git ls-remote "$REPO_URL" "refs/heads/$BRANCH" | awk '{print $1}')"
+# Build-service containers have no git either (found the same way as the
+# missing CLI: the 2026-08-02 16:30Z tick died on `git: command not found`).
+# GitHub answers the same question over plain HTTPS, and node's fetch is the
+# one transport the container is guaranteed to have.
+resolve_remote_sha() {
+  if command -v git >/dev/null 2>&1; then
+    git ls-remote "$REPO_URL" "refs/heads/$BRANCH" | awk '{print $1}'
+    return
+  fi
+  [ -n "$NODE" ] || return 1
+  "$NODE" -e '
+    const [repoUrl, branch] = process.argv.slice(1);
+    const m = repoUrl.match(/github\.com[:\/]([^\/]+)\/([^\/]+?)(?:\.git)?$/);
+    if (!m) { console.error(`cannot derive a GitHub repo from ${repoUrl}`); process.exit(1); }
+    fetch(`https://api.github.com/repos/${m[1]}/${m[2]}/commits/${encodeURIComponent(branch)}`, {
+      headers: {
+        accept: "application/vnd.github.sha",
+        "user-agent": `${m[2]}-autoupdate (+${repoUrl})`,
+      },
+    }).then((res) => {
+      if (!res.ok) throw new Error(`GitHub API returned ${res.status} for ${branch}`);
+      return res.text();
+    }).then((sha) => console.log(sha.trim()))
+      .catch((err) => { console.error(err.message); process.exit(1); });
+  ' "$REPO_URL" "$BRANCH"
+}
+
+REMOTE_SHA="$(resolve_remote_sha || true)"
 if [ -z "$REMOTE_SHA" ]; then
   alert "could not resolve $BRANCH on $REPO_URL"
   exit 1
