@@ -2,7 +2,7 @@ FROM node:20-slim
 
 WORKDIR /opt/sfedits
 
-# Install system dependencies for native rendering (satori + resvg)
+# System fonts (belt-and-braces for Resvg fallback; renderer bundles its own TTFs)
 RUN apt-get update && apt-get install -y \
     fonts-noto-core \
     fonts-noto-cjk \

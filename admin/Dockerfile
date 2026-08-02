@@ -3,7 +3,6 @@ FROM node:20-slim
 # Use root as base directory
 WORKDIR /opt/sfedits
 
-
 # Use root package.json (same as bot)
 # This ensures lib/ can access all dependencies
 COPY package*.json ./
