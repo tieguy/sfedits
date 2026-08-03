@@ -1,51 +1,37 @@
 #!/usr/bin/env node
 
 const fs = require('fs')
-const https = require('https')
+const { wmFetchJson } = require('../lib/mw-api')
 
 function getConfig() {
   const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'))
   return config
 }
 
-function getWikipediaTranslations(pageTitle, lang = 'en') {
-  return new Promise((resolve, reject) => {
-    const encodedTitle = encodeURIComponent(pageTitle)
-    const url = `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=langlinks&titles=${encodedTitle}&lllimit=max`
-    
-    const options = {
-      headers: {
-        'User-Agent': 'SF Edits Translation Finder (https://github.com/mrfinnsmith/sfedits) Node.js'
-      }
+async function getWikipediaTranslations(pageTitle, lang = 'en') {
+  const encodedTitle = encodeURIComponent(pageTitle)
+  const url = `https://${lang}.wikipedia.org/w/api.php?action=query&format=json&prop=langlinks&titles=${encodedTitle}&lllimit=max`
+
+  try {
+    const response = await wmFetchJson(url, { component: 'find-translations', timeoutMs: 30000 })
+
+    const pages = response.query.pages
+    const pageId = Object.keys(pages)[0]
+
+    if (pageId === '-1') {
+      console.log(`  ❌ Page "${pageTitle}" not found`)
+      return []
     }
-    
-    https.get(url, options, (res) => {
-      let data = ''
-      res.on('data', (chunk) => data += chunk)
-      res.on('end', () => {
-        try {
-          const response = JSON.parse(data)
-          const pages = response.query.pages
-          const pageId = Object.keys(pages)[0]
-          
-          if (pageId === '-1') {
-            console.log(`  ❌ Page "${pageTitle}" not found`)
-            resolve([])
-            return
-          }
-          
-          const langlinks = pages[pageId].langlinks || []
-          const translations = langlinks.map(link => ({
-            lang: link.lang,
-            title: link['*']
-          }))
-          resolve(translations)
-        } catch (error) {
-          reject(error)
-        }
-      })
-    }).on('error', reject)
-  })
+
+    const langlinks = pages[pageId].langlinks || []
+    const translations = langlinks.map(link => ({
+      lang: link.lang,
+      title: link['*']
+    }))
+    return translations
+  } catch (error) {
+    throw error
+  }
 }
 
 async function main() {

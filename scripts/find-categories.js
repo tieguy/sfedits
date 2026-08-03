@@ -1,48 +1,34 @@
 #!/usr/bin/env node
 
 const fs = require('fs')
-const https = require('https')
+const { wmFetchJson } = require('../lib/mw-api')
 
 function getConfig() {
   const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'))
   return config
 }
 
-function getWikipediaCategories(pageTitle) {
-  return new Promise((resolve, reject) => {
-    const encodedTitle = encodeURIComponent(pageTitle)
-    const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=categories&titles=${encodedTitle}&cllimit=max`
-    
-    const options = {
-      headers: {
-        'User-Agent': 'SF Edits Category Finder (https://github.com/mrfinnsmith/sfedits) Node.js'
-      }
+async function getWikipediaCategories(pageTitle) {
+  const encodedTitle = encodeURIComponent(pageTitle)
+  const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=categories&titles=${encodedTitle}&cllimit=max`
+
+  try {
+    const response = await wmFetchJson(url, { component: 'find-categories', timeoutMs: 30000 })
+
+    const pages = response.query.pages
+    const pageId = Object.keys(pages)[0]
+
+    if (pageId === '-1') {
+      console.log(`  ❌ Page "${pageTitle}" not found`)
+      return []
     }
-    
-    https.get(url, options, (res) => {
-      let data = ''
-      res.on('data', (chunk) => data += chunk)
-      res.on('end', () => {
-        try {
-          const response = JSON.parse(data)
-          const pages = response.query.pages
-          const pageId = Object.keys(pages)[0]
-          
-          if (pageId === '-1') {
-            console.log(`  ❌ Page "${pageTitle}" not found`)
-            resolve([])
-            return
-          }
-          
-          const categories = pages[pageId].categories || []
-          const categoryNames = categories.map(cat => cat.title.replace('Category:', ''))
-          resolve(categoryNames)
-        } catch (error) {
-          reject(error)
-        }
-      })
-    }).on('error', reject)
-  })
+
+    const categories = pages[pageId].categories || []
+    const categoryNames = categories.map(cat => cat.title.replace('Category:', ''))
+    return categoryNames
+  } catch (error) {
+    throw error
+  }
 }
 
 async function main() {

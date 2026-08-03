@@ -1,41 +1,26 @@
 #!/usr/bin/env node
 
 const fs = require('fs')
-const https = require('https')
+const { wmFetchJson } = require('../lib/mw-api')
 
-function getCategoryMembers(categoryName, limit = 500) {
-  return new Promise((resolve, reject) => {
-    const encodedCategory = encodeURIComponent(`Category:${categoryName}`)
-    const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&list=categorymembers&cmtitle=${encodedCategory}&cmlimit=${limit}&cmnamespace=0`
-    
-    const options = {
-      headers: {
-        'User-Agent': 'SF Edits Article Finder (https://github.com/mrfinnsmith/sfedits) Node.js'
-      }
+async function getCategoryMembers(categoryName, limit = 500) {
+  const encodedCategory = encodeURIComponent(`Category:${categoryName}`)
+  const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&list=categorymembers&cmtitle=${encodedCategory}&cmlimit=${limit}&cmnamespace=0`
+
+  try {
+    const response = await wmFetchJson(url, { component: 'find-articles', timeoutMs: 30000 })
+
+    if (response.error) {
+      console.log(`  ❌ Error: ${response.error.info}`)
+      return []
     }
-    
-    https.get(url, options, (res) => {
-      let data = ''
-      res.on('data', (chunk) => data += chunk)
-      res.on('end', () => {
-        try {
-          const response = JSON.parse(data)
-          
-          if (response.error) {
-            console.log(`  ❌ Error: ${response.error.info}`)
-            resolve([])
-            return
-          }
-          
-          const members = response.query.categorymembers || []
-          const articleTitles = members.map(member => member.title)
-          resolve(articleTitles)
-        } catch (error) {
-          reject(error)
-        }
-      })
-    }).on('error', reject)
-  })
+
+    const members = response.query.categorymembers || []
+    const articleTitles = members.map(member => member.title)
+    return articleTitles
+  } catch (error) {
+    throw error
+  }
 }
 
 async function main() {
