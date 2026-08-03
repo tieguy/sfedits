@@ -230,7 +230,8 @@ describe('posting flow', function() {
 
     beforeEach(function() {
       // Create a fake screenshot file for the test
-      fakeScreenshotPath = path.join(__dirname, 'fake-screenshot.png')
+      // Per-process temp path (LUI-119): no fixed __dirname fixture files.
+      fakeScreenshotPath = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'fake-screenshot.png')
       fs.writeFileSync(fakeScreenshotPath, 'fake image data')
     })
 
@@ -240,7 +241,7 @@ describe('posting flow', function() {
         fs.unlinkSync(fakeScreenshotPath)
       }
       // Also clean up any fakeScreenshotPath2 files from test 3t
-      const fakeScreenshotPath2 = path.join(__dirname, 'fake-screenshot2.png')
+      const fakeScreenshotPath2 = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'fake-screenshot2.png')
       if (fs.existsSync(fakeScreenshotPath2)) {
         fs.unlinkSync(fakeScreenshotPath2)
       }
@@ -1038,7 +1039,7 @@ describe('posting flow', function() {
       this.timeout(10000)
 
       // Create second screenshot file for the second test case
-      const fakeScreenshotPath2 = path.join(__dirname, 'fake-screenshot2.png')
+      const fakeScreenshotPath2 = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'fake-screenshot2.png')
       fs.writeFileSync(fakeScreenshotPath2, 'fake image data 2')
 
       let screenshotIndex = 0

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Poll the fork for new commits and redeploy on Toolforge if the branch moved.
 #
-# This is the Toolforge analogue of deploy.sh (which targets the droplet).
+# This replaced the old droplet deploy.sh (removed 2026-08-03).
 # It is a *poller*, not a webhook: no inbound endpoint, no credentials stored
 # off-Toolforge. Safe to run either way:
 #
@@ -43,6 +43,15 @@ IMAGE="${SFEDITS_IMAGE:-tool-san-francisco-edit-stream/tool-san-francisco-edit-s
 # it at /data/project/<tool>, exposed as $TOOL_DATA_DIR). $HOME remains the
 # fallback for bastion runs, where the two coincide.
 STATE_DIR="${SFEDITS_STATE_DIR:-${TOOL_DATA_DIR:-$HOME}/data}"
+# In some containers BOTH TOOL_DATA_DIR and HOME are empty, which resolved the
+# lock to //data ("Permission denied" ×30 in the 2026-08-02 incident, LUI-110).
+# No home means no NFS mount: there is nowhere durable to record the SHA, so
+# every tick would redeploy. Bail loudly instead of misbehaving quietly.
+if [ "$STATE_DIR" = "/data" ] || [ "$STATE_DIR" = "//data" ]; then
+  echo "FATAL: neither TOOL_DATA_DIR nor HOME is set (state dir resolved to $STATE_DIR)." >&2
+  echo "Run this job with mount: all so the tool home is available." >&2
+  exit 1
+fi
 SHA_FILE="$STATE_DIR/deployed-sha"
 LOCK_FILE="$STATE_DIR/autoupdate.lock"
 BUILD_TIMEOUT="${SFEDITS_BUILD_TIMEOUT:-900}"   # seconds

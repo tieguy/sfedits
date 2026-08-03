@@ -20,7 +20,8 @@ describe('discord-platform', function() {
   let testScreenshot
 
   beforeEach(function() {
-    testScreenshot = path.join(__dirname, 'test-discord-screenshot.png')
+    // Per-process temp path (LUI-119): no fixed __dirname fixture files.
+    testScreenshot = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'screenshot.png')
     fs.writeFileSync(testScreenshot, 'fake image data')
   })
 

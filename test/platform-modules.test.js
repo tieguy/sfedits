@@ -23,7 +23,9 @@ describe('Platform Modules', function() {
 
   beforeEach(function() {
     // Create a fake screenshot file for testing
-    testScreenshot = path.join(__dirname, 'test-screenshot.png')
+    // Per-process temp path: fixed __dirname paths made two concurrent
+    // runs in one worktree delete each other's fixtures (LUI-119).
+    testScreenshot = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'screenshot.png')
     fs.writeFileSync(testScreenshot, 'fake image data')
 
     // Load modules fresh for each test

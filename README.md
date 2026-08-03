@@ -26,9 +26,9 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
    - Schema migrations via Procfile `migrate` entry
    - Topics (region + filters) and subscriptions (user + webhook + edit_filters)
 
-**Legacy files:** `docker-compose.yml`, `deploy.sh`, and the `admin/Dockerfile`
-are unmaintained remnants from the droplet deployment and may not work. Toolforge
-is the supported deployment path.
+The old droplet deployment (docker-compose, `deploy.sh`, Dockerfiles) was
+removed 2026-08-03 — it had been broken since the PII/Puppeteer removals.
+Toolforge is the only supported deployment path; git history keeps the files.
 
 ## How it works
 
@@ -99,12 +99,6 @@ toolforge envvars create SFEDITS_INVITE_CODES "code1,code2"
 
 ### 2. Run locally
 
-**Docker (recommended):**
-```bash
-docker-compose up -d
-```
-
-**Node.js:**
 ```bash
 npm install
 node page-watch.js --noop  # Test mode - doesn't post
