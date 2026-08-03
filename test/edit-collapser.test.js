@@ -221,4 +221,118 @@ describe('edit-collapser', function() {
       })
     })
   })
+
+  describe('combine aggregation', function() {
+    let clock, postEdit, collapser
+
+    beforeEach(function() {
+      clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      postEdit = sinon.spy()
+      collapser = new EditCollapser({ windowMs: WINDOW_MS, postEdit })
+    })
+
+    afterEach(function() {
+      clock.restore()
+    })
+
+    it('sums delta from all buffered edits (leading+buffered)', async function() {
+      // Add 3 edits: first posts immediately, next 2 buffer
+      // Then 3 more: they buffer in a second window
+      // This tests that within a window, buffered edits are summed
+      collapser.add(makeEdit({ delta: 10, minor: false, robot: false }))
+      collapser.add(makeEdit({ delta: 50, minor: false, robot: false }))
+      collapser.add(makeEdit({ delta: 80, minor: false, robot: false }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined, count] = postEdit.secondCall.args
+      // combined covers buffered edits: 50 + 80 = 130
+      assert.equal(combined.delta, 130)
+      assert.equal(count, 2)
+    })
+
+    it('treats null deltas as 0 in the sum', async function() {
+      collapser.add(makeEdit({ delta: 10, minor: false, robot: false }))
+      collapser.add(makeEdit({ delta: 50, minor: false, robot: false }))
+      collapser.add(makeEdit({ delta: null, minor: false, robot: false }))
+      collapser.add(makeEdit({ delta: 30, minor: false, robot: false }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      // Buffered: 50 + null(0) + 30 = 80
+      assert.equal(combined.delta, 80)
+    })
+
+    it('returns null delta when all constituent deltas are null', async function() {
+      collapser.add(makeEdit({ delta: null, minor: false, robot: false }))
+      collapser.add(makeEdit({ delta: null, minor: false, robot: false }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      assert.isNull(combined.delta)
+    })
+
+    it('requires every constituent to be minor for the combined edit to be minor', async function() {
+      collapser.add(makeEdit({ delta: 50, minor: true, robot: false }))
+      collapser.add(makeEdit({ delta: 30, minor: false, robot: false }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      assert.isFalse(combined.minor)
+    })
+
+    it('marks combined edit as minor only when all constituents are minor', async function() {
+      collapser.add(makeEdit({ delta: 50, minor: true, robot: false }))
+      collapser.add(makeEdit({ delta: 30, minor: true, robot: false }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      assert.isTrue(combined.minor)
+    })
+
+    it('requires every constituent to be robot for the combined edit to be robot', async function() {
+      collapser.add(makeEdit({ delta: 50, minor: false, robot: true }))
+      collapser.add(makeEdit({ delta: 30, minor: false, robot: false }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      assert.isFalse(combined.robot)
+    })
+
+    it('marks combined edit as robot only when all constituents are robot', async function() {
+      collapser.add(makeEdit({ delta: 50, minor: false, robot: true }))
+      collapser.add(makeEdit({ delta: 30, minor: false, robot: true }))
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      assert.isTrue(combined.robot)
+    })
+
+    it('keeps last-edit behavior for other fields', async function() {
+      const edit1 = makeEdit({ comment: 'first', minor: false, robot: false })
+      const edit2 = makeEdit({ comment: 'second', minor: false, robot: false })
+
+      collapser.add(edit1)
+      collapser.add(edit2)
+
+      clock.tick(WINDOW_MS)
+      await settle()
+
+      const [combined] = postEdit.secondCall.args
+      assert.equal(combined.comment, edit2.comment)
+    })
+  })
 })
