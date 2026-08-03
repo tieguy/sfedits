@@ -49,14 +49,22 @@ attempts; separate cap).
 ### Retry semantics being ported (source of truth)
 
 From `.worktrees/place-bot-platform-design/scripts/reassess.js:90-129` (`apiGet`),
-proven by four tests in that branch's `test/reassess-api.test.js`:
+proven by four tests in that branch's `test/reassess-api.test.js`, **with two fixes
+applied in Phase 1**:
 
 - HTTP 429: wait and retry **without consuming a retry attempt**. Waits are counted
   separately and capped at `maxRateLimitWaits` (then throw `HTTP 429`).
   `Retry-After` header is authoritative when present (seconds); otherwise wait
-  `rateLimitWaitMs`.
-- Other failures (5xx, network, timeout): `tries` total attempts with linear
-  backoff `backoffMs * attempt`; then throw (`HTTP <status>` for HTTP errors).
+  `rateLimitWaitMs`. **[FIX 1] This same "wait without consuming attempt" rule now
+  applies to HTTP 503 (and any non-permanent error with Retry-After): when a 503 or
+  other 5xx carries a Retry-After header, honor it as a free wait (counted against
+  `maxRateLimitWaits` since it's the same "server asked us to slow down" signal),
+  per Wikimedia's load-shedding practice.**
+- Other failures (5xx without Retry-After, network, timeout): `tries` total attempts
+  with linear backoff `backoffMs * attempt`; then throw (`HTTP <status>` for HTTP
+  errors). **[FIX 3] Retry-After waits from any source are clamped to `maxRetryAfterMs`
+  (default 5 minutes) to prevent hostile or misconfigured servers from parking the
+  process indefinitely.**
 - **One deliberate improvement over apiGet** (per Wikimedia API etiquette: "never
   retry a permanent 4xx"): non-429 4xx statuses throw `HTTP <status>` immediately
   without retrying. apiGet retried them; the tests only ever asserted 5xx retry
@@ -80,10 +88,12 @@ cd /var/home/louie/Projects/Volunteering-Consulting/sfedits/.worktrees/mw-api-cl
 PUPPETEER_SKIP_DOWNLOAD=true npm install --save m3api m3api-rest
 ```
 
-Expected: exits 0; `package.json` gains `"m3api": "^1.1.0"` and `"m3api-rest": "^0.2.0"`
+Expected: exits 0; `package.json` gains `"m3api": "~1.1.0"` and `"m3api-rest": "^0.2.0"`
 (current published versions as of 2026-08-02; exact minors may drift — both must
-resolve). npm may print `allow-scripts` warnings about puppeteer's postinstall —
-that is pre-existing and fine.
+resolve). **Note: m3api uses `~1.1.0` (not `^1.1.0`) to match the peer-dependency
+constraint declared by m3api-rest, ensuring compatible versions across the module stack.**
+npm may print `allow-scripts` warnings about puppeteer's postinstall — that is
+pre-existing and fine.
 
 **Step 2: Verify the ESM boundary works from CJS**
 

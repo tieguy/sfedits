@@ -19,6 +19,7 @@ describe('mw-api', function() {
       nock(HOST).get('/thing').reply(200, 'ok')
 
       const res = await wmFetch(`${HOST}/thing`, {
+        component: 'test',
         tries: 2, backoffMs: 1, rateLimitWaitMs: 5, maxRateLimitWaits: 60
       })
       assert.equal(res.status, 200)
@@ -32,6 +33,7 @@ describe('mw-api', function() {
 
       const started = Date.now()
       const res = await wmFetch(`${HOST}/thing`, {
+        component: 'test',
         tries: 2, backoffMs: 1, rateLimitWaitMs: 5, maxRateLimitWaits: 60
       })
       assert.equal(res.status, 200)
@@ -45,7 +47,7 @@ describe('mw-api', function() {
       nock(HOST).get('/thing').times(5).reply(500, function() { requests++; return '' })
 
       try {
-        await wmFetch(`${HOST}/thing`, { tries: 2, backoffMs: 1 })
+        await wmFetch(`${HOST}/thing`, { component: 'test', tries: 2, backoffMs: 1 })
         assert.fail('should have thrown')
       } catch (error) {
         assert.equal(error.message, 'HTTP 500')
@@ -59,6 +61,7 @@ describe('mw-api', function() {
 
       try {
         await wmFetch(`${HOST}/thing`, {
+          component: 'test',
           tries: 2, backoffMs: 1, rateLimitWaitMs: 5, maxRateLimitWaits: 3
         })
         assert.fail('should have thrown')
@@ -73,12 +76,95 @@ describe('mw-api', function() {
       nock(HOST).get('/thing').times(3).reply(404, function() { requests++; return '' })
 
       try {
-        await wmFetch(`${HOST}/thing`, { tries: 4, backoffMs: 1 })
+        await wmFetch(`${HOST}/thing`, { component: 'test', tries: 4, backoffMs: 1 })
         assert.fail('should have thrown')
       } catch (error) {
         assert.equal(error.message, 'HTTP 404')
       }
       assert.equal(requests, 1)
+    })
+
+    it('honours Retry-After on 503 (per WMF load-shedding)', async function() {
+      this.timeout(5000)
+      nock(HOST).get('/thing').reply(503, '', { 'retry-after': '1' })
+      nock(HOST).get('/thing').reply(200, 'ok')
+
+      const started = Date.now()
+      const res = await wmFetch(`${HOST}/thing`, {
+        component: 'test',
+        tries: 2, backoffMs: 1, rateLimitWaitMs: 5, maxRateLimitWaits: 60
+      })
+      assert.equal(res.status, 200)
+      assert.isAtLeast(Date.now() - started, 900)
+    })
+
+    it('clamps hostile Retry-After waits to maxRetryAfterMs', async function() {
+      this.timeout(2000)
+      // Server sends Retry-After: 86400 (24 hours), but we clamp to 100ms
+      nock(HOST).get('/thing').reply(503, '', { 'retry-after': '86400' })
+      nock(HOST).get('/thing').reply(200, 'ok')
+
+      const started = Date.now()
+      const res = await wmFetch(`${HOST}/thing`, {
+        component: 'test',
+        tries: 2, backoffMs: 1, maxRateLimitWaits: 60, maxRetryAfterMs: 100
+      })
+      assert.equal(res.status, 200)
+      // Should complete in ~100ms, not 24 hours
+      assert.isBelow(Date.now() - started, 1000)
+    })
+
+    it('retries on network error with original error on final failure', async function() {
+      this.timeout(2000)
+      nock(HOST).get('/thing').replyWithError(new Error('ECONNREFUSED'))
+      nock(HOST).get('/thing').replyWithError(new Error('ECONNREFUSED'))
+
+      try {
+        await wmFetch(`${HOST}/thing`, { component: 'test', tries: 2, backoffMs: 1 })
+        assert.fail('should have thrown')
+      } catch (error) {
+        assert.equal(error.message, 'ECONNREFUSED')
+      }
+    })
+
+    it('retries transient network error then succeeds', async function() {
+      this.timeout(2000)
+      nock(HOST).get('/thing').replyWithError(new Error('ECONNREFUSED'))
+      nock(HOST).get('/thing').reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/thing`, { component: 'test', tries: 2, backoffMs: 1 })
+      assert.equal(res.status, 200)
+    })
+
+    it('respects caller-supplied AbortSignal by composing with timeout', async function() {
+      this.timeout(2000)
+      // When signal is pre-aborted, every attempt will throw AbortError immediately.
+      // wmFetch will retry up to `tries` times (default 4), each throwing AbortError.
+      // Set up enough mocks for retries, though they won't be reached.
+      nock(HOST).get('/thing').times(10).reply(200, 'ok')
+
+      // Pre-abort the caller's signal
+      const controller = new AbortController()
+      controller.abort()
+
+      try {
+        await wmFetch(`${HOST}/thing`, { component: 'test', signal: controller.signal, tries: 2, backoffMs: 1 })
+        assert.fail('should have thrown')
+      } catch (error) {
+        // abort errors have name AbortError
+        assert.equal(error.name, 'AbortError',
+          `Expected AbortError, got: ${error.name} - ${error.message}`)
+      }
+    })
+
+    it('throws when component is not provided', async function() {
+      try {
+        // Calling wmFetch without component should throw
+        await wmFetch(`${HOST}/thing`)
+        assert.fail('should have thrown')
+      } catch (error) {
+        assert.include(error.message, 'component', 'should mention component requirement')
+      }
     })
   })
 
@@ -100,7 +186,7 @@ describe('mw-api', function() {
         .get('/gz')
         .reply(200, 'ok')
 
-      const res = await wmFetch(`${HOST}/gz`)
+      const res = await wmFetch(`${HOST}/gz`, { component: 'test' })
       assert.equal(res.status, 200)
     })
 
@@ -111,7 +197,47 @@ describe('mw-api', function() {
         .get('/hdr')
         .reply(200, 'ok')
 
-      const res = await wmFetch(`${HOST}/hdr`, { headers: { Accept: 'application/json' } })
+      const res = await wmFetch(`${HOST}/hdr`, { headers: { Accept: 'application/json' }, component: 'test' })
+      assert.equal(res.status, 200)
+    })
+
+    it('protects User-Agent from uppercase caller override', async function() {
+      const { userAgent } = require('../lib/user-agent')
+      const expectedUA = userAgent('test-component')
+      nock(HOST)
+        .matchHeader('user-agent', ua => {
+          // UA should NOT be the caller's malicious override
+          assert.notEqual(ua, 'Mozilla/5.0')
+          // UA should be the operator's
+          assert.include(ua, 'sfedits-test-component')
+          return true
+        })
+        .get('/ua-protected')
+        .reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/ua-protected`, {
+        component: 'test-component',
+        headers: { 'User-Agent': 'Mozilla/5.0 (attacker)' }
+      })
+      assert.equal(res.status, 200)
+    })
+
+    it('protects User-Agent from lowercase caller override', async function() {
+      nock(HOST)
+        .matchHeader('user-agent', ua => {
+          // UA should NOT contain malformed concatenation
+          assert.notInclude(ua, 'Mozilla')
+          assert.include(ua, 'sfedits-test-component')
+          // Importantly, there should be exactly ONE User-Agent header (no duplication)
+          return true
+        })
+        .get('/ua-lowercase')
+        .reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/ua-lowercase`, {
+        component: 'test-component',
+        headers: { 'user-agent': 'Mozilla/5.0 (attacker)' }
+      })
       assert.equal(res.status, 200)
     })
   })
@@ -120,7 +246,7 @@ describe('mw-api', function() {
     it('parses a JSON body', async function() {
       nock(HOST).get('/json').reply(200, { items: [1, 2] })
 
-      const data = await wmFetchJson(`${HOST}/json`)
+      const data = await wmFetchJson(`${HOST}/json`, { component: 'test' })
       assert.deepEqual(data, { items: [1, 2] })
     })
 
@@ -128,7 +254,7 @@ describe('mw-api', function() {
       nock(HOST).get('/json').reply(403, { error: 'nope' })
 
       try {
-        await wmFetchJson(`${HOST}/json`, { tries: 2, backoffMs: 1 })
+        await wmFetchJson(`${HOST}/json`, { component: 'test', tries: 2, backoffMs: 1 })
         assert.fail('should have thrown')
       } catch (error) {
         assert.equal(error.message, 'HTTP 403')
@@ -156,9 +282,20 @@ describe('mw-api', function() {
     })
 
     it('caches one session per host (first caller wins)', async function() {
+      const { userAgent } = require('../lib/user-agent')
+      nock(HOST)
+        .matchHeader('user-agent', value => value.includes(userAgent('first-component')))
+        .get('/w/api.php')
+        .query(true)
+        .reply(200, { batchcomplete: true })
+
       const a = await actionSession('wm.test', 'first-component')
       const b = await actionSession('wm.test', 'second-component')
       assert.strictEqual(a, b)
+
+      // Verify the wire request carried the first caller's UA
+      const response = await a.request({ action: 'query' })
+      assert.isTrue(response.batchcomplete)
     })
 
     it('keeps sessions for different hosts distinct', async function() {
