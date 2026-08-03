@@ -8,6 +8,12 @@
 # real MariaDB. This starts a throwaway one; the database suites report as
 # pending when it is not running.
 #
+# The container is SHARED and long-lived: each test run creates its own
+# throwaway database on it (test/helpers/db-helper.js, LUI-103), so concurrent
+# runs from different worktrees don't collide and there is no reason to
+# stop/start between runs. `stop` REMOVES the container — doing it mid-run
+# kills every other session's suites.
+#
 # Usage:
 #   scripts/test-db.sh start
 #   scripts/test-db.sh stop
@@ -40,7 +46,11 @@ case "${1:-status}" in
            -uroot -p"$ROOT_PASSWORD" --silent >/dev/null 2>&1; then
         echo " ready"
         echo
-        echo "export SFEDITS_TEST_DB='mysql://root:${ROOT_PASSWORD}@127.0.0.1:${PORT}/${DATABASE}'"
+        # Deliberately NOT printing an `export SFEDITS_TEST_DB=...` line:
+        # setting that env var pins every run to ONE named database, which
+        # disables the per-run isolation that ended the LUI-103 flakes. The
+        # tests find this server on :3307 by default with no env var at all.
+        echo "ready; tests create their own per-run databases on this server"
         exit 0
       fi
       printf '.'

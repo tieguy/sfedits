@@ -34,21 +34,40 @@ const { connect, canConnect, migrate } = require('../../lib/db')
  * The name encodes its creation time so crashed runs' leftovers are GC'd by
  * the next run rather than accumulating.
  */
-const RUN_DB = `sfedits_test_r${Math.floor(Date.now() / 1000)}_${process.pid}`
+// pid alone is not unique across PID namespaces (two containers sharing the
+// server on :3307 can collide on <epoch>_<pid>); the random suffix removes
+// the assumption. The strict shape is also the GC's DROP-safety filter.
+const RUN_DB_SHAPE = /^sfedits_test_r(\d+)_\d+_[0-9a-f]{4}$/
+const RUN_DB = `sfedits_test_r${Math.floor(Date.now() / 1000)}_${process.pid}_${
+  Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0')}`
 const GC_AGE_SECONDS = 3600
 
-/** Server-level DSN: the container's bootstrap database, which always exists. */
+/**
+ * Server-level DSN, used only to probe reachability and CREATE/DROP run
+ * databases. information_schema always exists, so the probe tests the SERVER
+ * rather than depending on the container's bootstrap database.
+ */
 function serverDsn() {
-  const base = process.env.SFEDITS_TEST_DB
-    || 'mysql://root:sfedits-test@127.0.0.1:3307/sfedits_test'
-  return base
+  if (process.env.SFEDITS_TEST_DB) return process.env.SFEDITS_TEST_DB
+  return 'mysql://root:sfedits-test@127.0.0.1:3307/information_schema'
 }
+
+let warnedAboutOverride = false
 
 /** DSN for this process's own disposable database. */
 function testDsn() {
   // An explicit SFEDITS_TEST_DB is honored exactly: whoever sets it has
   // chosen a specific database and gets to keep both halves if it is shared.
-  if (process.env.SFEDITS_TEST_DB) return process.env.SFEDITS_TEST_DB
+  if (process.env.SFEDITS_TEST_DB) {
+    if (!warnedAboutOverride) {
+      warnedAboutOverride = true
+      console.log(
+        '\n  [SFEDITS_TEST_DB is set: running against that exact database.' +
+        '\n   Per-run isolation (LUI-103) is DISABLED — concurrent runs on the' +
+        '\n   same database can interfere.]\n')
+    }
+    return process.env.SFEDITS_TEST_DB
+  }
   return `mysql://root:sfedits-test@127.0.0.1:3307/${RUN_DB}`
 }
 
@@ -68,11 +87,21 @@ function ensureRunDatabase() {
         // GC databases left by crashed runs (creation epoch in the name).
         const rows = await pool.query(
           "SELECT schema_name AS s FROM information_schema.schemata WHERE schema_name LIKE 'sfedits\\_test\\_r%'")
+        // Never drop a schema something is still connected to: an unusually
+        // long soak past GC_AGE_SECONDS must not lose its tables mid-run.
+        const active = new Set(
+          (await pool.query(
+            'SELECT DISTINCT db AS d FROM information_schema.processlist WHERE db IS NOT NULL'))
+            .map(r => String(r.d)))
         const cutoff = Math.floor(Date.now() / 1000) - GC_AGE_SECONDS
         for (const row of rows) {
           const name = String(row.s)
-          const epoch = Number((name.match(/_r(\d+)_/) || [])[1])
-          if (Number.isFinite(epoch) && epoch < cutoff && name !== RUN_DB) {
+          // The shape check is also the injection guard: `name` is interpolated
+          // into DROP DATABASE, so only exact program-generated names qualify.
+          const shape = name.match(RUN_DB_SHAPE)
+          if (!shape) continue
+          const epoch = Number(shape[1])
+          if (epoch < cutoff && name !== RUN_DB && !active.has(name)) {
             await pool.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {})
           }
         }
