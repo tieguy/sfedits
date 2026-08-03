@@ -401,9 +401,15 @@ grep -rni "user-agent" lib/ scripts/ public/ --include='*.js' | grep -v "user-ag
 grep -rnE "= *'[A-Za-z0-9._-]+/[0-9]" scripts/ lib/ public/
 ```
 
-Expected: first grep empty (the CLAUDE.md invariant); second grep shows no
-remaining string-literal UA values (eyeball any hits — comments are fine,
-literals are the bug); third grep (broader sweep) will hit scripts/reassess.js:41's `const UA =` (EXPECTED — Phase 4 Task 3 deletes it) and scripts/record-deploy.js:99 / scripts/toolforge-api.js:83 (GitHub API and Toolforge jobs API, not Wikimedia — out-of-scope-acceptable). Re-review should spot only the expected UA literals with a clear explanation in the sweep.
+Expected: first grep empty (the CLAUDE.md invariant); second grep's known
+acceptable hits are comments, `'User-Agent': USER_AGENT` header keys deriving
+from `userAgent()`, references to reassess.js's `UA` literal
+(`scripts/reassess.js:86,468`, `scripts/reassess-untagged.js:61`,
+`scripts/matrix-untagged.js:104` — all one literal, deleted by Phase 4 Task 3),
+and `scripts/record-deploy.js:99` / `scripts/toolforge-api.js:83` (GitHub API
+and Toolforge jobs API, not Wikimedia — out-of-scope-acceptable); third grep
+(broader sweep) hits only `scripts/reassess.js:41`'s `const UA =` (EXPECTED —
+Phase 4 Task 3 deletes it). Anything outside these sets is the bug.
 
 **Step 2:**
 
