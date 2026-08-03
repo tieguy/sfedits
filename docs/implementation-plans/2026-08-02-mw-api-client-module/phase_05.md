@@ -10,6 +10,13 @@ tests"). No new code.
 
 **Scope:** phase 5 of 5.
 
+**CRITICAL: Node 22 requirement.** Real-socket tests (in test/mw-api.test.js) must
+run under Node 22. Node 26 has a known incompatibility with undici 6.28 +
+CookieAgent that hangs all socket requests indefinitely; the tests skip on Node 26
+automatically. Live checks (Tasks 1–3 below) must run in a Node 22 environment:
+use `node:22-slim` Docker/Podman container, or `nvm use 22`, or verify the
+`node --version` output is 22.x before proceeding.
+
 ---
 
 ## HARD BOUNDARY
