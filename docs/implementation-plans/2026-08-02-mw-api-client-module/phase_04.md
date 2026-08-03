@@ -258,8 +258,10 @@ git show place-bot-platform-design:scripts/matrix-untagged.js > scripts/matrix-u
 const { sparqlRows } = require('../lib/sparql')
 ```
 
-  and the query block becomes a `sparqlRows(<query>)` call, deleting the local
-  retry loop (lib/sparql.js owns WDQS retries as of Phase 3). Keep the
+  and the query block becomes a `sparqlRows(<query>)` call. NOTE (corrected at
+  review): lib/sparql.js owns WDQS retries only via `sparqlChunked`; `sparqlRows`
+  is single-shot (`tries: 1`), so the local 5-attempt retry survives as a small
+  `sparqlRowsWithRetry` wrapper gated on the exported `isRetryable`. Keep the
   result-shape mapping — `sparqlRows` returns simplified rows; adjust the
   consuming code to its shape (read `lib/sparql.js` lines 70-79 for the exact
   return contract before writing this).

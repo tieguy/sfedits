@@ -10,12 +10,12 @@ tests"). No new code.
 
 **Scope:** phase 5 of 5.
 
-**CRITICAL: Node 22 requirement.** Real-socket tests (in test/mw-api.test.js) must
-run under Node 22. Node 26 has a known incompatibility with undici 6.28 +
-CookieAgent that hangs all socket requests indefinitely; the tests skip on Node 26
-automatically. Live checks (Tasks 1–3 below) must run in a Node 22 environment:
-use `node:22-slim` Docker/Podman container, or `nvm use 22`, or verify the
-`node --version` output is 22.x before proceeding.
+**Node note (RESOLVED — historical).** An earlier draft required Node 22 here:
+http-cookie-agent@6 peer-supported only undici 5/6, so Node ≥24 (bundled undici
+≥7) hung every m3api request. That was fixed on this branch by upgrading to
+http-cookie-agent@8 + undici@7 via npm overrides; the real-socket tests now run
+ungated on all supported Node versions and live checks work on any Node ≥20.3.
+`.node-version` still pins 22 as the deployment runtime.
 
 ---
 
