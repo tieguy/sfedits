@@ -988,6 +988,11 @@ describe('posting flow', function() {
         .query({ diff: '123', oldid: '456' })
         .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
 
+      // Capture the wire bodies so we can assert on the posted TEXT, per platform,
+      // per case — scope.isDone() alone cannot prove the override was applied.
+      const blueskyBodies = []
+      const mastodonBodies = []
+
       // Set up Bluesky scope with TWO session/upload/post chains (for two test cases)
       const blueskyScope = nock('https://bsky.social')
         // First chain (non-collapsed)
@@ -995,25 +1000,25 @@ describe('posting flow', function() {
         .reply(200, { accessJwt: 'token1', refreshJwt: 'refresh1', did: 'did:plc:test', handle: 'test.bsky.social' })
         .post('/xrpc/com.atproto.repo.uploadBlob')
         .reply(200, { blob: { $type: 'blob', ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' }, mimeType: 'image/png', size: 1234 } })
-        .post('/xrpc/com.atproto.repo.createRecord')
+        .post('/xrpc/com.atproto.repo.createRecord', (body) => { blueskyBodies.push(body); return true })
         .reply(200, { uri: 'at://did:plc:test/app.bsky.feed.post/abc', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' })
         // Second chain (collapsed)
         .post('/xrpc/com.atproto.server.createSession')
         .reply(200, { accessJwt: 'token2', refreshJwt: 'refresh2', did: 'did:plc:test', handle: 'test.bsky.social' })
         .post('/xrpc/com.atproto.repo.uploadBlob')
         .reply(200, { blob: { $type: 'blob', ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' }, mimeType: 'image/png', size: 1234 } })
-        .post('/xrpc/com.atproto.repo.createRecord')
+        .post('/xrpc/com.atproto.repo.createRecord', (body) => { blueskyBodies.push(body); return true })
         .reply(200, { uri: 'at://did:plc:test/app.bsky.feed.post/xyz', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' })
 
       // Mastodon scope with TWO chains
       const mastodonScope = nock('https://mastodon.example.com')
         .post('/api/v1/media')
         .reply(200, { id: 'media-1' })
-        .post(/\/api\/v1\/statuses.*/)
+        .post(/\/api\/v1\/statuses.*/, (body) => { mastodonBodies.push(body); return true })
         .reply(200, { id: '109383210193324631' })
         .post('/api/v1/media')
         .reply(200, { id: 'media-2' })
-        .post(/\/api\/v1\/statuses.*/)
+        .post(/\/api\/v1\/statuses.*/, (body) => { mastodonBodies.push(body); return true })
         .reply(200, { id: '109383210193324632' })
 
       const fakeAccount = {
@@ -1037,6 +1042,17 @@ describe('posting flow', function() {
       let result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
       assert.ok(result, 'Non-collapsed: Should return result when posts succeed')
 
+      // Non-collapsed: the bluesky delivery's override template must reach the
+      // wire, while the mastodon delivery (no override) keeps the default text.
+      assert.equal(blueskyBodies.length, 1, 'Non-collapsed: one Bluesky post so far')
+      assert.include(blueskyBodies[0].record.text, 'OVERRIDE: Test Article',
+        'Non-collapsed: Bluesky wire text must come from the delivery override template')
+      assert.equal(mastodonBodies.length, 1, 'Non-collapsed: one Mastodon post so far')
+      assert.include(decodeURIComponent(JSON.stringify(mastodonBodies[0])), 'DEFAULT: Test Article',
+        'Non-collapsed: Mastodon wire text must keep the account default template')
+      assert.notInclude(decodeURIComponent(JSON.stringify(mastodonBodies[0])), 'OVERRIDE:',
+        'Non-collapsed: the override must apply per-delivery, not globally')
+
       // Case 2: Collapsed burst (collapsedCount > 1)
       fakeEdit = {
         page: 'Test Article',
@@ -1048,6 +1064,14 @@ describe('posting flow', function() {
       statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
       result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
       assert.ok(result, 'Collapsed: Should return result when posts succeed')
+
+      // Collapsed burst: the override is skipped (it would lose {{count}}), so
+      // the bluesky wire text must be the default, not the override.
+      assert.equal(blueskyBodies.length, 2, 'Collapsed: second Bluesky post captured')
+      assert.include(blueskyBodies[1].record.text, 'DEFAULT: Test Article',
+        'Collapsed: Bluesky wire text must fall back to the default template')
+      assert.notInclude(blueskyBodies[1].record.text, 'OVERRIDE:',
+        'Collapsed: the single-edit override template must not be applied to a burst')
 
       // Both chains should be consumed
       assert.isTrue(blueskyScope.isDone(), 'All Bluesky calls should be made')
