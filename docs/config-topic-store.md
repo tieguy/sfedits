@@ -3,6 +3,41 @@
 Optional. Without it the bot runs on account watchlists alone, exactly as it
 did before the place-bot platform work.
 
+## Why MariaDB (ToolsDB) and not SQLite
+
+The test-side half of this decision is recorded in `test/helpers/db-helper.js`
+(the schema constraints ARE the behavior under test, so tests run the real
+dialect). The production-side half, recorded 2026-08-03:
+
+1. **The platform is four processes in separate Kubernetes pods** — `bot`
+   (continuous), `web` (the public `/create` form, which *writes*
+   subscriptions), `rebuild-topics` (nightly, rewrites `topic_articles`),
+   `migrate`. Concurrent writers in different containers. SQLite is an
+   embedded single-file engine; sharing it across pods requires a shared
+   filesystem.
+2. **Toolforge's only shared filesystem is NFS, and SQLite-on-NFS is the
+   canonical "don't"** — its locking depends on `fcntl` semantics NFS
+   implements unreliably, so concurrent writers risk corruption. We already
+   know how hostile that layer is from log files alone (webservice needs
+   `--mount all`; the bot's `data/` paths resolve inside the image and are
+   ephemeral across restarts). The platform's core state would inherit all
+   of that plus corruption risk.
+3. **Every push rebuilds the image within ~15 minutes** (`autoupdate`), so
+   anything in the container filesystem — where a SQLite file would naturally
+   live — is wiped on each deploy. State must live off the container.
+4. **ToolsDB is the lowest-complexity durable option Toolforge offers**:
+   WMF-managed, backed up, credentials auto-injected (`TOOL_TOOLSDB_*`),
+   survives deploys, built for concurrent connections. The MariaDB-specific
+   costs paid so far (utf8mb4_bin collation, a 5-connection budget, dialectal
+   tests) are small next to hand-rolling safe multi-pod file storage.
+5. Wiki Replicas is also MariaDB, so `lib/title-resolver.js` shares the
+   driver and dialect.
+
+If the platform ever shrinks back to "one bot process, one watchlist, no
+public write endpoint," an embedded store becomes defensible again — the
+pre-platform bot kept state in JSON files and that was fine. Until then,
+ToolsDB is the boring right answer.
+
 ```json
 {
   "topic_store": {
