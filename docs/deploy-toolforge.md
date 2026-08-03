@@ -185,8 +185,8 @@ toolforge build show                 # watch until it reports success
 ```
 
 The buildpack reads `Procfile` for `web` and `bot`, and `engines.node` from
-`package.json` (now `>=20` — the codebase assumes global `fetch` and
-`AbortSignal.timeout`). Diff rendering uses only satori and resvg (no Chromium
+`package.json` (now `>=22` — http-cookie-agent@8's own engines floor;
+`.node-version` pins 22). Diff rendering uses only satori and resvg (no Chromium
 fetched). The `Dockerfile` in the repo is **not** used by the build service — it
 is for local container runs only.
 
