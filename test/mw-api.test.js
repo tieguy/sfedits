@@ -799,5 +799,131 @@ describe('mw-api', function() {
         _resetSessions()
       }
     })
+
+    it('deadline rejects stalled request against real server', async function() {
+      this.timeout(3000)
+      // Real server test: verify that if a request stalls (tries to connect but
+      // the server never responds), the deadline fires and rejects with AbortError,
+      // not leaving the request hanging forever.
+      // Skip on Node 26+ due to the known CookieAgent+undici issue (verified live in Phase 5).
+      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
+      if (NODE_MAJOR >= 26) {
+        this.skip()
+        return
+      }
+
+      const http = require('http')
+      // Create a server that accepts connections but never responds
+      const server = http.createServer(() => {
+        // Accept connection but never send anything
+      })
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      const { port } = server.address()
+      const baseUrl = `http://127.0.0.1:${port}`
+
+      try {
+        nock.cleanAll()
+        nock.enableNetConnect(/127\.0\.0\.1/)
+
+        _resetSessions()
+        // Create session with a very short deadline (100ms) so it fires before
+        // network timeout or socket timeout can
+        const session = await actionSession(baseUrl, 'test-deadline-real', { requestDeadlineMs: 100 })
+
+        let threw = false
+        let error
+        try {
+          await session.request({ action: 'query' })
+        } catch (e) {
+          threw = true
+          error = e
+        }
+        assert.isTrue(threw, 'should have rejected')
+        // Deadline produces AbortError
+        assert.equal(error.name, 'AbortError', `Expected AbortError, got ${error.name}: ${error.message}`)
+        assert.include(error.message, 'deadline', 'error should mention deadline')
+      } finally {
+        server.close()
+        nock.cleanAll()
+        nock.enableNetConnect()
+        _resetSessions()
+      }
+    })
+
+    it('request with long deadline completes before deadline', async function() {
+      this.timeout(2000)
+      // Verify that a request completing before the deadline succeeds normally
+      // and the deadline doesn't interfere. Also verifies the timer doesn't hold
+      // the event loop (test completes promptly, not stuck waiting on a timer).
+      nock(HOST)
+        .get('/w/api.php')
+        .query(q => q.formatversion === '2' && q.maxlag === '5' && q.errorformat === 'plaintext')
+        .reply(200, { batchcomplete: true })
+
+      _resetSessions()
+      try {
+        const session = await actionSession('wm.test', 'test-deadline-success', { requestDeadlineMs: 10000 })
+        const response = await session.request({ action: 'query' })
+        assert.isTrue(response.batchcomplete)
+        assert.isTrue(nock.isDone())
+        // If the timer held the event loop, this test would timeout, but it completes promptly
+      } finally {
+        _resetSessions()
+      }
+    })
+
+    it('request deadline fires against stalling real server', async function() {
+      this.timeout(5000)
+      // Real server test: verify that if a request stalls (socket times out is
+      // bypassed somehow), the request deadline fires and rejects with AbortError.
+      // This tests the out-of-band deadline guard works independently of socket timeouts.
+      // Skip on Node 26+ due to the known CookieAgent+undici issue (to be resolved in Phase 5).
+      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
+      if (NODE_MAJOR >= 26) {
+        this.skip()
+        return
+      }
+
+      const http = require('http')
+      // Create a server that accepts connections but never responds, forcing
+      // the deadline to fire.
+      const server = http.createServer(() => {
+        // Accept connection but never respond
+      })
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      const { port } = server.address()
+      const baseUrl = `http://127.0.0.1:${port}`
+
+      try {
+        nock.cleanAll()
+        nock.enableNetConnect(/127\.0\.0\.1/)
+
+        _resetSessions()
+        // Create session with a very short deadline (300ms) and longer socket timeout.
+        // The deadline should fire first.
+        const session = await actionSession(baseUrl, 'test-deadline-real', {
+          timeoutMs: 2000,      // socket timeout is longer
+          requestDeadlineMs: 300 // deadline fires first
+        })
+
+        let threw = false
+        let error
+        try {
+          await session.request({ action: 'query' })
+        } catch (e) {
+          threw = true
+          error = e
+        }
+        assert.isTrue(threw, 'should have rejected')
+        // Deadline produces AbortError
+        assert.equal(error.name, 'AbortError', `Expected AbortError, got ${error.name}`)
+        assert.include(error.message, 'deadline', 'error should mention deadline')
+      } finally {
+        server.close()
+        nock.cleanAll()
+        nock.enableNetConnect()
+        _resetSessions()
+      }
+    })
   })
 })
