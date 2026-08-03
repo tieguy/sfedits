@@ -47,12 +47,12 @@
 const fs = require('fs')
 const path = require('path')
 const wtf = require('wtf_wikipedia')
+const { actionSession, wmFetch } = require('../lib/mw-api')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
 const EN_API = 'https://en.wikipedia.org/w/api.php'
 const WD_API = 'https://www.wikidata.org/w/api.php'
 const PROJECT = 'California/San Francisco Bay Area task force'
-const UA = 'sfba-reassess/0.1 (https://san-francisco-edit-stream.toolforge.org; luis@lu.is)'
 const CANDIDATES_PER_DIRECTION = 60
 
 // Terms whose appearance early in the lead marks a defining Bay Area
@@ -87,45 +87,17 @@ function saveCache(stage, data) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-async function apiGet(base, params, {
-  tries = 4, backoffMs = 2000, rateLimitWaitMs = 10000, maxRateLimitWaits = 60
-} = {}) {
-  const url = new URL(base)
-  for (const [k, v] of Object.entries({ format: 'json', maxlag: 5, ...params })) {
-    if (v !== undefined) url.searchParams.set(k, v)
-  }
-  // Replication lag and rate limiting are not failures - the API is asking us to
-  // slow down. Both are waited out without consuming retry attempts, because a
-  // sustained 429 outruns a 4-attempt exponential backoff and kills hour-long
-  // runs partway through (learned the hard way at 10,000/14,823 articles).
-  let lagWaits = 0
-  let limitWaits = 0
-  for (let attempt = 1; ; ) {
-    try {
-      const res = await fetch(url, { headers: { 'User-Agent': UA } })
-      if (res.status === 429) {
-        if (limitWaits >= maxRateLimitWaits) throw new Error('HTTP 429')
-        limitWaits++
-        // Retry-After is authoritative when the server sends it.
-        const after = Number(res.headers.get('retry-after'))
-        await sleep(Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs)
-        continue
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      if (data.error) throw new Error(data.error.code === 'maxlag' ? 'maxlag' : `API error: ${data.error.code}`)
-      return data
-    } catch (error) {
-      if (error.message === 'maxlag' && lagWaits < maxRateLimitWaits) {
-        lagWaits++
-        await sleep(rateLimitWaitMs)
-        continue
-      }
-      if (attempt >= tries) throw error
-      attempt++
-      await sleep(backoffMs * attempt)
-    }
-  }
+// Transport shim over lib/mw-api. formatversion 1 is pinned deliberately:
+// every stage in this script parses v1 shapes, and this port changes
+// transport, not parsing. maxRetriesSeconds 600 matches the old budget of
+// waiting out sustained 429/maxlag (60 waits x 10s) — m3api owns those
+// waits now, Retry-After included.
+async function api(base, params) {
+  const session = await actionSession(base, 'reassess')
+  return session.request(
+    { formatversion: 1, ...params },
+    { maxRetriesSeconds: 600 }
+  )
 }
 
 function* batches(arr, size) {
@@ -240,7 +212,7 @@ async function stageCohort() {
   const articles = []
   let cont = {}
   do {
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', list: 'projectpages', wppprojects: PROJECT,
       wppassessments: 'true', wpplimit: 'max', ...cont
     })
@@ -264,7 +236,7 @@ async function stageQids(cohort) {
   let done = checkpoint.nextBatch * 50
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     const batch = allBatches[b]
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', prop: 'pageprops', ppprop: 'wikibase_item',
       titles: batch.join('|')
     })
@@ -301,7 +273,7 @@ async function stageLinks(cohort) {
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     let cont = {}
     do {
-      const data = await apiGet(EN_API, {
+      const data = await api(EN_API, {
         action: 'query', prop: 'links', plnamespace: 0, pllimit: 'max',
         titles: allBatches[b].join('|'), ...cont
       })
@@ -345,7 +317,7 @@ async function stageLinksProse(cohort) {
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     let cont = {}
     do {
-      const data = await apiGet(EN_API, {
+      const data = await api(EN_API, {
         action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content',
         titles: allBatches[b].join('|'), ...cont
       })
@@ -385,7 +357,7 @@ async function stageLinksProseAll(universe) {
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     let cont = {}
     do {
-      const data = await apiGet(EN_API, {
+      const data = await api(EN_API, {
         action: 'query', prop: 'revisions', rvslots: 'main', rvprop: 'content',
         titles: allBatches[b].join('|'), ...cont
       })
@@ -486,7 +458,7 @@ async function stageRedirects(titles) {
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     let cont = {}
     do {
-      const data = await apiGet(EN_API, {
+      const data = await api(EN_API, {
         action: 'query', prop: 'redirects', rdnamespace: 0, rdlimit: 'max',
         titles: allBatches[b].join('|'), ...cont
       })
@@ -523,7 +495,7 @@ async function stageClaims(qids) {
   const allBatches = [...batches(allQids, 50)]
 
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
-    const data = await apiGet(WD_API, {
+    const data = await api(WD_API, {
       action: 'wbgetentities', ids: allBatches[b].join('|'), props: 'claims'
     })
     for (const [qid, entity] of Object.entries(data.entities || {})) {
@@ -565,7 +537,7 @@ async function stageAssessments(cohort) {
   let done = checkpoint.nextBatch * 50
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     const batch = allBatches[b]
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', prop: 'pageassessments', pasubprojects: 'true',
       palimit: 'max', titles: batch.join('|')
     })
@@ -596,7 +568,7 @@ async function stageLeads(cohort) {
   const allBatches = [...batches(cohort.map(a => a.title), 20)]
 
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', prop: 'extracts', exintro: 1, explaintext: 1,
       exlimit: 'max', titles: allBatches[b].join('|')
     })
@@ -771,7 +743,7 @@ async function fetchBacklinkCount(title) {
   let count = 0
   let cont = {}
   for (let page = 0; page < 20; page++) {
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', list: 'backlinks', bltitle: title,
       blnamespace: 0, bllimit: 'max', ...cont
     })
@@ -791,12 +763,12 @@ async function fetchPageviews(title, { now = new Date() } = {}) {
   const encoded = encodeURIComponent(title.replace(/ /g, '_'))
   const url = `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/` +
     `en.wikipedia/all-access/user/${encoded}/monthly/${fmt(start)}00/${fmt(end)}00`
-  try {
-    const res = await fetch(url, { headers: { 'User-Agent': UA } })
-    if (!res.ok) return null
-    const data = await res.json()
-    return (data.items || []).reduce((sum, item) => sum + item.views, 0)
-  } catch { return null }
+  const res = await wmFetch(url, {
+    component: 'reassess', tries: 2, backoffMs: 1000, throwOnHttpError: false
+  })
+  if (!res.ok) return null  // article genuinely has no pageview data
+  const data = await res.json()
+  return (data.items || []).reduce((sum, item) => sum + item.views, 0)
 }
 
 function reportTable(rows) {
@@ -829,10 +801,9 @@ async function stageReport() {
   console.log(`  enriching ${candidates.length} candidates (denominators + pageviews)`)
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i]
-    const [backlinks, views] = await Promise.all([
-      c.totalInlinks == null ? fetchBacklinkCount(c.title) : null,
-      fetchPageviews(c.title)
-    ])
+    // Serial requests to Wikimedia hosts: fetch backlinks first, then pageviews
+    const backlinks = c.totalInlinks == null ? await fetchBacklinkCount(c.title) : null
+    const views = await fetchPageviews(c.title)
     if (backlinks) {
       c.totalInlinks = backlinks.count
       c.totalCapped = backlinks.capped
@@ -936,5 +907,5 @@ if (require.main === module) {
 module.exports = {
   percentileRanks, median, leadScore, scoreCohort, pickCandidates, wikitextLinks,
   canonicalInlinks, redirectTargets, buildUniverse, assignTiers, IS_HERE_PROPERTIES,
-  fetchPageviews, BAY_AREA_RE, apiGet, batches, EN_API, WD_API, UA, PROJECT
+  fetchPageviews, BAY_AREA_RE, api, batches, EN_API, WD_API, PROJECT
 }
