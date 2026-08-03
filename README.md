@@ -110,6 +110,13 @@ npm install
 node page-watch.js --noop  # Test mode - doesn't post
 ```
 
+Node 22+ is required (`engines` enforces it; `.node-version` pins 22 for
+deployment). The `overrides` block in `package.json` forcing
+`http-cookie-agent@^8` and `undici@^7` is **load-bearing**: m3api pins
+`http-cookie-agent@^6`, which silently hangs every Wikimedia API request —
+no error, no timeout — on Node ≥ 24 (bundled undici ≥ 7). Do not drop or
+relax those overrides in an audit fix or dependency bump.
+
 ### 3. Deploy to Toolforge
 
 The primary deployment target is Toolforge (Wikimedia Cloud Services). See

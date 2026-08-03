@@ -14,7 +14,8 @@ tests"). No new code.
 http-cookie-agent@6 peer-supported only undici 5/6, so Node ≥24 (bundled undici
 ≥7) hung every m3api request. That was fixed on this branch by upgrading to
 http-cookie-agent@8 + undici@7 via npm overrides; the real-socket tests now run
-ungated on all supported Node versions and live checks work on any Node ≥20.3.
+ungated on all supported Node versions and live checks work on any Node ≥22
+(http-cookie-agent@8's own engines floor; `engines.node` matches).
 `.node-version` still pins 22 as the deployment runtime.
 
 ---

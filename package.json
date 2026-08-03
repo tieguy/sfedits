@@ -35,7 +35,7 @@
     "undici": "^7.0.0"
   },
   "engines": {
-    "node": ">=20.3.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "test": "mocha --colors --reporter spec --exit --ignore 'test/helpers/**' 'test/**/*.js'",
