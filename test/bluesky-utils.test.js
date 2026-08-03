@@ -10,6 +10,66 @@ const { assert } = require('chai')
 const { buildFacets, fitBlueskyText } = require('../lib/bluesky-utils')
 
 describe('lib/bluesky-utils', function() {
+  describe('buildFacets() anchoring (LUI-85)', function() {
+    const PAGE_URL = 'https://en.wikipedia.org/wiki/x'
+    const USER_URL = 'https://en.wikipedia.org/wiki/Special:Contributions/x'
+
+    it('finds the username when the template puts the name before the page', function() {
+      // Sequential search offsets used to drop the name facet entirely here.
+      const text = 'Alice edited Cat https://example.com/diff'
+      const facets = buildFacets(text, 'Cat', 'Alice', PAGE_URL, USER_URL)
+
+      assert.equal(facets.length, 3, 'page + name + url facets')
+      const pageFacet = facets[0]
+      const nameFacet = facets[1]
+      assert.equal(pageFacet.index.byteStart, 13, 'page anchors on the standalone "Cat"')
+      assert.equal(pageFacet.index.byteEnd, 16)
+      assert.equal(nameFacet.index.byteStart, 0, 'name anchors on "Alice" at the start')
+      assert.equal(nameFacet.index.byteEnd, 5)
+    })
+
+    it('does not anchor the page name inside a longer word', function() {
+      // "Cat" must not match inside "Catherine".
+      const text = 'Catherine edited Cat https://example.com/diff'
+      const facets = buildFacets(text, 'Cat', 'Catherine', PAGE_URL, USER_URL)
+
+      assert.equal(facets.length, 3)
+      assert.equal(facets[0].index.byteStart, 17, 'page facet on the standalone "Cat"')
+      assert.equal(facets[0].index.byteEnd, 20)
+      assert.equal(facets[1].index.byteStart, 0, 'name facet on "Catherine"')
+      assert.equal(facets[1].index.byteEnd, 9)
+    })
+
+    it('does not anchor a name that only appears inside the diff URL', function() {
+      // "index" appears standalone-ish inside the URL path; a facet there
+      // would overlap the URL facet.
+      const text = 'Cat edited by someone https://en.wikipedia.org/w/index.php?diff=1'
+      const facets = buildFacets(text, 'Cat', 'index', PAGE_URL, USER_URL)
+
+      assert.equal(facets.length, 2, 'page + url only; no name facet inside the URL')
+      assert.equal(facets[0].features[0].uri, PAGE_URL)
+      assert.equal(facets[1].features[0].uri, 'https://en.wikipedia.org/w/index.php?diff=1')
+    })
+
+    it('does not anchor the name inside the page facet when name is a prefix of page', function() {
+      const text = 'Union Square edited by Union https://example.com/diff'
+      const facets = buildFacets(text, 'Union Square', 'Union', PAGE_URL, USER_URL)
+
+      assert.equal(facets.length, 3)
+      assert.equal(facets[0].index.byteStart, 0, 'page facet on "Union Square"')
+      assert.equal(facets[0].index.byteEnd, 12)
+      assert.equal(facets[1].index.byteStart, 23, 'name facet on the later standalone "Union"')
+      assert.equal(facets[1].index.byteEnd, 28)
+    })
+
+    it('emits no name facet when the name never appears outside other anchors', function() {
+      const text = 'Union Square edited https://example.com/diff'
+      const facets = buildFacets(text, 'Union Square', 'Union', PAGE_URL, USER_URL)
+
+      assert.equal(facets.length, 2, 'page + url; "Union" only exists inside the page facet')
+    })
+  })
+
   describe('buildFacets()', function() {
     it('creates facet for article name with correct byte offsets', function() {
       const text = 'Cat edited by User https://example.com/diff'
