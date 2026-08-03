@@ -457,7 +457,6 @@ describe('mw-api', function() {
       const http = require('http')
 
       // Test case 1: short timeout (100ms) should fire around 1s due to granularity
-      let server1Closed = false
       const server1 = http.createServer(() => {
         // Accept connection but never send headers (triggers headersTimeout)
       })
@@ -487,7 +486,6 @@ describe('mw-api', function() {
         assert.isBelow(elapsed1, 1500, `timeoutMs:100 elapsed ${elapsed1}ms should be < 1500ms`)
       } finally {
         server1.close()
-        server1Closed = true
       }
 
       // Test case 2: longer timeout (2500ms) should fire around 2.5s
@@ -757,8 +755,11 @@ describe('mw-api', function() {
           'content-type': 'text/plain',
           'content-length': '1000'  // Claim body size but never send it
         })
-        // Don't call res.end() or write anything — body never arrives.
-        // This will trigger bodyTimeout when client waits for body data.
+        // Flush headers to the client (res.writeHead alone doesn't flush in Node).
+        // This leaves the body owed, so client will timeout waiting for body data.
+        res.write('x')
+        // Don't call res.end() — body never fully arrives.
+        // This will trigger bodyTimeout when client waits for more body data.
       })
       await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
       const { port } = server.address()
@@ -780,19 +781,16 @@ describe('mw-api', function() {
           // Use session.fetch() which respects the dispatcher timeouts
           const res = await session.fetch(`${baseUrl}/test`)
           // Try to read the body, which should timeout during body reads
-          const text = await res.text()
+          await res.text()
         } catch (e) {
           threw = true
           error = e
         }
         assert.isTrue(threw, 'should have rejected with timeout')
-        // Either headers or body timeout is acceptable; with ~1s granularity
-        // the distinction may not be precise. Accept either as evidence that
-        // socket timeouts are enforced.
-        const isTimeout = isHeadersTimeout(error) || isBodyTimeout(error)
+        // With headers flushed, client should timeout on body read, not headers.
         assert.isTrue(
-          isTimeout,
-          `Expected socket timeout on cause chain, got: ${error.name} - ${error.message}`
+          isBodyTimeout(error),
+          `Expected body timeout, got: ${error.name} - ${error.message}`
         )
       } finally {
         server.close()
