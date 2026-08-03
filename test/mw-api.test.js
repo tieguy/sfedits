@@ -195,10 +195,10 @@ describe('mw-api', function() {
       this.timeout(5000)
       // Three 429s with retry-after:0.2 (0.2 seconds each) = ~600ms total
       // With timeoutMs: 150 (150ms per attempt), we'd fail if timeout spanned waits
-      // But since each attempt gets a fresh timeout, we succeed because each
-      // individual wait + fetch is under 150ms per attempt (the wait itself is 200ms
-      // after AbortSignal.timeout but the per-attempt timeout doesn't fire because
-      // waits happen outside the fetch itself)
+      // Each attempt's fetch is served by nock in single-digit ms, well under 150ms.
+      // The 200ms waits happen between attempts, outside any fetch, and each new
+      // attempt composes a fresh AbortSignal.timeout — so the expired signal from
+      // the previous attempt is discarded rather than aborting the next fetch.
       nock(HOST).get('/thing').times(3).reply(429, '', { 'retry-after': '0.2' })
       nock(HOST).get('/thing').reply(200, 'ok')
 
