@@ -373,7 +373,7 @@ describe('lib/delivery', function() {
 
           // Find the title facet by matching against the pageUrl
           const pageUrl = 'https://en.wikipedia.org/wiki/' + encodeURIComponent(longTitle)
-          const titleFacet = body.record.facets.find(f => f.features[0].uri === pageUrl)
+          const titleFacet = body.record.facets.find(f => f.features?.[0]?.uri === pageUrl)
           assert.exists(titleFacet, 'title facet must be present')
           assert.exists(titleFacet.index, 'facet must have index with byteStart and byteEnd')
           const { byteStart, byteEnd } = titleFacet.index

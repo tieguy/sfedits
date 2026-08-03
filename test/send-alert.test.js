@@ -38,15 +38,12 @@ describe('send-alert.js config loading', function () {
   })
 
   it('loads config from config.base.json (production path)', function () {
-    // Production path after LUI-108 migration: config.base.json + split secret env vars
-    // This verifies the new split-config path works: config.base.json is loaded, and
-    // SFEDITS_DISCORD_WEBHOOK_URL env var is merged in (though alert sending will fail
-    // gracefully since no alerting destinations are configured).
+    // Production path after LUI-108 migration: config.base.json is loaded, and the
+    // script exits 0 (env var merging is covered in test/config.test.js).
     const configBase = {
       accounts: [{ template: '{{page}} edited', discord: {} }],
       web: {}
     }
-    // Should not throw an exception (exit code 0)
     const out = runSendAlert(
       {
         // Discord webhook is configured via env var (will be set in accounts[0].discord.webhook_url)
@@ -54,8 +51,7 @@ describe('send-alert.js config loading', function () {
       },
       configBase
     )
-    // The script runs successfully even though it will fail to send (no alert
-    // credentials configured). stdout should be empty since alerting is optional.
+    // stdout should be empty since alerting is optional
     expect(out).to.equal('')
   })
 })
