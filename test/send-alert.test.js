@@ -37,7 +37,7 @@ describe('send-alert.js config loading', function () {
     expect(out).to.include('loaded config from SFEDITS_CONFIG')
   })
 
-  it('loads config from config.base.json + SFEDITS_* envvars (production path, LUI-108)', function () {
+  it('loads config from config.base.json (production path)', function () {
     // Production path after LUI-108 migration: config.base.json + split secret env vars
     // This verifies the new split-config path works: config.base.json is loaded, and
     // SFEDITS_DISCORD_WEBHOOK_URL env var is merged in (though alert sending will fail

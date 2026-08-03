@@ -126,6 +126,8 @@ reads like a credentials problem.
 
 ## 3. Write the config
 
+**Note: this is the pre-LUI-108 legacy mechanism.** After LUI-108 migration, config comes from `config.base.json` checked into the repo plus split secret envvars (`SFEDITS_DISCORD_WEBHOOK_URL`, `SFEDITS_BLUESKY_PASSWORD`, etc.). See the "Phase 3 cutover check" section below for the migration sequence.
+
 `SFEDITS_CONFIG` is the whole config as one JSON string, so nothing sensitive
 lands in git. Build it in a file first — it is long, and `toolforge envvars
 create` prompts for the value rather than taking it on the command line:
@@ -206,7 +208,7 @@ with no config at all.
 the deployed config a schema behind?" — the question that cost a failed
 `migrate` on the first deploy. See LUI-108 for the longer-term fix.
 
-### Phase 3 cutover check: SFEDITS_CONFIG must be deleted before merge to integration
+### Phase 3 cutover check: deleting SFEDITS_CONFIG in the deploy window
 
 **This phase rejects `SFEDITS_CONFIG` at startup.** Pushing this branch to
 `fork/integration` without deleting the envvar in the same window takes down

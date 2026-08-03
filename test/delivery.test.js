@@ -371,8 +371,10 @@ describe('lib/delivery', function() {
           assert.isArray(body.record.facets, 'body.record.facets must be an array')
           assert.isAtLeast(body.record.facets.length, 1, 'must have at least one facet (title facet)')
 
-          // The first facet is the title facet (built first by buildFacets per bluesky-utils.js)
-          const titleFacet = body.record.facets[0]
+          // Find the title facet by matching against the pageUrl
+          const pageUrl = 'https://en.wikipedia.org/wiki/' + encodeURIComponent(longTitle)
+          const titleFacet = body.record.facets.find(f => f.features[0].uri === pageUrl)
+          assert.exists(titleFacet, 'title facet must be present')
           assert.exists(titleFacet.index, 'facet must have index with byteStart and byteEnd')
           const { byteStart, byteEnd } = titleFacet.index
           const facetText = Buffer.from(body.record.text).slice(byteStart, byteEnd).toString()
@@ -381,9 +383,6 @@ describe('lib/delivery', function() {
             'title facet text must be shortened (fitted) version, not the original')
           assert.isTrue(facetText.endsWith('…'),
             'fitted title must end with ellipsis')
-          // Verify facet text actually appears in the post text at the byte offsets
-          assert.strictEqual(Buffer.from(body.record.text).slice(byteStart, byteEnd).toString(), facetText,
-            'facet byte offsets must correctly extract the title text')
 
           // 4. Alt text must use the original untruncated title
           assert.strictEqual(body.record.embed.images[0].alt,
