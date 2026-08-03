@@ -26,11 +26,11 @@ const fs = require('fs')
 const path = require('path')
 const {
   percentileRanks, median, leadScore, fetchPageviews,
-  apiGet, batches, EN_API, WD_API, UA, PROJECT
+  api, batches, EN_API, WD_API, PROJECT
 } = require('./reassess')
+const { sparqlRows } = require('../lib/sparql')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
-const SPARQL = 'https://query.wikidata.org/sparql'
 const COUNTIES = ['Q62', 'Q107146', 'Q108058', 'Q108117', 'Q108137',
   'Q108101', 'Q110739', 'Q108083', 'Q108067']
 const PROPERTIES = ['P19', 'P20', 'P159', 'P276', 'P937']
@@ -52,27 +52,6 @@ function requireMain(stage) {
   return JSON.parse(fs.readFileSync(p, 'utf8'))
 }
 
-async function sparql(query, { tries = 5 } = {}) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const res = await fetch(SPARQL, {
-        method: 'POST',
-        headers: {
-          'User-Agent': UA,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/sparql-results+json'
-        },
-        body: `query=${encodeURIComponent(query)}`
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return (await res.json()).results.bindings
-    } catch (error) {
-      if (attempt >= tries) throw error
-      await sleep(5000 * attempt)
-    }
-  }
-}
-
 // ----------------------------------------------------------------- stages
 
 /**
@@ -86,10 +65,11 @@ async function stageCandidates() {
       schema:isPartOf <https://en.wikipedia.org/> ; schema:name ?title .`
   const found = new Map() // title -> {qid, via:Set}
 
-  function add(bindings, via) {
-    for (const b of bindings) {
-      const title = b.title.value
-      const qid = b.item.value.split('/').pop()
+  function add(rows, via) {
+    // sparqlRows returns simplified rows: {item: 'Q123', title: 'Article Title'}
+    for (const row of rows) {
+      const title = row.title
+      const qid = row.item
       if (!found.has(title)) found.set(title, { qid, via: new Set() })
       found.get(title).via.add(via)
     }
@@ -99,19 +79,19 @@ async function stageCandidates() {
   const total = COUNTIES.length * (PROPERTIES.length + 2)
   for (const county of COUNTIES) {
     // the places themselves
-    add(await sparql(`SELECT DISTINCT ?item ?title WHERE {
+    add(await sparqlRows(`SELECT DISTINCT ?item ?title WHERE {
       ?item wdt:P131+ wd:${county} . ${sitelink} }`), 'P131')
     process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
     // items pointing at those places
     for (const prop of PROPERTIES) {
-      add(await sparql(`SELECT DISTINCT ?item ?title WHERE {
+      add(await sparqlRows(`SELECT DISTINCT ?item ?title WHERE {
         ?item wdt:${prop} ?place .
         ?place wdt:P131* wd:${county} . ${sitelink} }`), prop)
       process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
       await sleep(250)
     }
     // holders of offices with Bay Area jurisdiction
-    add(await sparql(`SELECT DISTINCT ?item ?title WHERE {
+    add(await sparqlRows(`SELECT DISTINCT ?item ?title WHERE {
       ?item wdt:P39 ?pos .
       { ?pos wdt:P1001 wd:${county} }
       UNION { ?j wdt:P131+ wd:${county} . ?pos wdt:P1001 ?j }
@@ -143,7 +123,7 @@ async function stageLinks(candidates) {
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
     let cont = {}
     do {
-      const data = await apiGet(EN_API, {
+      const data = await api(EN_API, {
         action: 'query', prop: 'links', plnamespace: 0, pllimit: 'max',
         titles: allBatches[b].join('|'), ...cont
       })
@@ -177,7 +157,7 @@ async function stageClaims(candidates) {
   const allBatches = [...batches(qids, 50)]
 
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
-    const data = await apiGet(WD_API, {
+    const data = await api(WD_API, {
       action: 'wbgetentities', ids: allBatches[b].join('|'), props: 'claims'
     })
     for (const [qid, entity] of Object.entries(data.entities || {})) {
@@ -207,7 +187,7 @@ async function stageAssessments(candidates) {
   const result = {}
   let done = 0
   for (const batch of batches(candidates.map(c => c.title), 50)) {
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', prop: 'pageassessments', pasubprojects: 'true',
       palimit: 'max', titles: batch.join('|')
     })
@@ -231,7 +211,7 @@ async function stageLeads(candidates) {
   const allBatches = [...batches(candidates.map(c => c.title), 20)]
 
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', prop: 'extracts', exintro: 1, explaintext: 1,
       exlimit: 'max', titles: allBatches[b].join('|')
     })

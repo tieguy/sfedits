@@ -26,8 +26,9 @@
 const fs = require('fs')
 const path = require('path')
 const {
-  percentileRanks, median, apiGet, batches, EN_API, WD_API, UA
+  percentileRanks, median, api, batches, EN_API, WD_API
 } = require('./reassess')
+const { wmFetch } = require('../lib/mw-api')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -99,18 +100,13 @@ async function stageViews(poolData) {
     const encoded = encodeURIComponent(title.replace(/ /g, '_'))
     const url = 'https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/' +
       `en.wikipedia/all-access/user/${encoded}/monthly/${fmt(start)}00/${fmt(end)}00`
-    for (let attempt = 1; ; attempt++) {
-      try {
-        const res = await fetch(url, { headers: { 'User-Agent': UA } })
-        if (res.status === 429) throw new Error('rate limited')
-        if (!res.ok) return null // article genuinely has no pageview data
-        const data = await res.json()
-        return (data.items || []).reduce((sum, item) => sum + item.views, 0)
-      } catch (error) {
-        if (attempt >= 5) throw error // network trouble - let the runner retry the stage
-        await sleep(5000 * attempt)
-      }
-    }
+    // Preserve the split: non-ok response → null ("no data"), transport failure → throws
+    const res = await wmFetch(url, {
+      component: 'reassess', tries: 5, backoffMs: 5000, throwOnHttpError: false
+    })
+    if (!res.ok) return null // article genuinely has no pageview data
+    const data = await res.json()
+    return (data.items || []).reduce((sum, item) => sum + item.views, 0)
   }
 
   let done = 0
@@ -136,7 +132,7 @@ async function stageDescriptions(poolData) {
   const allBatches = [...batches(qids, 50)]
 
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
-    const data = await apiGet(WD_API, {
+    const data = await api(WD_API, {
       action: 'wbgetentities', ids: allBatches[b].join('|'),
       props: 'descriptions', languages: 'en'
     })
@@ -164,7 +160,7 @@ async function stageClasses(poolData) {
   const allBatches = [...batches(titles, 50)]
 
   for (let b = checkpoint.nextBatch; b < allBatches.length; b++) {
-    const data = await apiGet(EN_API, {
+    const data = await api(EN_API, {
       action: 'query', prop: 'pageassessments', pasubprojects: 'true',
       palimit: 'max', titles: allBatches[b].join('|')
     })
@@ -211,16 +207,14 @@ function stageHtml() {
     op: c.otherProjects
   }))
 
-  // stamp the page with when the DATA was fetched, not when html was rebuilt
-  const snapshot = fs.statSync(cachePath('views')).mtime.toISOString().slice(0, 10)
-  const html = buildHtml(points, { midMedian, snapshot })
+  const html = buildHtml(points, { midMedian })
   const out = path.join(DATA_DIR, 'matrix-untagged.html')
   fs.writeFileSync(out, html)
   console.log(`  wrote ${out} (${points.length} points)`)
   return null
 }
 
-function buildHtml(points, { midMedian, snapshot }) {
+function buildHtml(points, { midMedian }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -262,9 +256,7 @@ function buildHtml(points, { midMedian, snapshot }) {
 <div class="sub">${points.length} enwiki articles structurally connected to the Bay Area on
   Wikidata, untagged by the task force, all scoring above the tagged Mid-tier median
   significance (${(100 * midMedian).toFixed(1)}). x = pageviews/year (log), y = SF-significance.
-  Color = best quality class from other WikiProjects. Hover for details, click to open.
-  <b>Data snapshot: ${snapshot}</b> - a point-in-time analysis, not a live view; articles
-  leave this page as they get tagged.</div>
+  Color = best quality class from other WikiProjects. Hover for details, click to open.</div>
 <div class="controls">
   <input id="search" type="search" placeholder="filter by title...">
   <label>min significance <input id="minsig" type="range" min="65" max="100" value="65">
@@ -303,8 +295,6 @@ function buildHtml(points, { midMedian, snapshot }) {
     Hotel (65.6 significance, 1.4M views/yr) · Jensen Huang, Nvidia CEO
     (68.9, 3.0M).</span></div>
 </div>
-<div class="sub">Part of <a href="/">San Francisco Edit Stream</a> · methodology
-  described on the SFBA task force talk page</div>
 <script>
 const DATA = ${JSON.stringify(points)};
 const QCOLOR = { fa: '#7b3fa0', fl: '#7b3fa0', a: '#2456a5', ga: '#2e7d32', b: '#4d94c9',
