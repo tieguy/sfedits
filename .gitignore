@@ -13,3 +13,6 @@ data/posted-log.jsonl
 .superpowers/
 docs/superpowers/
 data/fonts/
+*.bak
+data/watchlist-*.json
+data/wikidata-claim-targets.json
