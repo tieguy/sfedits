@@ -366,13 +366,29 @@ describe('lib/delivery', function() {
           assert.isTrue(body.record.text.endsWith(diffUrl),
             'diff URL must be preserved intact at end of text')
 
-          // 3. The page title in facets must match what's in the text
-          // (this ensures buildFacets can find it)
-          const textIncludes = body.record.text
-          const fittedPage = textIncludes.split(' ').slice(0, 1)[0] // Get shortened title from text
-          const hasTitleFacet = body.record.facets?.some(f =>
-            textIncludes.includes(fittedPage) // Title must be in text for facet
-          )
+          // 3. Facets must be present; the title facet text must be the fitted (short) title
+          assert.exists(body.record.facets, 'body.record.facets must exist')
+          assert.isArray(body.record.facets, 'body.record.facets must be an array')
+          assert.isAtLeast(body.record.facets.length, 1, 'must have at least one facet (title facet)')
+
+          // The first facet is the title facet (built first by buildFacets per bluesky-utils.js)
+          const titleFacet = body.record.facets[0]
+          assert.exists(titleFacet.index, 'facet must have index with byteStart and byteEnd')
+          const { byteStart, byteEnd } = titleFacet.index
+          const facetText = Buffer.from(body.record.text).slice(byteStart, byteEnd).toString()
+          // Fitted title is shorter than original and ends with ellipsis
+          assert.isBelow(facetText.length, longTitle.length,
+            'title facet text must be shortened (fitted) version, not the original')
+          assert.isTrue(facetText.endsWith('…'),
+            'fitted title must end with ellipsis')
+          // Verify facet text actually appears in the post text at the byte offsets
+          assert.strictEqual(Buffer.from(body.record.text).slice(byteStart, byteEnd).toString(), facetText,
+            'facet byte offsets must correctly extract the title text')
+
+          // 4. Alt text must use the original untruncated title
+          assert.strictEqual(body.record.embed.images[0].alt,
+            'Screenshot of edit to ' + longTitle,
+            'alt text must use the original full page title, not the fitted one')
 
           return true
         })

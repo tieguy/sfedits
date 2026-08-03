@@ -241,7 +241,7 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       if (passesMetadata(edit, consumer.editFilters)) {
         metadataFiltered.push(consumer)
         const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-        console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel} (metadata)`)
       } else {
         const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
         const reason = metadataDropReason(edit, consumer.editFilters)

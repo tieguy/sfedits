@@ -9,17 +9,19 @@ tool account unless it says otherwise.
 **Any push to `fork/integration` that includes the delivery-merge config work
 REQUIRES completing the LUI-108 migration first.** The merged code expects:
 
-1. Delete the `SFEDITS_CONFIG` environment variable (the old monolithic config blob)
-2. Replace it with split secrets: `SFEDITS_BLUESKY_PASSWORD`, `SFEDITS_MASTODON_ACCESS_TOKEN`,
-   `SFEDITS_DISCORD_WEBHOOK_URL`, `SFEDITS_INVITE_CODES`
-3. Ensure `config.base.json` exists in the deployment image (already tracked in repo)
+- Split secrets: `SFEDITS_BLUESKY_PASSWORD`, `SFEDITS_MASTODON_ACCESS_TOKEN`,
+  `SFEDITS_DISCORD_WEBHOOK_URL`, `SFEDITS_INVITE_CODES`
+- `config.base.json` in the deployment image (already tracked in repo)
+- **The `SFEDITS_CONFIG` environment variable MUST be deleted** — but the timing is critical
 
-**What happens if you push without the migration:** Every process fails at startup with
+**Failure mode:** Every process fails at startup with:
 `SFEDITS_CONFIG is no longer supported. Config now comes from config.base.json plus
-the SFEDITS_* secret env vars`. The bot goes silent and there is no error recovery;
-the deployment becomes undeployable until the env migration is complete.
+the SFEDITS_* secret env vars`. The bot goes silent; there is no error recovery.
 
-See `lib/config.js` lines 58-61 for the safety check.
+**The safe ordering is in Phase 3 cutover check** (see below) — delete `SFEDITS_CONFIG`
+AFTER the new image is built but BEFORE bot restarts, never before. That is the
+single source of truth for this migration's rollout sequence. See the `loadConfig()` function
+in `lib/config.js` for the safety check that enforces this.
 
 Three processes come out of one build:
 
