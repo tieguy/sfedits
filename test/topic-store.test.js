@@ -428,32 +428,48 @@ describeWithDb('topic-store (database)', function() {
         assert.deepEqual(fetched.editFilters, filters)
       })
 
-      it('INVARIANT: two subscriptions with different edit_filters share one topic row',
+      it('INVARIANT: edit_filters do not affect topic deduplication (filtersHash is topic-only)',
         async function() {
-          const filters1 = { bots: false, minor: false }
-          const filters2 = { bots: true, cosmetic_only: true }
+          // Critical: upsertTopic called twice with same region and filters should return
+          // the same topic.id both times, regardless of subscription-level editFilters
+          const topicFilters = { languages: ['en'], entityFilters: ['Q515'] }
+          const editFilters1 = { bots: false, minor: false }
+          const editFilters2 = { bots: true, cosmetic_only: true }
 
-          const topic = await store.upsertTopic('Q62', { languages: ['en'] })
-          await store.addSubscription(topic.id, {
+          // First upsert creates the topic
+          const topic1 = await store.upsertTopic('Q62', topicFilters)
+          assert.isTrue(topic1.created, 'first upsert creates the topic')
+
+          // Add a subscription with editFilters1
+          await store.addSubscription(topic1.id, {
             ownerUser: 'User1',
             deliveryType: 'discord',
             deliveryConfig: { webhook_url: 'https://a' },
-            editFilters: filters1
+            editFilters: editFilters1
           })
-          await store.addSubscription(topic.id, {
+
+          // Second upsert with same region and topic filters should return the SAME topic
+          const topic2 = await store.upsertTopic('Q62', topicFilters)
+          assert.isFalse(topic2.created, 'second upsert finds existing topic')
+          assert.equal(topic1.id, topic2.id, 'both upserts return the same topic.id')
+
+          // Add a subscription with different editFilters to the same topic
+          await store.addSubscription(topic2.id, {
             ownerUser: 'User2',
             deliveryType: 'discord',
             deliveryConfig: { webhook_url: 'https://b' },
-            editFilters: filters2
+            editFilters: editFilters2
           })
 
+          // Verify only one topic row exists despite two subscriptions with different editFilters
           const topics = await pool.query('SELECT COUNT(*) AS n FROM topics')
-          assert.equal(Number(topics[0].n), 1, 'only one topic row, despite different filters')
+          assert.equal(Number(topics[0].n), 1, 'only one topic row, despite different editFilters across subscriptions')
 
-          const subs = await store.subscriptionsForTopic(topic.id)
-          assert.equal(subs.length, 2)
-          assert.deepEqual(subs[0].editFilters, filters1)
-          assert.deepEqual(subs[1].editFilters, filters2)
+          // Verify both subscriptions are returned with their correct editFilters
+          const subs = await store.subscriptionsForTopic(topic1.id)
+          assert.equal(subs.length, 2, 'both subscriptions on the same topic')
+          assert.deepEqual(subs[0].editFilters, editFilters1)
+          assert.deepEqual(subs[1].editFilters, editFilters2)
         })
     })
   })

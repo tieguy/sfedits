@@ -221,4 +221,32 @@ describe('edit-filters', function() {
       assert.isTrue(passesContent(proseHtml, { cosmetic_only: true }))
     })
   })
+
+  describe('metadataDropReason', function() {
+    const { metadataDropReason } = require('../lib/edit-filters')
+
+    it('returns "bot" when bots: false and robot: true', function() {
+      const edit = { robot: true, minor: false, delta: 100 }
+      const filters = { bots: false }
+      assert.equal(metadataDropReason(edit, filters), 'bot')
+    })
+
+    it('returns "min_delta" when min_delta exceeds delta (robot is irrelevant)', function() {
+      const edit = { robot: true, minor: false, delta: 12 }
+      const filters = { min_delta: 500 }
+      assert.equal(metadataDropReason(edit, filters), 'min_delta')
+    })
+
+    it('returns "minor" when minor: false and minor: true', function() {
+      const edit = { robot: false, minor: true, delta: 100 }
+      const filters = { minor: false }
+      assert.equal(metadataDropReason(edit, filters), 'minor')
+    })
+
+    it('returns null when edit passes all filters', function() {
+      const edit = { robot: false, minor: false, delta: 100 }
+      const filters = { bots: true, minor: true, min_delta: 50 }
+      assert.isNull(metadataDropReason(edit, filters))
+    })
+  })
 })

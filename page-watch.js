@@ -165,55 +165,50 @@ async function resolveConsumers(account, edit, topicIds = []) {
 }
 
 /**
- * Deliver an already-rendered post to every subscription of every matched
- * topic. The render happened once, upstream; this is the cheap part.
+ * Deliver an already-rendered post to the given subscriptions.
+ * The render happened once, upstream; this is the cheap part.
  *
+ * Handles rate-capping, health tracking, and quarantine of broken subscriptions.
  * Exported for testing.
+ *
+ * @param {Array} subscriptions - Flat list of subscription objects
+ * @param {Object} payload - Rendered post payload { text, screenshot, metadata }
+ * @returns {Promise<Array>} Delivery results
  */
-async function deliverToTopics({ topicStore: store, topicIds }, payload) {
-  if (!store || topicIds.length === 0) return []
+async function deliverToTopics(subscriptions, payload) {
+  if (!subscriptions || subscriptions.length === 0) return []
 
-  const results = []
-  for (const topicId of topicIds) {
-    let subscriptions
-    try {
-      subscriptions = await store.subscriptionsForTopic(topicId)
-    } catch (error) {
-      console.error(`Could not load subscriptions for topic ${topicId}:`, error.message)
+  const delivered = await deliverAll(subscriptions, payload,
+    { limiter: subscriptionLimiter })
+
+  for (const result of delivered) {
+    if (result.capped) {
+      console.log(`Subscription ${result.subscriptionId}: rate capped`)
+      continue
+    }
+    if (result.ok) {
+      subscriptionHealth.record(result.subscriptionId, result)
       continue
     }
 
-    const delivered = await deliverAll(subscriptions, payload,
-      { limiter: subscriptionLimiter })
+    console.error(
+      `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
 
-    for (const result of delivered) {
-      if (result.capped) {
-        console.log(`Subscription ${result.subscriptionId}: rate capped`)
-        continue
-      }
-      if (result.ok) {
-        subscriptionHealth.record(result.subscriptionId, result)
-        continue
-      }
-
-      console.error(
-        `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
-
-      if (subscriptionHealth.record(result.subscriptionId, result)) {
-        try {
-          await store.setSubscriptionStatus(result.subscriptionId, 'broken')
+    if (subscriptionHealth.record(result.subscriptionId, result)) {
+      try {
+        if (topicStore) {
+          await topicStore.setSubscriptionStatus(result.subscriptionId, 'broken')
           console.error(
             `Subscription ${result.subscriptionId} quarantined after repeated ` +
             'permanent failures; it will stop receiving posts')
-        } catch (error) {
-          console.error(
-            `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
         }
+      } catch (error) {
+        console.error(
+          `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
       }
     }
-    results.push(...delivered)
   }
-  return results
+  return delivered
 }
 
 /**
@@ -405,42 +400,12 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           .map(c => c.subscription)
 
         // Fan out to subscriptions, reusing the single render above.
-        // Delivery failures are logged per subscription and never abort the
-        // account-level posts that already succeeded.
-        const subscriptionResults = subscriptionsToDeliver.length > 0
-          ? await deliverAll(subscriptionsToDeliver, {
-            text: enrichedText,
-            screenshot,
-            metadata
-          }, { limiter: subscriptionLimiter })
-          : []
-
-        // Record subscription delivery results with health tracking
-        for (const result of subscriptionResults) {
-          if (result.capped) {
-            console.log(`Subscription ${result.subscriptionId}: rate capped`)
-            continue
-          }
-          if (result.ok) {
-            subscriptionHealth.record(result.subscriptionId, result)
-            continue
-          }
-
-          console.error(
-            `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
-
-          if (subscriptionHealth.record(result.subscriptionId, result)) {
-            try {
-              await topicStore.setSubscriptionStatus(result.subscriptionId, 'broken')
-              console.error(
-                `Subscription ${result.subscriptionId} quarantined after repeated ` +
-                'permanent failures; it will stop receiving posts')
-            } catch (error) {
-              console.error(
-                `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
-            }
-          }
-        }
+        // deliverToTopics handles rate-capping, health tracking, and quarantine.
+        const subscriptionResults = await deliverToTopics(subscriptionsToDeliver, {
+          text: enrichedText,
+          screenshot,
+          metadata
+        })
 
         // Record what was posted so the revdel sweeper can delete these
         // posts if the revision is later hidden on-wiki. A collapsed post

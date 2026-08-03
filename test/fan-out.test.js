@@ -241,10 +241,12 @@ describe('fan-out', function() {
       assert.isFalse(scope2.isDone(), 'bots:false consumer should filter out bot edit')
     })
 
-    it('performs zero renders when all consumers are filtered by metadata', async function() {
+    it('performs zero renders when all consumers are filtered by metadata (C4)', async function() {
       const pageWatch = loadPageWatch()
 
-      nock('https://en.wikipedia.org')
+      // Set up the diff-fetch scope but do NOT set up the page-verification scope
+      // since we should return early before fetching anything
+      const diffScope = nock('https://en.wikipedia.org')
         .get('/w/index.php').query(true)
         .reply(200, '<script>RLCONF={"wgPageName":"Alpha"};</script>')
 
@@ -270,10 +272,22 @@ describe('fan-out', function() {
 
       assert.equal(renderCount, 0,
         'when all consumers filter out an edit at metadata stage, no render should occur')
+
+      // CRITICAL: the diff fetch must NOT have been consumed - the metadata-stage
+      // early return prevents the HTTP fetch, not just the render
+      assert.isFalse(diffScope.isDone(), 'metadata-stage early return must prevent the diff fetch')
+      const pending = nock.pendingMocks()
+      assert.isAbove(pending.length, 0, 'the diff scope should still be pending (not consumed)')
     })
 
-    it('noop mode still logs filter decisions', async function() {
-      const logMessages = []
+    it('filters cosmetic-only edits from consumers with cosmetic_only: true (I3a)', async function() {
+      const fs = require('fs')
+      const path = require('path')
+
+      // Load the template-only fixture (cosmetic edit)
+      const templateOnlyHtml = fs.readFileSync(
+        path.join(__dirname, 'fixtures/diff-html/template-only.html'), 'utf-8')
+
       const pageWatch = proxyquire('../page-watch', {
         './lib/diff-image': {
           captureDiffImage: async () => {
@@ -285,21 +299,133 @@ describe('fan-out', function() {
           initializeReader: async () => null,
           enrichIPsInText: async (text) => text
         },
+        './lib/diff-page': {
+          fetchDiffHtml: async () => templateOnlyHtml,
+          verifyDiffPage: (html, page) => ({ match: true, actualPage: page })
+        },
         './lib/post-log': { recordPost: () => null }
       })
 
-      // Mock the minimist argv to set noop
+      const paths = ['/api/webhooks/1/filter-less', '/api/webhooks/2/cosmetic-only']
+      const scope1 = nock('https://discord.com').post(paths[0]).query(true).reply(200, { id: '1' })
+      const scope2 = nock('https://discord.com').post(paths[1]).query(true).reply(200, { id: '2' })
+
+      const stubStore = {
+        subscriptionsForTopic: async (topicId) => [
+          { ...subscription(1, paths[0]), editFilters: null },
+          { ...subscription(2, paths[1]), editFilters: { cosmetic_only: true } }
+        ]
+      }
+      pageWatch._setTopicStateForTest(stubStore, null)
+
+      const edit = {
+        wikipedia: 'en',
+        page: 'TestPage',
+        user: 'Editor',
+        robot: false,
+        minor: false,
+        url: 'https://en.wikipedia.org/w/index.php?diff=1&oldid=2'
+      }
+
+      const account = {}
+      await pageWatch.sendStatus(account, pageWatch.getStatus(edit, edit.user, '{{page}}'), edit, [1])
+
+      assert.isTrue(scope1.isDone(), 'filter-less consumer should receive template-only edit')
+      assert.isFalse(scope2.isDone(), 'cosmetic_only consumer should NOT receive template-only edit')
+    })
+
+    it('passes prose edits through content stage for all consumers (I3b)', async function() {
+      const fs = require('fs')
+      const path = require('path')
+
+      // Load the prose fixture (non-cosmetic edit)
+      const proseHtml = fs.readFileSync(
+        path.join(__dirname, 'fixtures/diff-html/prose.html'), 'utf-8')
+
+      const pageWatch = proxyquire('../page-watch', {
+        './lib/diff-image': {
+          captureDiffImage: async () => {
+            renderCount++
+            return { screenshot: screenshotPath, altText: 'alt', summary: null, article: null }
+          }
+        },
+        './lib/geolocation': {
+          initializeReader: async () => null,
+          enrichIPsInText: async (text) => text
+        },
+        './lib/diff-page': {
+          fetchDiffHtml: async () => proseHtml,
+          verifyDiffPage: (html, page) => ({ match: true, actualPage: page })
+        },
+        './lib/post-log': { recordPost: () => null }
+      })
+
+      const paths = ['/api/webhooks/1/filter-less', '/api/webhooks/2/cosmetic-only']
+      const scope1 = nock('https://discord.com').post(paths[0]).query(true).reply(200, { id: '1' })
+      const scope2 = nock('https://discord.com').post(paths[1]).query(true).reply(200, { id: '2' })
+
+      const stubStore = {
+        subscriptionsForTopic: async (topicId) => [
+          { ...subscription(1, paths[0]), editFilters: null },
+          { ...subscription(2, paths[1]), editFilters: { cosmetic_only: true } }
+        ]
+      }
+      pageWatch._setTopicStateForTest(stubStore, null)
+
+      const edit = {
+        wikipedia: 'en',
+        page: 'TestPage',
+        user: 'Editor',
+        robot: false,
+        minor: false,
+        url: 'https://en.wikipedia.org/w/index.php?diff=1&oldid=2'
+      }
+
+      const account = {}
+      await pageWatch.sendStatus(account, pageWatch.getStatus(edit, edit.user, '{{page}}'), edit, [1])
+
+      assert.isTrue(scope1.isDone(), 'filter-less consumer should receive prose edit')
+      assert.isTrue(scope2.isDone(), 'cosmetic_only consumer should receive prose edit (prose is not cosmetic)')
+    })
+
+    it('noop mode still logs filter decisions (C1)', async function() {
+      // Set argv BEFORE proxyquire so page-watch loads with --noop
       const originalArgv = process.argv
       process.argv = ['node', 'page-watch.js', '--noop']
 
+      const logMessages = []
+      const originalLog = console.log
+      const mockLog = function() {
+        logMessages.push(Array.from(arguments).join(' '))
+        originalLog.apply(console, arguments)
+      }
+
       try {
+        // Stub console.log to capture messages
+        console.log = mockLog
+
+        const pageWatch = proxyquire('../page-watch', {
+          './lib/diff-image': {
+            captureDiffImage: async () => {
+              renderCount++
+              return { screenshot: screenshotPath, altText: 'alt', summary: null, article: null }
+            }
+          },
+          './lib/geolocation': {
+            initializeReader: async () => null,
+            enrichIPsInText: async (text) => text
+          },
+          './lib/post-log': { recordPost: () => null }
+        })
+
         nock('https://en.wikipedia.org')
           .get('/w/index.php').query(true)
           .reply(200, '<script>RLCONF={"wgPageName":"Alpha"};</script>')
 
         const stubStore = {
           subscriptionsForTopic: async (topicId) => [
-            { ...subscription(1, '/api/webhooks/1/x'), editFilters: { bots: false } }
+            { ...subscription(1, '/api/webhooks/1/passes'), editFilters: null },
+            { ...subscription(2, '/api/webhooks/2/bots-false'), editFilters: { bots: false } }
           ]
         }
         pageWatch._setTopicStateForTest(stubStore, null)
@@ -307,17 +433,27 @@ describe('fan-out', function() {
         const edit = {
           wikipedia: 'en',
           page: 'Alpha',
-          user: 'Bot',
+          user: 'SomeBot',
           robot: true,
+          minor: false,
           url: 'https://en.wikipedia.org/w/index.php?diff=1&oldid=2'
         }
 
         const account = {}
         await pageWatch.sendStatus(account, pageWatch.getStatus(edit, edit.user, '{{page}}'), edit, [1])
 
-        // noop mode should not render
-        assert.equal(renderCount, 0, 'noop mode should not render')
+        // In noop mode: should still log filter decisions but NOT render
+        assert.equal(renderCount, 0, 'noop mode must not render')
+
+        // Should have logged a "filtered:" line for the bot-blocked subscription
+        const filteredLine = logMessages.find(msg => msg.includes('filtered: Alpha for sub:2 (bot)'))
+        assert.isOk(filteredLine, 'should log filtered: line for bot-blocked subscription')
+
+        // Should have logged a "filter-pass:" line for the filter-less subscription
+        const filterPassLine = logMessages.find(msg => msg.includes('filter-pass: Alpha for sub:1'))
+        assert.isOk(filterPassLine, 'should log filter-pass: line for filter-less subscription')
       } finally {
+        console.log = originalLog
         process.argv = originalArgv
       }
     })
