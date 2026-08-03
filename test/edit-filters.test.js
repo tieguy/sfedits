@@ -1,6 +1,8 @@
-const { describe, it } = require('mocha')
+const { describe, it, beforeEach, afterEach } = require('mocha')
 const { assert } = require('chai')
-const { normalizeEditFilters, passesMetadata, needsContentCheck } = require('../lib/edit-filters')
+const sinon = require('sinon')
+const proxyquire = require('proxyquire')
+const { normalizeEditFilters, passesMetadata, needsContentCheck, isCosmeticOnly, passesContent } = require('../lib/edit-filters')
 
 describe('edit-filters', function() {
 
@@ -35,6 +37,12 @@ describe('edit-filters', function() {
       assert.equal(normalizeEditFilters({ min_delta: null }).min_delta, 0)
       assert.equal(normalizeEditFilters({ min_delta: 'not a number' }).min_delta, 0)
       assert.equal(normalizeEditFilters({}).min_delta, 0)
+    })
+
+    it('coerces min_delta from string numbers (JSON/DB)', function() {
+      assert.equal(normalizeEditFilters({ min_delta: '100' }).min_delta, 100)
+      assert.equal(normalizeEditFilters({ min_delta: '50' }).min_delta, 50)
+      assert.equal(normalizeEditFilters({ min_delta: '0' }).min_delta, 0)
     })
 
     it('respects cosmetic_only: true to opt in', function() {
@@ -115,55 +123,67 @@ describe('edit-filters', function() {
     }
 
     it('returns true for template-only changes', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = loadFixture('template-only.html')
       assert.isTrue(isCosmeticOnly(html))
     })
 
     it('returns true for category-only changes', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = loadFixture('category-only.html')
       assert.isTrue(isCosmeticOnly(html))
     })
 
     it('returns true for ref-only changes', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = loadFixture('ref-only.html')
       assert.isTrue(isCosmeticOnly(html))
     })
 
     it('returns true for whitespace-only changes', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = loadFixture('whitespace-only.html')
       assert.isTrue(isCosmeticOnly(html))
     })
 
     it('returns false for prose changes', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = loadFixture('prose.html')
       assert.isFalse(isCosmeticOnly(html))
     })
 
     it('returns false for mixed template+prose changes', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = loadFixture('mixed.html')
       assert.isFalse(isCosmeticOnly(html))
     })
 
     it('returns false for empty string', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       assert.isFalse(isCosmeticOnly(''))
     })
 
     it('returns false for malformed HTML', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       assert.isFalse(isCosmeticOnly('<div>not a diff table</div>'))
     })
 
     it('returns false for HTML with no recognizable diff rows', function() {
-      const { isCosmeticOnly } = require('../lib/edit-filters')
       const html = '<table class="diff"><tr><td>no diff markers</td></tr></table>'
       assert.isFalse(isCosmeticOnly(html))
+    })
+
+    it('returns false when del-prose + template residue (regression: CRITICAL fix)', function() {
+      // e.g. <del>He was widely criticised…</del>{{reflist}}
+      // After unwrapping del (not discarding), should be: "He was widely criticised…{{reflist}}" NOT cosmetic
+      const html = '<table class="diff"><tr><td class="diff-deletedline"><div><del class="diffchange diffchange-inline">He was widely criticised…</del>{{reflist}}</div></td></tr></table>'
+      assert.isFalse(isCosmeticOnly(html), 'Should not be cosmetic: has prose + template')
+    })
+
+    it('returns false when del-prose + category link residue (regression: CRITICAL fix)', function() {
+      // e.g. <del>Some description</del>[[Category:People]]
+      // After unwrapping del, should be: "Some description[[Category:People]]" NOT cosmetic
+      const html = '<table class="diff"><tr><td class="diff-deletedline"><div><del class="diffchange">Some description</del>[[Category:People]]</div></td></tr></table>'
+      assert.isFalse(isCosmeticOnly(html), 'Should not be cosmetic: has prose + category')
+    })
+
+    it('returns false when cell content is entirely del-wrapped prose (regression: CRITICAL fix)', function() {
+      // Entire line is prose wrapped in del: <del>Full sentence deleted.</del>
+      // After unwrapping, should be: "Full sentence deleted." NOT cosmetic
+      const html = '<table class="diff"><tr><td class="diff-deletedline"><div><del class="diffchange diffchange-inline">Full sentence deleted.</del></div></td></tr></table>'
+      assert.isFalse(isCosmeticOnly(html), 'Should not be cosmetic: has prose content')
     })
   })
 
@@ -177,22 +197,28 @@ describe('edit-filters', function() {
     }
 
     it('always passes when cosmetic_only is false or absent', function() {
-      const { passesContent } = require('../lib/edit-filters')
       const html = loadFixture('prose.html')
       assert.isTrue(passesContent(html, { cosmetic_only: false }))
       assert.isTrue(passesContent(html, {}))
       assert.isTrue(passesContent(html, null))
     })
 
-    it('does not parse HTML when cosmetic_only is false', function() {
-      const { passesContent } = require('../lib/edit-filters')
-      // Pass null to prove it doesn't try to parse
-      assert.isTrue(passesContent(null, { cosmetic_only: false }))
-      assert.isTrue(passesContent(null, {}))
+    it('does not parse HTML when cosmetic_only is false (short-circuit)', function() {
+      // Stub isCosmeticOnly to throw if called, proving the short-circuit works
+      const editFiltersModule = require('../lib/edit-filters')
+      const stub = sinon.stub(editFiltersModule, 'isCosmeticOnly').throws(new Error('isCosmeticOnly should not be called'))
+      try {
+        // Even with cosmetic_only: false, if short-circuit is removed this will throw
+        assert.isTrue(passesContent(null, { cosmetic_only: false }))
+        assert.isTrue(passesContent({}, { cosmetic_only: false }))
+        // Verify the stub was never called (proving short-circuit worked)
+        assert.strictEqual(stub.callCount, 0, 'isCosmeticOnly should not be called when cosmetic_only is false')
+      } finally {
+        stub.restore()
+      }
     })
 
     it('drops cosmetic-only diffs when cosmetic_only: true', function() {
-      const { passesContent } = require('../lib/edit-filters')
       const templateHtml = loadFixture('template-only.html')
       const categoryHtml = loadFixture('category-only.html')
       assert.isFalse(passesContent(templateHtml, { cosmetic_only: true }))
@@ -200,7 +226,6 @@ describe('edit-filters', function() {
     })
 
     it('passes prose diffs when cosmetic_only: true', function() {
-      const { passesContent } = require('../lib/edit-filters')
       const proseHtml = loadFixture('prose.html')
       assert.isTrue(passesContent(proseHtml, { cosmetic_only: true }))
     })
