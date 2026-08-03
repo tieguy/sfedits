@@ -17,7 +17,8 @@ did before the place-bot platform work.
 `user` and `password` may be set here, but on Toolforge they are better left
 out — the build service injects `TOOL_TOOLSDB_USER` and `TOOL_TOOLSDB_PASSWORD`,
 and `lib/topic-store.js` reads those when the config omits them. Keeping
-credentials out of `config.json` is why `SFEDITS_CONFIG` exists.
+secrets out of git is why they live in environment variables; non-secret config
+lives in the committed `config.base.json`.
 
 Local development against the test container:
 
@@ -76,9 +77,9 @@ Subscriptions can filter edits before rendering and posting. Each subscription
 has its own filters, independent of the topic and of other subscriptions to the
 same topic.
 
-Filters live in the `edit_filters` column (JSON) on the subscription row, set
-when the subscription is created (via `/create`). Override at the database level
-with:
+Filters live in the `edit_filters` column (JSON) on the subscription row. They
+default to `null` (no filtering). Set them via direct database UPDATE, or
+programmatically via `lib/topic-store.js`'s `setSubscriptionFilters` method:
 
 ```sql
 UPDATE subscriptions SET edit_filters = JSON_OBJECT('bots', false, 'minor', false)
@@ -87,12 +88,12 @@ UPDATE subscriptions SET edit_filters = JSON_OBJECT('bots', false, 'minor', fals
 
 Schema:
 
-```json
+```jsonc
 {
-  "bots": false,           # Drop bot edits (true/absent = allow)
-  "minor": false,          # Drop minor edits (true/absent = allow)
-  "min_delta": 0,          # Drop edits with |delta| < this (0/absent = allow all)
-  "cosmetic_only": false   # Drop cosmetic-only diffs (true = drop, false/absent = allow)
+  "bots": false,           // Drop bot edits (true/absent = allow)
+  "minor": false,          // Drop minor edits (true/absent = allow)
+  "min_delta": 0,          // Drop edits with |delta| < this (0/absent = allow all)
+  "cosmetic_only": false   // Drop cosmetic-only diffs (true = drop, false/absent = allow)
 }
 ```
 
@@ -101,10 +102,14 @@ class). `min_delta` is a floor (drop smaller edits). `cosmetic_only` is an
 opt-in switch (`true` = drop cosmetic-only, `false`/absent = allow). Absent or
 `null` = no filtering for that field.
 
+**normalizeEditFilters:** The `min_delta` field is coerced to a Number, so the
+string `"100"` is accepted and treated as the number 100. Unknown delta or
+missing delta passes (conservative bias — if filtering is unclear, post). All
+filters are case-sensitive per field.
+
 **Default (SF account):** `{ "bots": false, "minor": false }` — SF edits bot
-drops bot edits and minor edits, which matches the historical watchlist
-behaviour (Top+High importance on-wiki usually excludes bots). Other
-subscriptions can override with different rules.
+drops bot edits and minor edits, matching the historical watchlist behavior.
+Other subscriptions can override with different rules.
 
 The filter is **not** part of `filters_hash`, so two subscriptions with
 different `edit_filters` to the same region-filter pair share one topic row —
@@ -169,10 +174,11 @@ nothing about the query itself stops someone from pointing a firehose at their
 own Discord channel. The estimate shown before submission comes from the same
 histogram the refusal uses.
 
-Codes are shared secrets, not accounts. Revoking one is an edit to
-`SFEDITS_CONFIG` and a restart. **Wikimedia OAuth replaces this** — see Phase 6
-in the design plan; the form's shape does not change when it lands, only where
-`owner_user` comes from.
+Codes are shared secrets, not accounts. Revoking one: remove it from the list
+and run `toolforge envvars create SFEDITS_INVITE_CODES <new-list>`, then restart
+the webservice. **Wikimedia OAuth replaces this** — see Phase 6 in the design
+plan; the form's shape does not change when it lands, only where `owner_user`
+comes from.
 
 Two people who ask for the same place with the same languages get **one topic
 and two subscriptions**: the region is resolved once, each edit is rendered

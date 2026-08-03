@@ -22,7 +22,7 @@ Per `CLAUDE.md`, `integration` is the fork's deployable base:
 # on your machine, in the main checkout
 git checkout integration
 git merge place-bot-platform
-npm test                      # 487 passing, 1 pending with the test db up
+npm test                      # 646 passing, 0 pending with the test db up
 git push fork integration
 ```
 
@@ -101,7 +101,7 @@ Two things about the `sql` helper, each of which costs a confusing error:
   database is missing. To look inside it: `sql tools "SHOW TABLES FROM
   s57894__sfedits"`.
 
-The database name here must match `topic_store.database` in `SFEDITS_CONFIG`
+The database name here must match `topic_store.database` in `config.base.json`
 exactly. A mismatch surfaces as a connection failure in the bot's logs and
 reads like a credentials problem.
 
@@ -317,8 +317,35 @@ the repo) for rollback.** The old code reads it; a revert will need it.
 git checkout integration
 git merge delivery-merge
 SFEDITS_REQUIRE_DB=1 npm test
-# Expected: 646 passing, 0 pending
+# Expected: ~657 passing, 0 pending (post-merge with delivery-merge; verified by trial merge)
 ```
+
+**Merge conflicts (expect 3):**
+
+Three conflicts will arise — all expected and resolvable. Use a trial worktree
+to verify the merge before pushing (git worktree add .../merge-trial integration;
+merge delivery-merge there; resolve conflicts; test; remove the worktree).
+
+1. **page-watch.js** (content conflict): integration's HEAD has platform-direct 
+   code (bluesky, mastodon, discord modules), delivery-merge has unified 
+   `deliveryPost` abstraction. **Resolution:** Use delivery-merge's version 
+   (coherent with other phase changes).
+
+2. **scripts/send-alert.js** (modify/delete): integration modified it to read
+   SFEDITS_CONFIG via lib/config.js, delivery-merge deleted it in Phase 1 
+   (PII screening removal). **Resolution:** Accept the deletion (PII code is 
+   dead, config.js handles SFEDITS_CONFIG properly now).
+
+3. **test/posting.test.js** (content conflict): integration adds a Bluesky text
+   truncation test, delivery-merge has a different test. **Resolution:** Use
+   integration's version, test the newer feature.
+
+Also delete **test/send-alert.test.js** (its script was deleted; remove the test
+file too).
+
+**DB note:** The DB-backed suite can fail spuriously if the local MariaDB 
+container is stale. If test count doesn't match, try `npm run test:db:stop && 
+npm run test:db:start` and re-run before treating a count mismatch as a blocker.
 
 **3. On explicit operator go: Push to fork.**
 
@@ -328,10 +355,11 @@ git push fork integration
 ```
 
 **IMPORTANT:** `autoupdate` runs every 15 minutes. The tick that picks up this
-push will run the OLD image's migrate step while `SFEDITS_CONFIG` is still set.
-The new code rejects it, so **that tick FAILS**. This is expected and not an
-outage signal. Delete `SFEDITS_CONFIG` immediately after the push (within the
-same window), and the NEXT tick (≤15 min later) lands the deploy successfully.
+push will build the new image, then run its migrate step while `SFEDITS_CONFIG`
+is still set. The new code rejects it, so **that tick FAILS**. This is expected
+and not an outage signal. Delete `SFEDITS_CONFIG` immediately after the push
+(within the same window), and the NEXT tick (≤15 min later) lands the deploy
+successfully.
 
 ```bash
 toolforge envvars delete SFEDITS_CONFIG
@@ -344,8 +372,8 @@ toolforge envvars delete SFEDITS_CONFIG
 curl -s https://san-francisco-edit-stream.toolforge.org/changelog | jq '.deploys[0]'
 
 # Check web and bot logs
-toolforge jobs logs web      # should show recent restarts
-toolforge jobs logs bot      # watch for '✓ Watchlist sync: N articles' with N>0
+toolforge webservice buildservice logs      # should show recent restarts
+toolforge jobs logs bot                     # watch for '✓ Watchlist sync: N articles' with N>0
 ```
 
 Look for these lines in the bot log:
@@ -353,6 +381,8 @@ Look for these lines in the bot log:
 - `filtered:` / `filter-pass:` lines (proves edit filters are working)
 
 Observe one real Discord post (the deployed account is Discord-only).
+
+**Caution (LUI-109):** The first automated deploy may report `✓ Watchlist sync: 0 articles` or a failed sync. This happens when the bot restarts before the webservice — the bot tries to fetch its watchlist from the webservice endpoint and fails. Remedy: if this occurs, restart the webservice **first** (`toolforge webservice buildservice restart`), then the bot (`toolforge jobs restart bot`), then re-check the sync line.
 
 **5. After verification: Delete SFEDITS_CONFIG permanently.**
 

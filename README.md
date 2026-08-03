@@ -26,6 +26,10 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
    - Schema migrations via Procfile `migrate` entry
    - Topics (region + filters) and subscriptions (user + webhook + edit_filters)
 
+**Legacy files:** `docker-compose.yml`, `deploy.sh`, and the `admin/Dockerfile`
+are unmaintained remnants from the droplet deployment and may not work. Toolforge
+is the supported deployment path.
+
 ## How it works
 
 1. Bot detects Wikipedia edit
@@ -171,8 +175,11 @@ For example, overlaying `{"accounts":[{"discord":{"webhook_url":"..."}}]}` over
 a two-account base yields one account, not two.
 
 **Delivery layer:** Each account has a `deliveries` array specifying where edits
-go and what edit filters apply. See `docs/config-topic-store.md` for
-per-subscription edit filters (`bots`, `minor`, `min_delta`, `cosmetic_only`).
+go (platform webhook/credentials). Two kinds of edit filters exist:
+- **Config-level** (per delivery, in `config.base.json`): `deliveries[].edit_filters` — 
+  optional filters hardcoded in the config.
+- **Subscription-level** (per topic subscriber, in the database): independent of 
+  config — set via `lib/topic-store.js` or direct SQL. See `docs/config-topic-store.md`.
 
 ### Edit Collapsing
 
