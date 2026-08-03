@@ -6,14 +6,10 @@ const minimist = require('minimist')
 const Mastodon = require('./lib/mastodon-client')
 const Mustache = require('mustache')
 const { EditStream } = require('./lib/edit-stream')
-const { saveDraft } = require('./lib/draft-manager')
 const { enrichIPsInText, initializeReader } = require('./lib/geolocation')
 const { captureDiffImage } = require('./lib/diff-image')
-const { buildFacets, fitBlueskyText } = require('./lib/bluesky-utils')
-const { createAuthenticatedAgent } = require('./lib/bluesky-client')
-const bluesky = require('./lib/bluesky-platform')
-const mastodon = require('./lib/mastodon-platform')
-const discord = require('./lib/discord-platform')
+const { buildFacets } = require('./lib/bluesky-utils')
+const { post: deliveryPost, resolveConfigDeliveries } = require('./lib/delivery')
 const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
 const { createTopicStore } = require('./lib/topic-store')
 const { createTopicIndex } = require('./lib/topic-index')
@@ -28,19 +24,18 @@ let topicIndex = null
 let subscriptionLimiter = null
 const subscriptionHealth = createHealthTracker()
 const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-watch')
-const { verifyPIIWithGemini } = require('./lib/gemini-pii-check')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
-const { recordPost } = require('./lib/post-log')
+const { recordPost, entryDeliveries } = require('./lib/post-log')
 const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser')
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
+const { passesMetadata, needsContentCheck, isCosmeticOnly, metadataDropReason } = require('./lib/edit-filters')
 
 const path = require('path')
 
 const argv = minimist(process.argv.slice(2), {
   default: {
-    verbose: false,
-    config: './config.json'
+    verbose: false
   }
 })
 
@@ -53,12 +48,11 @@ function writeHeartbeat(name) {
   }
 }
 
-function getConfig(configPath) {
-  // The minimist default is './config.json'; only a non-default value is
-  // an explicit request for a file. Otherwise lib/config.js may take the
-  // config from the SFEDITS_CONFIG environment variable (e.g. Toolforge).
-  const explicit = configPath && configPath !== './config.json' ? configPath : null
-  return loadConfig({ path: explicit })
+function getConfig() {
+  // Load config from config.base.json (committed) + config.json (local overlay, optional)
+  // + SFEDITS_* secret env vars. Both files resolve from the current working directory,
+  // which is the repo root when the bot starts.
+  return loadConfig()
 }
 
 // Builds Wikipedia article URL from edit URL. Returns null if URL is malformed.
@@ -83,252 +77,6 @@ function getUserContributionsUrl(editUrl, username) {
   }
 }
 
-
-/**
- * Extract text content from Wikipedia diff HTML
- * @param {string} html - Diff page HTML
- * @returns {string} - Concatenated diff cell text
- */
-function extractDiffText(html) {
-  // Extract text from diff table cells
-  const diffMatches = (html || '').match(/<td[^>]*class="[^"]*diff-[^"]*"[^>]*>(.*?)<\/td>/gs)
-
-  if (!diffMatches) {
-    return ''
-  }
-
-  let diffText = ''
-  for (const match of diffMatches) {
-    // Remove HTML tags and decode entities
-    let text = match
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    diffText += text + ' '
-  }
-
-  return diffText.trim()
-}
-
-/**
- * Analyze diff text for PII using PII microservice
- */
-async function analyzeForPII(text, blockedEntityTypes = null) {
-  try {
-    const body = { text }
-    if (blockedEntityTypes) {
-      body.blocked_entity_types = blockedEntityTypes
-    }
-
-    const response = await fetch('http://pii-service:5000/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000)
-    })
-
-    if (!response.ok) {
-      throw new Error(`PII service returned ${response.status}`)
-    }
-
-    return await response.json()
-  } catch (error) {
-    // On timeout/error, log but allow post through
-    // Blocking every post on infrastructure issues defeats the purpose
-    console.error('PII analysis error:', error.message)
-    console.error('⚠ Allowing post through - PII screening unavailable')
-    return {
-      has_pii: false,
-      entities: []
-    }
-  }
-}
-
-/**
- * Log blocked edit to file for manual review
- */
-function logBlockedEdit(edit, statusData, piiResult) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    article: edit.page,
-    editor: statusData.name,
-    diff_url: edit.url,
-    post_text: statusData.text,
-    detected_pii: piiResult.entities
-  }
-
-  const logLine = JSON.stringify(logEntry) + '\n'
-  fs.appendFileSync('pii-blocks.log', logLine)
-}
-
-/**
- * Send DM alert via Bluesky
- * Uses api.bsky.chat service directly (not routed through bsky.social PDS)
- */
-async function sendBlueskyAlert(account, edit, statusData, _piiResult) {
-  if (!account.pii_alerts?.bluesky_recipient) return
-
-  try {
-    const agent = await createAuthenticatedAgent(account.bluesky)
-    const accessJwt = agent.session.accessJwt
-
-    // Build facets for clickable links (same as regular post)
-    const alertText = `PII: ${statusData.text}`
-    const facets = buildFacets(
-      alertText,
-      statusData.page,
-      statusData.name,
-      statusData.pageUrl,
-      statusData.userUrl
-    )
-
-    // Get conversation - chat API is at api.bsky.chat
-    const convoResponse = await fetch('https://api.bsky.chat/xrpc/chat.bsky.convo.listConvos?limit=100', {
-      headers: {
-        'Authorization': `Bearer ${accessJwt}`
-      }
-    })
-
-    const convosData = await convoResponse.json()
-
-    if (convosData.error) {
-      console.error('Failed to list Bluesky conversations:', convosData.error)
-      return
-    }
-
-    const convo = convosData.convos.find(c =>
-      c.members.some(m => m.handle === account.pii_alerts.bluesky_recipient)
-    )
-
-    if (!convo) {
-      console.error(`No existing Bluesky conversation with ${account.pii_alerts.bluesky_recipient}`)
-      return
-    }
-
-    // Send message - chat API is at api.bsky.chat
-    await fetch('https://api.bsky.chat/xrpc/chat.bsky.convo.sendMessage', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessJwt}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        convoId: convo.id,
-        message: {
-          text: alertText,
-          facets: facets
-        }
-      })
-    })
-
-    console.log('✓ Bluesky alert sent')
-  } catch (error) {
-    console.error('Bluesky alert failed:', error.message)
-  }
-}
-
-/**
- * Send DM alert via Mastodon
- */
-async function sendMastodonAlert(account, edit, statusData, _piiResult) {
-  if (!account.pii_alerts?.mastodon_recipient) return
-
-  try {
-    const M = Mastodon.client({
-      access_token: account.mastodon.access_token,
-      instance: account.mastodon.instance
-    })
-
-    // Same message as regular post, just prefixed with "PII: "
-    const alertText = `PII: ${statusData.text}`
-
-    await M.postStatus({
-      status: `@${account.pii_alerts.mastodon_recipient} ${alertText}`,
-      visibility: 'direct'
-    })
-
-    console.log('✓ Mastodon alert sent')
-  } catch (error) {
-    console.error('Mastodon alert failed:', error.message)
-  }
-}
-
-/**
- * Screen edit for PII before posting
- */
-async function screenForPII(account, edit, statusData, diffHtml) {
-  try {
-    // Check if PII blocking is enabled
-    if (account.pii_blocking && !account.pii_blocking.enabled) {
-      return { safe: true }
-    }
-
-    // Extract diff text from the already-fetched diff HTML
-    const diffText = extractDiffText(diffHtml || '')
-
-    if (!diffText) {
-      console.error('⚠ Could not extract diff text - blocking as precaution')
-      return { safe: false, reason: 'Could not extract diff text' }
-    }
-
-    // Get blocked entity types from config
-    const blockedTypes = account.pii_blocking?.blocked_entity_types || null
-
-    // Analyze for PII
-    const piiResult = await analyzeForPII(diffText, blockedTypes)
-
-    if (piiResult.has_pii) {
-      console.error('⚠ Presidio flagged PII - verifying with Gemini...')
-      console.error(`   Article: ${edit.page}`)
-      console.error(`   Detected: ${piiResult.entities.map(e => e.type).join(', ')}`)
-
-      // Second check: ask Gemini if this is real PII
-      // 'false_positive' = safe to post, 'confirmed' = real PII, 'unavailable' = fall back to blocking
-      const geminiVerdict = await verifyPIIWithGemini(diffText, piiResult.entities, edit.page)
-      if (geminiVerdict === 'false_positive') {
-        console.log('✓ Gemini says false positive - allowing post through')
-        return { safe: true }
-      }
-
-      const reason = geminiVerdict === 'confirmed' ? 'PII confirmed by Gemini' : 'Gemini unavailable, blocking as precaution'
-      console.error(`🚫 Blocking post - ${reason}`)
-
-      // Get PII types and max confidence
-      const piiTypes = [...new Set(piiResult.entities.map(e => e.type))]
-      const maxConfidence = Math.max(...piiResult.entities.map(e => e.score))
-
-      // Save draft (screenshot taken later if admin chooses to post)
-      saveDraft({
-        text: statusData.text,
-        diffUrl: edit.url,
-        article: edit.page,
-        editor: statusData.name,
-        piiDetected: piiTypes,
-        piiConfidence: maxConfidence,
-        statusData: statusData
-      })
-
-      // Log and send text-only alerts
-      logBlockedEdit(edit, statusData, piiResult)
-      await sendBlueskyAlert(account, edit, statusData, piiResult)
-      await sendMastodonAlert(account, edit, statusData, piiResult)
-
-      return { safe: false, reason: 'PII detected', piiResult }
-    }
-
-    return { safe: true }
-  } catch (error) {
-    // Fail-safe: block on any error
-    console.error('⚠ PII screening error - blocking as precaution:', error.message)
-    return { safe: false, reason: 'Screening error' }
-  }
-}
-
 function getStatus(edit, name, template) {
   const pageUrl = getArticleUrl(edit.url, edit.page)
   const userUrl = getUserContributionsUrl(edit.url, name)
@@ -347,6 +95,73 @@ function getStatus(edit, name, template) {
     page: edit.page,
     name
   }
+}
+
+/**
+ * Resolve all consumers for an edit: config deliveries + subscriptions.
+ *
+ * Returns an array of consumers, each carrying its edit_filters.
+ * Caches subscription lookup per edit (keyed by topicIds) to avoid duplicate queries.
+ *
+ * @param {Object} account - Account config
+ * @param {Object} edit - Edit object (used for caching key)
+ * @param {number[]} topicIds - Topic IDs to fetch subscriptions for
+ * @returns {Promise<Array>} Array of consumers with edit_filters
+ */
+async function resolveConsumers(account, edit, topicIds = []) {
+  const consumers = []
+
+  // Start with config deliveries
+  let configDeliveries = resolveConfigDeliveries(account)
+  if (configDeliveries.length === 0) {
+    // Warn and fall back to legacy per-stanza behavior
+    console.warn('[resolveConsumers] account.deliveries is absent or empty - falling back to legacy per-stanza behavior')
+    configDeliveries = []
+    if (account.bluesky) {
+      configDeliveries.push({ type: 'bluesky', credentials: account.bluesky })
+    }
+    if (account.mastodon) {
+      configDeliveries.push({ type: 'mastodon', credentials: account.mastodon })
+    }
+    if (account.discord) {
+      configDeliveries.push({ type: 'discord', credentials: account.discord })
+    }
+  }
+
+  for (const delivery of configDeliveries) {
+    consumers.push({
+      type: 'config',
+      subType: delivery.type,
+      editFilters: delivery.edit_filters || null,
+      delivery
+    })
+  }
+
+  // Load subscriptions for matched topics
+  if (topicStore && topicIds.length > 0) {
+    const seenSubscriptions = new Set()
+    for (const topicId of topicIds) {
+      try {
+        const subs = await topicStore.subscriptionsForTopic(topicId)
+        for (const sub of subs) {
+          // Avoid duplicate subscriptions (one topic per subscription)
+          if (!seenSubscriptions.has(sub.id)) {
+            seenSubscriptions.add(sub.id)
+            consumers.push({
+              type: 'subscription',
+              id: sub.id,
+              editFilters: sub.editFilters || null,
+              subscription: sub
+            })
+          }
+        }
+      } catch (error) {
+        console.error(`Could not load subscriptions for topic ${topicId}:`, error.message)
+      }
+    }
+  }
+
+  return consumers
 }
 
 /**
@@ -417,8 +232,35 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
   try {
     console.log(statusData.text)
 
+    // Resolve all consumers (config deliveries + subscriptions) and run metadata filtering
+    const consumers = await resolveConsumers(account, edit, topicIds)
+
+    // METADATA STAGE: filter by stream-level properties before fetch/render
+    const metadataFiltered = []
+    for (const consumer of consumers) {
+      if (passesMetadata(edit, consumer.editFilters)) {
+        metadataFiltered.push(consumer)
+        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+      } else {
+        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+        const reason = metadataDropReason(edit, consumer.editFilters)
+        console.log(`filtered: ${edit.page} for ${consumerLabel} (${reason})`)
+      }
+    }
+
+    // Early return: if no consumers remain after metadata filtering, skip fetch/render
+    if (metadataFiltered.length === 0 && argv.noop) {
+      return null
+    }
+
     if (!argv.noop) {
-      // Fetch the diff once; reused for page verification and PII screening
+      // Early return if no consumers survived metadata filtering
+      if (metadataFiltered.length === 0) {
+        return null
+      }
+
+      // Fetch the diff once; reused for page verification and content filtering
       const diffHtml = await fetchDiffHtml(edit.url)
 
       // Guard against the IRC feed parser splicing a stale page title onto a
@@ -429,11 +271,40 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
         return null
       }
 
-      // PII screening before posting
-      const screeningResult = await screenForPII(account, edit, statusData, diffHtml)
+      // CONTENT STAGE: filter by cosmetic-only if any consumer needs it
+      let consumersAfterContent = metadataFiltered
+      const anyNeedsContentCheck = metadataFiltered.some(c => needsContentCheck(c.editFilters))
+      if (anyNeedsContentCheck) {
+        const isCosmetic = isCosmeticOnly(diffHtml)
+        if (isCosmetic) {
+          consumersAfterContent = []
+          for (const consumer of metadataFiltered) {
+            if (!needsContentCheck(consumer.editFilters)) {
+              consumersAfterContent.push(consumer)
+              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+              console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+            } else {
+              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+              console.log(`filtered: ${edit.page} for ${consumerLabel} (cosmetic_only)`)
+            }
+          }
+        } else {
+          // Not cosmetic: all survivors pass content stage
+          for (const consumer of metadataFiltered) {
+            const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+            console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+          }
+        }
+      } else {
+        // No consumers need content check: all pass trivially
+        for (const consumer of metadataFiltered) {
+          const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+          console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+        }
+      }
 
-      if (!screeningResult.safe) {
-        console.error(`Post blocked: ${screeningResult.reason}`)
+      // Early return if no consumers remain after content filtering
+      if (consumersAfterContent.length === 0) {
         return null
       }
 
@@ -462,98 +333,139 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           article: capture.article
         }
 
-        // Post to each platform independently so one failing doesn't stop
-        // the others, and so thread refs survive partial failures.
+        // Build the refs object for threading and track all delivery results
+        const refs = { bluesky: null, mastodon: null }
+        const deliveryResults = []
 
-        // Post to Bluesky
-        let blueskyRef = null
-        if (account.bluesky) {
+        // Post to each config delivery target independently so one failing doesn't
+        // stop the others, and so thread refs survive partial failures.
+        for (const consumer of consumersAfterContent) {
+          if (consumer.type !== 'config') continue
+
+          const delivery = consumer.delivery
           try {
-            // Bluesky replies need both root and parent refs; if the thread
-            // root never made it to Bluesky, anchor the thread at the parent.
+            // CRITICAL 4: Delivery-level template override
+            let deliveryText = enrichedText
+            // Skip override for collapsed posts: delivery overrides often omit {{count}},
+            // which would lose the burst summary (e.g., "edited 5 times" becomes "edited 1 time")
+            const isCollapsedBurst = (edit.collapsedCount || 1) > 1
+            if (delivery.template && !isCollapsedBurst) {
+              const overrideStatus = getStatus(edit, edit.user, delivery.template)
+              deliveryText = await enrichIPsInText(overrideStatus.text)
+            }
+
+            // Prepare platform-specific replyTo if threading is needed
             let replyTo = null
-            if (thread && thread.parent && thread.parent.bluesky) {
-              replyTo = {
-                root: (thread.root && thread.root.bluesky) || thread.parent.bluesky,
-                parent: thread.parent.bluesky
+            if (thread && thread.parent) {
+              if (delivery.type === 'bluesky' && thread.parent.bluesky) {
+                // Bluesky replies need both root and parent refs
+                replyTo = {
+                  root: (thread.root && thread.root.bluesky) || thread.parent.bluesky,
+                  parent: thread.parent.bluesky
+                }
+              } else if (delivery.type === 'mastodon' && thread.parent.mastodon) {
+                // Mastodon reply is just the status id
+                replyTo = thread.parent.mastodon
               }
+              // Discord webhooks don't support threading
             }
-            // Bluesky caps posts at 300 graphemes (Mastodon's 500 never
-            // bites with this template, so only this platform truncates).
-            // The shortened title goes into metadata too: buildFacets finds
-            // the title by searching the text, so they must match.
-            const fitted = fitBlueskyText(enrichedText, metadata.page)
-            const result = await bluesky.post({
-              account: account.bluesky,
-              text: fitted.text,
-              screenshot,
-              metadata: { ...metadata, page: fitted.page },
-              replyTo
-            })
-            if (result?.uri) {
-              blueskyRef = { uri: result.uri, cid: result.cid }
-            }
-          } catch (error) {
-            console.error('Bluesky post failed:', error.message)
-          }
-        }
 
-        // Post to Mastodon
-        let mastodonId = null
-        if (account.mastodon) {
-          try {
-            const result = await mastodon.post({
-              account: account.mastodon,
-              text: enrichedText,
+            // Post to this delivery target
+            const result = await deliveryPost(delivery, {
+              text: deliveryText,
               screenshot,
               metadata,
-              replyTo: (thread && thread.parent && thread.parent.mastodon) || null
+              replyTo
             })
-            mastodonId = result?.data?.id || null
+
+            // Handle validation rejection (null result)
+            if (!result) {
+              console.warn(`[sendStatus] ${delivery.type} post was rejected (allowlist or validation failure)`)
+              continue
+            }
+
+            deliveryResults.push(result)
+
+            // Update refs object for threading follow-ups
+            if (result.type === 'bluesky') {
+              refs.bluesky = result.ref
+            } else if (result.type === 'mastodon') {
+              refs.mastodon = result.ref
+            }
+
+            console.log(`[sendStatus] Posted to ${result.type} (${result.postId})`)
           } catch (error) {
-            console.error('Mastodon post failed:', error.message)
+            console.error(`${delivery.type} post failed:`, error.message)
           }
         }
 
-        // Post to Discord (webhooks can't reply, so no threading here)
-        let discordMessageId = null
-        if (account.discord) {
-          try {
-            const result = await discord.post({
-              account: account.discord,
-              text: enrichedText,
-              screenshot,
-              metadata
-            })
-            discordMessageId = result?.id || null
-          } catch (error) {
-            console.error('Discord post failed:', error.message)
-          }
-        }
+        // Filter subscriptions from consumersAfterContent and deliver to them
+        const subscriptionsToDeliver = consumersAfterContent
+          .filter(c => c.type === 'subscription')
+          .map(c => c.subscription)
 
-        // Fan out to topic subscriptions, reusing the single render above.
+        // Fan out to subscriptions, reusing the single render above.
         // Delivery failures are logged per subscription and never abort the
         // account-level posts that already succeeded.
-        await deliverToTopics({ topicStore, topicIds }, {
-          text: enrichedText,
-          screenshot,
-          metadata
-        })
+        const subscriptionResults = subscriptionsToDeliver.length > 0
+          ? await deliverAll(subscriptionsToDeliver, {
+            text: enrichedText,
+            screenshot,
+            metadata
+          }, { limiter: subscriptionLimiter })
+          : []
+
+        // Record subscription delivery results with health tracking
+        for (const result of subscriptionResults) {
+          if (result.capped) {
+            console.log(`Subscription ${result.subscriptionId}: rate capped`)
+            continue
+          }
+          if (result.ok) {
+            subscriptionHealth.record(result.subscriptionId, result)
+            continue
+          }
+
+          console.error(
+            `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
+
+          if (subscriptionHealth.record(result.subscriptionId, result)) {
+            try {
+              await topicStore.setSubscriptionStatus(result.subscriptionId, 'broken')
+              console.error(
+                `Subscription ${result.subscriptionId} quarantined after repeated ` +
+                'permanent failures; it will stop receiving posts')
+            } catch (error) {
+              console.error(
+                `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
+            }
+          }
+        }
 
         // Record what was posted so the revdel sweeper can delete these
         // posts if the revision is later hidden on-wiki. A collapsed post
         // publicizes every buffered revision, so record it under each one:
         // hiding ANY constituent revision must take the combined post down.
-        if (blueskyRef || mastodonId || discordMessageId) {
-          const blueskyUri = blueskyRef ? blueskyRef.uri : null
-          const recordUrls = edit.collapsedUrls || [edit.url]
-          for (const diffUrl of recordUrls) {
-            recordPost({ diffUrl, page: edit.page, blueskyUri, mastodonId, discordMessageId })
-          }
-          writeHeartbeat('post')
-          return { bluesky: blueskyRef, mastodon: mastodonId }
+        const allDeliveries = [
+          ...deliveryResults,
+          ...subscriptionResults
+            .filter(r => r.ok)
+            .map(r => ({ type: r.type, postId: r.postId, subscriptionId: r.subscriptionId }))
+        ]
+
+        // CRITICAL 2+3: Total failure case (no successful deliveries)
+        // If allDeliveries is empty, no post succeeded - don't write heartbeat or entry
+        if (allDeliveries.length === 0) {
+          console.warn('[sendStatus] All deliveries failed - no post recorded, no heartbeat written')
+          return null
         }
-        return null
+
+        const recordUrls = edit.collapsedUrls || [edit.url]
+        for (const diffUrl of recordUrls) {
+          recordPost({ diffUrl, page: edit.page, deliveries: allDeliveries })
+        }
+        writeHeartbeat('post')
+        return refs
       } finally {
         // Always clean up screenshot, even if posting fails
         if (screenshot && fs.existsSync(screenshot)) {
@@ -652,7 +564,7 @@ function checkConfig(config, error) {
 }
 
 async function main() {
-  const config = getConfig(argv.config)
+  const config = getConfig()
 
   // Initialize geolocation database before listening for edits
   await initializeReader()
@@ -692,7 +604,7 @@ async function main() {
       // Periodically check posted revisions and delete posts whose
       // revision has been hidden/suppressed on-wiki
       if (!argv.noop && config.accounts.length > 0) {
-        startSweeper(config.accounts[0])
+        startSweeper(config.accounts[0], undefined, topicStore)
       }
 
       const wikipedia = new EditStream()
@@ -737,10 +649,7 @@ module.exports = {
   buildFacets,
   inspect,
   postEdit,
-  sendStatus,
-  extractDiffText,
-  analyzeForPII,
-  screenForPII
+  sendStatus
 }
 module.exports.deliverToTopics = deliverToTopics
 module.exports._setTopicStateForTest = (store, index) => {

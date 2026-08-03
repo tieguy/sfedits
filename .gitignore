@@ -3,12 +3,8 @@ config.json
 node_modules
 .claude/
 CLAUDE.md
-.gemini/
 GEMINI.md
 REFACTORING_INVESTIGATION.md
-docs/pii-screening/
-pii-blocks.log
-gemini-pii-checks.log
 data/heartbeat-*
 data/reassess/
 data/posted-log.jsonl
@@ -17,3 +13,6 @@ data/posted-log.jsonl
 .superpowers/
 docs/superpowers/
 data/fonts/
+*.bak
+data/watchlist-*.json
+data/wikidata-claim-targets.json

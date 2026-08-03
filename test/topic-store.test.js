@@ -346,6 +346,116 @@ describeWithDb('topic-store (database)', function() {
       assert.equal(all.length, 1)
       assert.equal(all[0].status, 'broken')
     })
+
+    describe('edit_filters', function() {
+      it('migration creates the edit_filters column', async function() {
+        const columns = await pool.query(
+          `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'subscriptions'
+           AND COLUMN_NAME = 'edit_filters'`)
+        assert.equal(columns.length, 1, 'edit_filters column must exist after migration')
+      })
+
+      it('addSubscription stores and returns edit_filters as null by default', async function() {
+        const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+        const sub = await store.addSubscription(topic.id, {
+          ownerUser: 'TestUser',
+          deliveryType: 'discord',
+          deliveryConfig: { webhook_url: 'https://discord.test/hook' }
+        })
+
+        const subs = await store.subscriptionsForTopic(topic.id)
+        assert.equal(subs.length, 1)
+        assert.isNull(subs[0].editFilters, 'edit_filters defaults to null')
+      })
+
+      it('addSubscription accepts and stores edit_filters as JSON', async function() {
+        const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+        const filters = { bots: false, minor: false, cosmetic_only: true }
+        const sub = await store.addSubscription(topic.id, {
+          ownerUser: 'TestUser',
+          deliveryType: 'discord',
+          deliveryConfig: { webhook_url: 'https://discord.test/hook' },
+          editFilters: filters
+        })
+
+        const subs = await store.subscriptionsForTopic(topic.id)
+        assert.equal(subs.length, 1)
+        assert.deepEqual(subs[0].editFilters, filters)
+      })
+
+      it('subscriptionsForTopic parses edit_filters from JSON', async function() {
+        const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+        const filters = { bots: false, minor: true, min_delta: 100 }
+        await store.addSubscription(topic.id, {
+          ownerUser: 'A',
+          deliveryType: 'discord',
+          deliveryConfig: { webhook_url: 'https://a' },
+          editFilters: filters
+        })
+
+        const subs = await store.subscriptionsForTopic(topic.id)
+        assert.deepEqual(subs[0].editFilters, filters)
+      })
+
+      it('setSubscriptionFilters updates edit_filters', async function() {
+        const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+        const sub = await store.addSubscription(topic.id, {
+          ownerUser: 'TestUser',
+          deliveryType: 'discord',
+          deliveryConfig: { webhook_url: 'https://discord.test/hook' },
+          editFilters: { bots: false }
+        })
+
+        const newFilters = { bots: true, minor: false, min_delta: 50 }
+        await store.setSubscriptionFilters(sub.id, newFilters)
+
+        const updated = await store.subscriptionById(sub.id)
+        assert.deepEqual(updated.editFilters, newFilters)
+      })
+
+      it('subscriptionById returns edit_filters', async function() {
+        const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+        const filters = { bots: false, cosmetic_only: true }
+        const sub = await store.addSubscription(topic.id, {
+          ownerUser: 'TestUser',
+          deliveryType: 'discord',
+          deliveryConfig: { webhook_url: 'https://discord.test/hook' },
+          editFilters: filters
+        })
+
+        const fetched = await store.subscriptionById(sub.id)
+        assert.deepEqual(fetched.editFilters, filters)
+      })
+
+      it('INVARIANT: two subscriptions with different edit_filters share one topic row',
+        async function() {
+          const filters1 = { bots: false, minor: false }
+          const filters2 = { bots: true, cosmetic_only: true }
+
+          const topic = await store.upsertTopic('Q62', { languages: ['en'] })
+          await store.addSubscription(topic.id, {
+            ownerUser: 'User1',
+            deliveryType: 'discord',
+            deliveryConfig: { webhook_url: 'https://a' },
+            editFilters: filters1
+          })
+          await store.addSubscription(topic.id, {
+            ownerUser: 'User2',
+            deliveryType: 'discord',
+            deliveryConfig: { webhook_url: 'https://b' },
+            editFilters: filters2
+          })
+
+          const topics = await pool.query('SELECT COUNT(*) AS n FROM topics')
+          assert.equal(Number(topics[0].n), 1, 'only one topic row, despite different filters')
+
+          const subs = await store.subscriptionsForTopic(topic.id)
+          assert.equal(subs.length, 2)
+          assert.deepEqual(subs[0].editFilters, filters1)
+          assert.deepEqual(subs[1].editFilters, filters2)
+        })
+    })
   })
 
   describe('getWatchIndex', function() {

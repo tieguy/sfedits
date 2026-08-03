@@ -34,7 +34,7 @@ The approach is staged so each piece can be verified independently before they'r
 - **`credential_ref`**: A named pointer in a config-defined delivery entry that resolves to the actual secret (e.g., a Bluesky password) inside the composed config at runtime, so neither the committed config file nor the database ever stores the secret itself.
 - **SSRF guard / allowlist**: The existing restriction that Discord webhook delivery targets must be https and match a fixed set of allowed hosts, preventing the bot from being tricked into making requests to arbitrary internal/external URLs. This design explicitly leaves it unchanged and notes Bluesky/Mastodon (credential-based, not URL-based) don't need it.
 - **Revdel sweeper**: The existing process (`lib/revdel-check.js`) that, when a Wikipedia revision is subsequently hidden ("revision-deleted"), deletes the bot's corresponding posts. This design extends it to sweep posts across all delivery types, not just the account's own historical posts.
-- **Posted log**: The bot's append-only record of what it has posted where, used by the revdel sweeper to find posts to delete; this design adds `{delivery_type, post_id}` to each entry.
+- **Posted log**: The bot's append-only record of what it has posted where, used by the revdel sweeper to find posts to delete; this design adds a `{type, postId}` deliveries array to each entry.
 - **`config.base.json` / config overlay**: The new committed, non-secret config file, layered under a gitignored local `config.json` override and then four secret env vars — replacing the single opaque `SFEDITS_CONFIG` env var.
 - **ToolsDB**: Wikimedia Toolforge's shared MySQL/MariaDB hosting service; the production database backing DB subscriptions.
 - **`autoupdate`**: The bot's own 15-minute deploy poller on Toolforge — it rebuilds, migrates, and restarts processes automatically whenever `fork/integration` moves, which is why a push there counts as a live deploy.
@@ -76,18 +76,21 @@ Key components:
 
   ```json
   {
-    "bots": false,
-    "minor": false,
+    "bots": true,
+    "minor": true,
     "min_delta": 0,
     "cosmetic_only": false
   }
   ```
 
-  `bots: false` means "drop edits flagged bot"; `minor: false` drops minor edits;
-  `min_delta: N` drops edits with |length.new − length.old| < N; `cosmetic_only:
-  false` (when enabled) drops edits whose diff only touches templates, categories,
-  refs, file/infobox parameters, or whitespace. Null/absent filters mean no
-  filtering. Two evaluation stages: metadata (free fields on every EventStreams
+  (Values shown are the defaults = no filtering.) `bots`/`minor` are allow-booleans:
+  `false` drops that class of edit. `min_delta: N` drops edits with
+  |length.new − length.old| < N. `cosmetic_only: true` drops edits whose diff only
+  touches templates, categories, refs, file/infobox parameters, or whitespace.
+  Null/absent filters mean no filtering; the SF feeds set
+  `{"bots": false, "minor": false}`. Filters evaluate after the collapser, so a
+  collapsed burst must aggregate: `delta` is the sum over the burst, `robot`/`minor`
+  are true only if every constituent edit was. Two evaluation stages: metadata (free fields on every EventStreams
   event, evaluated before any fetch/render) and content (needs the diff HTML the
   pipeline already fetches for page verification). If no consumer survives the
   metadata stage, the diff fetch and render are skipped entirely — that is where
@@ -98,7 +101,7 @@ Key components:
   `SFEDITS_DISCORD_WEBHOOK_URL`, `SFEDITS_INVITE_CODES`). Each layer overrides only
   what it sets. `SFEDITS_CONFIG` support is removed outright (single-deployer
   decision, 2026-08-02).
-- **Posted log**: entries record `{delivery_type, post_id}` per delivery so the
+- **Posted log**: entries record `{type, postId}` per delivery so the
   revdel sweeper can delete a swept revision's posts on every platform, including
   DB-subscribed Discord (today it only knows the account's own posts).
 
@@ -193,6 +196,8 @@ any committed file; suite passes.
 - `test/edit-filters.test.js` — metadata predicates against synthetic edits;
   cosmetic classification against real diff HTML fixtures (template-only,
   category-only, ref-only, mixed, prose)
+- `lib/edit-collapser.js` — `combine()` aggregates the filterable fields across a
+  burst (`delta` summed; `robot`/`minor` true only if every constituent was)
 
 **Dependencies:** None (parallel to Phases 1–3).
 
@@ -208,7 +213,7 @@ parse → not cosmetic).
   `credential_ref` resolution against composed config
 - `page-watch.js` — account path posts through `lib/delivery.js`; `deliveries`
   config list replaces the per-platform account stanzas
-- Posted log — entries carry `{delivery_type, post_id}`; `lib/revdel-check.js`
+- Posted log — entries carry `{type, postId}` per delivery; `lib/revdel-check.js`
   sweeps across all delivery types
 - Tests: handler behavior via nock per platform; revdel sweep across mixed
   delivery types; allowlist unchanged for webhook types

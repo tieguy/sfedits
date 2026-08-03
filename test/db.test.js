@@ -34,7 +34,7 @@ describeWithDb('db migrations', function() {
     await migrate(pool)
 
     const rows = await pool.query('SELECT COUNT(*) AS n FROM schema_migrations')
-    assert.equal(Number(rows[0].n), 1)
+    assert.equal(Number(rows[0].n), 2, 'both 001 and 002 migrations recorded exactly once')
   })
 
   it('cascades topic deletion to memberships and subscriptions', async function() {

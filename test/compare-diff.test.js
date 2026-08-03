@@ -8,7 +8,7 @@ const {
   summarizeDiff,
   buildAltText,
   blpFromClaims,
-  renderDiffHtml
+  buildDiffModel
 } = require('../lib/compare-diff')
 
 const fixture = JSON.parse(
@@ -266,114 +266,6 @@ describe('compare-diff', function() {
       const alt = buildAltText([{ type: 0, text: 'context' }], 'Cat')
       assert.include(alt, 'no visible text changes')
     })
-  })
-
-  describe('wikitext stripping', function() {
-    it('unwraps piped links while keeping highlights on the label', function() {
-      const diff = [{
-        type: 3,
-        text: 'ranked [[List of cities|secondthird]] by density',
-        highlightRanges: [
-          { start: 24, length: 6, type: 1 },
-          { start: 30, length: 5, type: 0 }
-        ]
-      }]
-      const html = renderDiffHtml(diff, 'SF')
-      assert.notInclude(html, '[[')
-      assert.include(html, '<del>second</del>')
-      assert.include(html, '<ins>third</ins>')
-    })
-
-    it('collapses a wholly-added ref to a highlighted citation gloss', function() {
-      const diff = [{
-        type: 3,
-        text: 'in 2025.<ref>{{Cite web |title=IPUMS |url=https://x.org}}</ref> Some',
-        highlightRanges: [{ start: 8, length: 55, type: 0 }]
-      }]
-      assert.include(renderDiffHtml(diff, 'SF'), '<ins>[ref: &quot;IPUMS&quot; (x.org)]</ins>')
-    })
-
-    it('keeps context refs terse while glossing the changed one', function() {
-      // Only the second ref is part of the edit; the first is context and
-      // glossing it would crowd the render with an unrelated citation
-      const text = 'Old claim.<ref>{{cite web |title=Old |url=https://a.com/1}}</ref> More.<ref>{{cite web |title=New source |url=https://b.com/2}}</ref>'
-      const refStart = text.indexOf(' More.') + ' More.'.length
-      const diff = [{
-        type: 3,
-        text,
-        highlightRanges: [{ start: refStart, length: Buffer.byteLength(text) - refStart, type: 0 }]
-      }]
-      const html = renderDiffHtml(diff, 'SF')
-      assert.include(html, 'Old claim.[ref] More.')
-      assert.include(html, '<ins>[ref: &quot;New source&quot; (b.com)]</ins>')
-      assert.notInclude(html, 'a.com')
-    })
-
-    it('keeps a ref raw when the change is inside it', function() {
-      const diff = [{
-        type: 3,
-        text: '<ref>date=20242025</ref>',
-        highlightRanges: [
-          { start: 10, length: 4, type: 1 },
-          { start: 14, length: 4, type: 0 }
-        ]
-      }]
-      const html = renderDiffHtml(diff, 'SF')
-      assert.include(html, '<del>2024</del>')
-      assert.include(html, '<ins>2025</ins>')
-    })
-
-    it('strips templates, links, and quote markup from context lines', function() {
-      const diff = [{ type: 0, text: "'''SF''',{{Efn|{{IPA|en|x}} audio}} is a [[city]]" }]
-      const html = renderDiffHtml(diff, 'SF')
-      assert.include(html, 'SF,{{Efn}} is a city')
-    })
-
-    it('collapses a ref to its changed fragments when the edit is inside it', function() {
-      // access-date changed inside an existing citation
-      const text = '<ref>{{cite web |url=https://example.com/very/long/path |access-date=20242025 |title=X}}</ref>'
-      const diff = [{
-        type: 3,
-        text,
-        highlightRanges: [
-          { start: 69, length: 4, type: 1 },
-          { start: 73, length: 4, type: 0 }
-        ]
-      }]
-      const html = renderDiffHtml(diff, 'SF')
-      assert.include(html, '[ref: <del>2024</del> <ins>2025</ins>]')
-      assert.notInclude(html, 'example.com')
-    })
-
-    it('keeps markup-only changes visible instead of stripping them away', function() {
-      // Edit wrapped "FEMA" in link brackets: only [[ and ]] are highlighted
-      const diff = [{
-        type: 3,
-        text: 'confiscated by [[FEMA]] to be diverted',
-        highlightRanges: [
-          { start: 15, length: 2, type: 0 },
-          { start: 21, length: 2, type: 0 }
-        ]
-      }]
-      const html = renderDiffHtml(diff, 'SF')
-      assert.include(html, '<ins>[[</ins>')
-      assert.include(html, '<ins>]]</ins>')
-    })
-
-    it('omits whitespace-only changed lines from image and summary', function() {
-      const wsLine = {
-        type: 3,
-        text: '|founded   = 1850s',
-        highlightRanges: [{ start: 8, length: 2, type: 0 }] // added spaces only
-      }
-      const realLine = { type: 1, text: 'Real new sentence.' }
-      const html = renderDiffHtml([wsLine, realLine], 'Cat')
-      assert.notInclude(html, 'founded')
-      assert.include(html, 'Real new sentence.')
-
-      const alt = buildAltText([wsLine], 'Cat')
-      assert.include(alt, 'whitespace and formatting changes only')
-    })
 
     it('describes markup-only fragments in alt text instead of quoting them', function() {
       // Wrapping a word in link brackets: fragments are [[ and ]]
@@ -413,36 +305,266 @@ describe('compare-diff', function() {
       assert.include(alt, 'He lived in SF.[ref]')
       assert.notInclude(alt, 'cite web')
     })
-  })
-
-  describe('article meta in output', function() {
-    it('renders description and thumbnail when provided', function() {
-      const diff = [{ type: 1, text: 'new text' }]
-      const html = renderDiffHtml(diff, 'Gavin Newsom', {
-        description: 'Governor of California since 2019',
-        imageDataUri: 'data:image/png;base64,AAAA'
-      })
-      assert.include(html, 'Governor of California since 2019')
-      assert.include(html, 'src="data:image/png;base64,AAAA"')
-    })
-
-    it('renders cleanly with no meta (backward compatible)', function() {
-      const html = renderDiffHtml([{ type: 1, text: 'x' }], 'Cat')
-      assert.notInclude(html, 'class="description"')
-      assert.notInclude(html, 'class="thumb"')
-      assert.include(html, '<h1>Cat</h1>')
-    })
-
-    it('escapes HTML in the description', function() {
-      const html = renderDiffHtml([{ type: 1, text: 'x' }], 'Cat', {
-        description: '<script>alert(1)</script>'
-      })
-      assert.notInclude(html, '<script>')
-    })
 
     it('includes the description in alt text', function() {
       const alt = buildAltText([{ type: 1, text: 'New.' }], 'Gavin Newsom', 'Governor of California since 2019')
       assert.include(alt, 'Diff of Wikipedia article "Gavin Newsom" (Governor of California since 2019):')
+    })
+  })
+
+  describe('wikitext stripping', function() {
+    it('unwraps piped links while keeping highlights on the label', function() {
+      const diff = [{
+        type: 3,
+        text: 'ranked [[List of cities|secondthird]] by density',
+        highlightRanges: [
+          { start: 24, length: 6, type: 1 },
+          { start: 30, length: 5, type: 0 }
+        ]
+      }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const row = model.rows[0]
+      assert.equal(row.kind, 'change')
+      assert.deepEqual(row.segments, [
+        { text: 'ranked ', highlight: null },
+        { text: 'second', highlight: 'delete' },
+        { text: 'third', highlight: 'add' },
+        { text: ' by density', highlight: null }
+      ])
+    })
+
+    it('collapses a wholly-added ref to a highlighted citation gloss', function() {
+      const diff = [{
+        type: 3,
+        text: 'in 2025.<ref>{{Cite web |title=IPUMS |url=https://x.org}}</ref> Some',
+        highlightRanges: [{ start: 8, length: 55, type: 0 }]
+      }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const segments = model.rows[0].segments
+      // The ref should be collapsed to a gloss, with highlight preserved
+      const glossSegment = segments.find(s => s.text.includes('ref:'))
+      assert.isOk(glossSegment)
+      assert.equal(glossSegment.highlight, 'add')
+      assert.include(glossSegment.text, 'IPUMS')
+      assert.include(glossSegment.text, 'x.org')
+    })
+
+    it('keeps context refs terse while glossing the changed one', function() {
+      // Only the second ref is part of the edit; the first is context and
+      // glossing it would crowd the render with an unrelated citation
+      const text = 'Old claim.<ref>{{cite web |title=Old |url=https://a.com/1}}</ref> More.<ref>{{cite web |title=New source |url=https://b.com/2}}</ref>'
+      const refStart = text.indexOf(' More.') + ' More.'.length
+      const diff = [{
+        type: 3,
+        text,
+        highlightRanges: [{ start: refStart, length: Buffer.byteLength(text) - refStart, type: 0 }]
+      }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const textContent = model.rows[0].segments.map(s => s.text).join('')
+      assert.include(textContent, 'Old claim.[ref] More.')
+      const glossed = model.rows[0].segments.find(s => s.text.includes('New source'))
+      assert.isOk(glossed)
+      assert.equal(glossed.highlight, 'add')
+    })
+
+    it('keeps a ref raw when the change is inside it', function() {
+      const diff = [{
+        type: 3,
+        text: '<ref>date=20242025</ref>',
+        highlightRanges: [
+          { start: 10, length: 4, type: 1 },
+          { start: 14, length: 4, type: 0 }
+        ]
+      }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const segments = model.rows[0].segments
+      // Should have the year parts as separate segments
+      assert.isTrue(segments.some(s => s.text === '2024' && s.highlight === 'delete'))
+      assert.isTrue(segments.some(s => s.text === '2025' && s.highlight === 'add'))
+    })
+
+    it('strips templates, links, and quote markup from context lines', function() {
+      const diff = [{ type: 0, text: "'''SF''',{{Efn|{{IPA|en|x}} audio}} is a [[city]]" }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const text = model.rows[0].segments[0].text
+      assert.include(text, 'SF')
+      assert.include(text, '{{Efn}}')
+      assert.include(text, 'is a city')
+      assert.notInclude(text, "'''")
+      assert.notInclude(text, '[[')
+    })
+
+    it('collapses a ref to its changed fragments when the edit is inside it', function() {
+      // access-date changed inside an existing citation
+      const text = '<ref>{{cite web |url=https://example.com/very/long/path |access-date=20242025 |title=X}}</ref>'
+      const diff = [{
+        type: 3,
+        text,
+        highlightRanges: [
+          { start: 69, length: 4, type: 1 },
+          { start: 73, length: 4, type: 0 }
+        ]
+      }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const textContent = model.rows[0].segments.map(s => s.text).join('')
+      assert.include(textContent, '[ref:')
+      assert.include(textContent, '2024')
+      assert.include(textContent, '2025')
+      assert.notInclude(textContent, 'example.com')
+    })
+
+    it('keeps markup-only changes visible instead of stripping them away', function() {
+      // Edit wrapped "FEMA" in link brackets: only [[ and ]] are highlighted
+      const diff = [{
+        type: 3,
+        text: 'confiscated by [[FEMA]] to be diverted',
+        highlightRanges: [
+          { start: 15, length: 2, type: 0 },
+          { start: 21, length: 2, type: 0 }
+        ]
+      }]
+      const model = buildDiffModel(diff, 'SF')
+      assert.lengthOf(model.rows, 1)
+      const segments = model.rows[0].segments
+      // The [[ and ]] brackets should be marked as added
+      assert.isTrue(segments.some(s => s.text === '[[' && s.highlight === 'add'))
+      assert.isTrue(segments.some(s => s.text === ']]' && s.highlight === 'add'))
+    })
+
+    it('omits whitespace-only changed lines from rows', function() {
+      const wsLine = {
+        type: 3,
+        text: '|founded   = 1850s',
+        highlightRanges: [{ start: 8, length: 2, type: 0 }] // added spaces only
+      }
+      const realLine = { type: 1, text: 'Real new sentence.' }
+      const model = buildDiffModel([wsLine, realLine], 'Cat')
+      // Whitespace-only line should be omitted
+      assert.lengthOf(model.rows, 1)
+      assert.include(model.rows[0].segments[0].text, 'Real new sentence.')
+    })
+  })
+
+  describe('line capping and gutters', function() {
+    it('caps rendered lines and reports omissions', function() {
+      const diff = Array.from({ length: 80 }, (_, i) => ({ type: 1, text: `line ${i}`, lineNumber: i + 1 }))
+      const model = buildDiffModel(diff, 'Big Edit')
+      // Should have 50 lines + footer
+      const nonFooterRows = model.rows.filter(r => r.kind !== 'footer')
+      assert.isAtMost(nonFooterRows.length, 50)
+      const footer = model.rows.find(r => r.kind === 'footer')
+      assert.isOk(footer)
+      assert.include(footer.segments[0].text, 'more changed line')
+    })
+
+    it('clips long context lines and windows long changed lines', function() {
+      const long = 'a'.repeat(2000)
+      const diff = [
+        { type: 0, text: long },
+        { type: 3, text: long + 'CHANGED' + long, highlightRanges: [{ start: 2000, length: 7, type: 0 }] }
+      ]
+      const model = buildDiffModel(diff, 'Cat')
+      // Context line should be clipped
+      const contextText = model.rows[0].segments[0].text
+      assert.isBelow(contextText.length, 2000)
+      assert.include(contextText, '…')
+
+      // Changed line should be windowed around the change
+      const changedSegments = model.rows[1].segments
+      const changedText = changedSegments.map(s => s.text).join('')
+      // Should include […] elision for non-highlighted text
+      assert.isTrue(changedSegments.some(s => s.text.includes('[…]')))
+      assert.isTrue(changedSegments.some(s => s.text.includes('CHANGED')))
+    })
+
+    it('does not highlight whitespace-only segments', function() {
+      // When ALL changes are whitespace, the line is skipped entirely
+      const diff = [{
+        type: 3,
+        text: 'foo   bar',
+        highlightRanges: [{ start: 3, length: 3, type: 0 }]
+      }]
+      const model = buildDiffModel(diff, 'Cat')
+      // The line is omitted as whitespace-only
+      assert.lengthOf(model.rows, 0)
+
+      // But if there's a real change alongside whitespace, the whitespace
+      // doesn't get highlighted
+      const diff2 = [{
+        type: 3,
+        text: 'foo   bar WORD',
+        highlightRanges: [
+          { start: 3, length: 3, type: 0 },  // whitespace (not highlighted in output)
+          { start: 10, length: 4, type: 0 }   // WORD (bytes 10-13, highlighted)
+        ]
+      }]
+      const model2 = buildDiffModel(diff2, 'Cat')
+      assert.lengthOf(model2.rows, 1)
+      const segments = model2.rows[0].segments
+      // Check that there's a real change and whitespace is not highlighted
+      const hasAddedText = segments.some(s => s.highlight === 'add')
+      assert.isTrue(hasAddedText, 'Should have added text')
+      const whitespaceSegments = segments.filter(s => !s.text.trim())
+      for (const seg of whitespaceSegments) {
+        assert.isNull(seg.highlight, 'Whitespace should not be highlighted')
+      }
+    })
+
+    it('renders full added and deleted lines with gutters', function() {
+      const diff = [
+        { type: 1, text: 'added line' },
+        { type: 2, text: 'deleted line' }
+      ]
+      const model = buildDiffModel(diff, 'Cat')
+      assert.lengthOf(model.rows, 2)
+
+      const addRow = model.rows[0]
+      assert.equal(addRow.kind, 'add')
+      assert.equal(addRow.gutter, '+')
+      assert.include(addRow.segments[0].text, 'added line')
+
+      const delRow = model.rows[1]
+      assert.equal(delRow.kind, 'delete')
+      assert.equal(delRow.gutter, '−')
+      assert.include(delRow.segments[0].text, 'deleted line')
+    })
+
+    it('includes gap rows between non-contiguous chunks', function() {
+      const diff = [
+        { type: 1, text: 'line 1', lineNumber: 1 },
+        { type: 1, text: 'line 10', lineNumber: 10 }
+      ]
+      const model = buildDiffModel(diff, 'Cat')
+      assert.lengthOf(model.rows, 3) // add, gap, add
+      assert.equal(model.rows[1].kind, 'gap')
+      assert.include(model.rows[1].segments[0].text, '⋯')
+    })
+  })
+
+  describe('article meta in output', function() {
+    it('returns description and imageDataUri in model when provided', function() {
+      const diff = [{ type: 1, text: 'new text' }]
+      const model = buildDiffModel(diff, 'Gavin Newsom', {
+        description: 'Governor of California since 2019',
+        imageDataUri: 'data:image/png;base64,AAAA'
+      })
+      assert.equal(model.description, 'Governor of California since 2019')
+      assert.equal(model.imageDataUri, 'data:image/png;base64,AAAA')
+      assert.equal(model.page, 'Gavin Newsom')
+    })
+
+    it('returns null for meta fields when not provided', function() {
+      const diff = [{ type: 1, text: 'x' }]
+      const model = buildDiffModel(diff, 'Cat')
+      assert.isNull(model.description)
+      assert.isNull(model.imageDataUri)
+      assert.equal(model.page, 'Cat')
     })
   })
 
@@ -474,60 +596,20 @@ describe('compare-diff', function() {
     })
   })
 
-  describe('renderDiffHtml', function() {
-    it('renders the fixture with word-level highlights', function() {
-      const html = renderDiffHtml(fixture.diff, 'Test Article')
-      assert.include(html, 'id="diff"')
-      assert.include(html, '<h1>Test Article</h1>')
-      assert.include(html, '<ins>')
-      assert.include(html, '<del>')
-    })
-
-    it('escapes HTML in page titles and diff text', function() {
-      const diff = [{ type: 1, text: '<script>alert(1)</script>' }]
-      const html = renderDiffHtml(diff, '<b>Page</b>')
-      assert.notInclude(html, '<script>')
-      assert.notInclude(html, '<b>Page</b>')
-      assert.include(html, '&lt;script&gt;')
-    })
-
-    it('caps rendered lines and reports omissions', function() {
-      const diff = Array.from({ length: 80 }, (_, i) => ({ type: 1, text: `line ${i}`, lineNumber: i + 1 }))
-      const html = renderDiffHtml(diff, 'Big Edit')
-      assert.include(html, 'more changed line')
-      assert.notInclude(html, 'line 79')
-    })
-
-    it('clips long context lines and windows long changed lines', function() {
-      const long = 'a'.repeat(2000)
-      const diff = [
-        { type: 0, text: long },
-        { type: 3, text: long + 'CHANGED' + long, highlightRanges: [{ start: 2000, length: 7, type: 0 }] }
-      ]
-      const html = renderDiffHtml(diff, 'Cat')
-      assert.notInclude(html, long)
-      assert.include(html, '<ins>CHANGED</ins>')
-      assert.include(html, '[…]')
-    })
-
-    it('does not highlight whitespace-only segments', function() {
-      const diff = [{
-        type: 3,
-        text: 'foo   bar',
-        highlightRanges: [{ start: 3, length: 3, type: 0 }]
-      }]
-      const html = renderDiffHtml(diff, 'Cat')
-      assert.notInclude(html, '<ins>')
-    })
-
-    it('renders full added and deleted lines with gutters', function() {
-      const diff = [
-        { type: 1, text: 'added line' },
-        { type: 2, text: 'deleted line' }
-      ]
-      const html = renderDiffHtml(diff, 'Cat')
-      assert.include(html, 'class="row add"')
-      assert.include(html, 'class="row delete"')
+  describe('diff highlights in model', function() {
+    it('includes segments with add and delete highlights in rows', function() {
+      const model = buildDiffModel(fixture.diff, 'Test Article')
+      // Verify there's at least one segment with 'add' highlight and one with 'delete'
+      let hasAdd = false
+      let hasDelete = false
+      for (const row of model.rows) {
+        for (const segment of row.segments) {
+          if (segment.highlight === 'add') hasAdd = true
+          if (segment.highlight === 'delete') hasDelete = true
+        }
+      }
+      assert.isTrue(hasAdd, 'Should have at least one segment with add highlight')
+      assert.isTrue(hasDelete, 'Should have at least one segment with delete highlight')
     })
   })
 })

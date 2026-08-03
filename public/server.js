@@ -10,7 +10,7 @@
  *
  * The bot process keeps its lists in its own container, so this server
  * computes its own copy from the same sources with the same lib modules -
- * config from SFEDITS_CONFIG, articles from PageAssessments, claim targets
+ * config from config.base.json + env vars, articles from PageAssessments, claim targets
  * from WDQS - refreshed daily. A refresh failure keeps the last good data.
  *
  * The admin console (admin/server.js) is intentionally NOT part of the web

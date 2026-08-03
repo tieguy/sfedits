@@ -118,7 +118,6 @@ cat > /tmp/sfedits-config.json <<'JSON'
     {
       "template": "{{page}} was edited by {{name}}",
       "discord": { "webhook_url": "https://discord.com/api/webhooks/…" },
-      "pii_blocking": { "enabled": false },
       "watchlist_source": {
         "project": "California/San Francisco Bay Area task force",
         "importance": ["Top", "High"]
@@ -148,8 +147,6 @@ Notes that matter:
   `TOOL_TOOLSDB_USER` and `TOOL_TOOLSDB_PASSWORD`, and `lib/topic-store.js`
   reads those when the config omits them. Keeping credentials out of the config
   is the entire reason `SFEDITS_CONFIG` exists.
-- `pii_blocking.enabled: false` is deliberate and settled — this fork relies on
-  the revdel sweeper, not the Presidio sidecar. See the design plan.
 - **`web.invite_codes` is what opens `/create`.** Omit the whole `web` stanza to
   deploy with the form closed; the coverage page runs either way.
 - Confirm afterwards with `toolforge envvars list` (it shows names, not values).
@@ -190,6 +187,51 @@ with no config at all.
 the deployed config a schema behind?" — the question that cost a failed
 `migrate` on the first deploy. See LUI-108 for the longer-term fix.
 
+### Phase 3 cutover check: SFEDITS_CONFIG must be deleted before merge to integration
+
+**This phase rejects `SFEDITS_CONFIG` at startup.** Pushing this branch to
+`fork/integration` without deleting the envvar in the same window takes down
+every process (push = live deploy in 15 min).
+
+**Required before this branch reaches `integration`:**
+
+1. Verify `config.base.json` reflects the deployed config. Values observable from
+   `/api/topics.json` are mostly recoverable, but template strings and other
+   non-observable values are not:
+
+```bash
+toolforge envvars show SFEDITS_CONFIG --raw | jq > /tmp/deployed-config.json
+# Then diff /tmp/deployed-config.json against config.base.json in the repo
+# Reconcile any differences before proceeding
+```
+
+2. Stage the four new secret envvars on Toolforge (see section 3 above for the
+   current stanzas):
+
+```bash
+toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL
+toolforge envvars create SFEDITS_INVITE_CODES
+# (and SFEDITS_BLUESKY_PASSWORD, SFEDITS_MASTODON_ACCESS_TOKEN if you added those stanzas)
+```
+
+3. **In the same deploy window** (ordered with the documented web-before-bot
+   restart rule):
+
+```bash
+# Push this branch to fork/integration to trigger autoupdate (or manually build/migrate)
+git push fork integration
+
+# Wait ~15 minutes for autoupdate, or force rebuild now:
+# toolforge build start https://github.com/tieguy/sfedits --ref integration
+
+# Delete SFEDITS_CONFIG AFTER the new image is built but BEFORE bot restarts:
+toolforge envvars delete SFEDITS_CONFIG
+
+# Restart (order matters: web before bot, per the deployment rules)
+toolforge webservice buildservice restart
+toolforge jobs restart bot
+```
+
 ## 4. Build
 
 ```bash
@@ -199,10 +241,9 @@ toolforge build show                 # watch until it reports success
 
 The buildpack reads `Procfile` for `web` and `bot`, and `engines.node` from
 `package.json` (now `>=20` — the codebase assumes global `fetch` and
-`AbortSignal.timeout`). `.npmrc` sets `puppeteer_skip_download=true` so the
-build does not pull ~150MB of Chromium for a renderer this fork never uses; the
-native satori/resvg path is what runs. The `Dockerfile` in the repo is **not**
-used by the build service — it is for local container runs only.
+`AbortSignal.timeout`). Diff rendering uses only satori and resvg (no Chromium
+fetched). The `Dockerfile` in the repo is **not** used by the build service — it
+is for local container runs only.
 
 ## 5. Migrate the database
 
@@ -336,4 +377,3 @@ toolforge jobs run migrate --command "node scripts/migrate.js" \
 - **The admin console** (`admin/server.js`). Its Bluesky-DM login cannot work on
   a Discord-only account, so the web process deliberately serves only
   `public/server.js`.
-- **The PII sidecar.** Settled: this fork uses the revdel sweeper instead.
