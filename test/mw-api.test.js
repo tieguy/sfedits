@@ -81,4 +81,58 @@ describe('mw-api', function() {
       assert.equal(requests, 1)
     })
   })
+
+  describe('wmFetch compliance headers', function() {
+    it('sends the operator User-Agent from lib/user-agent.js', async function() {
+      const { userAgent } = require('../lib/user-agent')
+      nock(HOST)
+        .matchHeader('user-agent', userAgent('test-component'))
+        .get('/ua')
+        .reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/ua`, { component: 'test-component' })
+      assert.equal(res.status, 200)
+    })
+
+    it('requests gzip', async function() {
+      nock(HOST)
+        .matchHeader('accept-encoding', 'gzip')
+        .get('/gz')
+        .reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/gz`)
+      assert.equal(res.status, 200)
+    })
+
+    it('lets callers add headers without losing the compliance ones', async function() {
+      nock(HOST)
+        .matchHeader('accept', 'application/json')
+        .matchHeader('accept-encoding', 'gzip')
+        .get('/hdr')
+        .reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/hdr`, { headers: { Accept: 'application/json' } })
+      assert.equal(res.status, 200)
+    })
+  })
+
+  describe('wmFetchJson', function() {
+    it('parses a JSON body', async function() {
+      nock(HOST).get('/json').reply(200, { items: [1, 2] })
+
+      const data = await wmFetchJson(`${HOST}/json`)
+      assert.deepEqual(data, { items: [1, 2] })
+    })
+
+    it('throws HTTP <status> on error responses', async function() {
+      nock(HOST).get('/json').reply(403, { error: 'nope' })
+
+      try {
+        await wmFetchJson(`${HOST}/json`, { tries: 2, backoffMs: 1 })
+        assert.fail('should have thrown')
+      } catch (error) {
+        assert.equal(error.message, 'HTTP 403')
+      }
+    })
+  })
 })
