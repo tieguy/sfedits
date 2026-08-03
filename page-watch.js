@@ -29,7 +29,7 @@ const { recordPost, entryDeliveries } = require('./lib/post-log')
 const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser')
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
-const { passesMetadata, needsContentCheck, isCosmeticOnly } = require('./lib/edit-filters')
+const { passesMetadata, needsContentCheck, isCosmeticOnly, metadataDropReason } = require('./lib/edit-filters')
 
 const path = require('path')
 
@@ -233,18 +233,18 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
     console.log(statusData.text)
 
     // Resolve all consumers (config deliveries + subscriptions) and run metadata filtering
-    let consumers = await resolveConsumers(account, edit, topicIds)
+    const consumers = await resolveConsumers(account, edit, topicIds)
 
     // METADATA STAGE: filter by stream-level properties before fetch/render
     const metadataFiltered = []
     for (const consumer of consumers) {
       if (passesMetadata(edit, consumer.editFilters)) {
         metadataFiltered.push(consumer)
+        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
       } else {
         const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-        const reason = !consumer.editFilters ? 'no filters' :
-          (!consumer.editFilters.bots && edit.robot) ? 'bot' :
-          (!consumer.editFilters.minor && edit.minor) ? 'minor' : 'min_delta'
+        const reason = metadataDropReason(edit, consumer.editFilters)
         console.log(`filtered: ${edit.page} for ${consumerLabel} (${reason})`)
       }
     }
@@ -281,11 +281,25 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           for (const consumer of metadataFiltered) {
             if (!needsContentCheck(consumer.editFilters)) {
               consumersAfterContent.push(consumer)
+              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+              console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
             } else {
               const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
               console.log(`filtered: ${edit.page} for ${consumerLabel} (cosmetic_only)`)
             }
           }
+        } else {
+          // Not cosmetic: all survivors pass content stage
+          for (const consumer of metadataFiltered) {
+            const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+            console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+          }
+        }
+      } else {
+        // No consumers need content check: all pass trivially
+        for (const consumer of metadataFiltered) {
+          const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+          console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
         }
       }
 
