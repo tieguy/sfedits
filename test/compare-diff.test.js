@@ -1,5 +1,6 @@
 const { describe, it } = require('mocha')
 const { assert } = require('chai')
+const nock = require('nock')
 const fs = require('fs')
 const path = require('path')
 const {
@@ -610,6 +611,37 @@ describe('compare-diff', function() {
       }
       assert.isTrue(hasAdd, 'Should have at least one segment with add highlight')
       assert.isTrue(hasDelete, 'Should have at least one segment with delete highlight')
+    })
+  })
+
+  describe('fetchParentRevision', function() {
+    afterEach(function() {
+      nock.cleanAll()
+      require('../lib/mw-api')._resetSessions()
+    })
+
+    it('reads the parent id from a formatversion 2 pages array', async function() {
+      nock('https://en.wikipedia.org')
+        .get('/w/api.php')
+        .query(q => q.action === 'query' && q.prop === 'revisions' && q.formatversion === '2')
+        .reply(200, {
+          query: { pages: [{ pageid: 42, revisions: [{ revid: 200, parentid: 100 }] }] }
+        })
+
+      const { fetchParentRevision } = require('../lib/compare-diff')
+      assert.equal(await fetchParentRevision('en.wikipedia.org', 200), 100)
+    })
+
+    it('returns null when the revision has no parent', async function() {
+      nock('https://en.wikipedia.org')
+        .get('/w/api.php')
+        .query(true)
+        .reply(200, {
+          query: { pages: [{ pageid: 42, revisions: [{ revid: 200, parentid: 0 }] }] }
+        })
+
+      const { fetchParentRevision } = require('../lib/compare-diff')
+      assert.isNull(await fetchParentRevision('en.wikipedia.org', 200))
     })
   })
 })
