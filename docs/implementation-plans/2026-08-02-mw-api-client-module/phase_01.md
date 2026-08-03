@@ -251,53 +251,105 @@ Create `lib/mw-api.js`:
 
 const { userAgent } = require('./user-agent')
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+// Sleep that can be aborted via a signal. If aborted, throws AbortError immediately.
+const sleep = async (ms, signal) => {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      })
+    }
+  })
+}
 
 // Retry semantics ported from the tested apiGet in place-bot-platform-design
 // scripts/reassess.js: 429 waits are free (separate maxRateLimitWaits cap,
 // Retry-After authoritative); 5xx/network errors get `tries` attempts with
-// linear backoff; permanent non-429 4xx never retries.
+// linear backoff; permanent non-429 4xx never retries. 503 + Retry-After
+// is treated like 429 (free wait), per Wikimedia load-shedding practice.
+// Abort signals are honored immediately without retry. Total wait time is
+// tracked and bounded by maxTotalWaitMs.
 async function wmFetch(url, {
-  component = 'mw-api',
+  component,
   tries = 4,
   backoffMs = 2000,
   rateLimitWaitMs = 10000,
   maxRateLimitWaits = 60,
+  maxRetryAfterMs = 5 * 60 * 1000,
+  maxTotalWaitMs = 10 * 60 * 1000,
   timeoutMs = 30000,
   headers = {},
+  signal,
   ...fetchOpts
 } = {}) {
+  // component is required for attribution; match user-agent.js's contract
+  if (!component || typeof component !== 'string') {
+    throw new Error('wmFetch requires component (string)')
+  }
+
+  // Build headers ONCE before the loop: set compliance headers using the
+  // Headers API (which normalizes key case-insensitivity), taking precedence
+  // over caller-supplied headers.
+  const headersObj = new Headers(headers)
+  headersObj.set('User-Agent', userAgent(component))
+  headersObj.set('Accept-Encoding', 'gzip')
+
+  // Compose caller's signal with timeout ONCE before the loop.
+  const abortSignals = [AbortSignal.timeout(timeoutMs)]
+  if (signal) abortSignals.push(signal)
+  const composedSignal = AbortSignal.any(abortSignals)
+
   let limitWaits = 0
+  let totalWaitMs = 0
   for (let attempt = 1; ; ) {
     let res
     try {
       res = await fetch(url, {
         ...fetchOpts,
-        headers: {
-          'User-Agent': userAgent(component),
-          'Accept-Encoding': 'gzip',
-          ...headers
-        },
-        signal: AbortSignal.timeout(timeoutMs)
+        headers: headersObj,
+        signal: composedSignal
       })
     } catch (error) {
+      // If the caller's signal aborted, honor it immediately (don't retry)
+      if (signal?.aborted) throw error
+
       if (attempt >= tries) throw error
-      await sleep(backoffMs * attempt)
+      await sleep(backoffMs * attempt, signal)
       attempt++
       continue
     }
     if (res.status === 429) {
       if (limitWaits >= maxRateLimitWaits) throw new Error('HTTP 429')
       limitWaits++
-      // Retry-After is authoritative when the server sends it.
       const after = Number(res.headers.get('retry-after'))
-      await sleep(Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs)
+      const waitMs = Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs
+      const clampedWaitMs = Math.min(waitMs, maxRetryAfterMs)
+      if (totalWaitMs + clampedWaitMs > maxTotalWaitMs) throw new Error('HTTP 429')
+      console.warn(`[wmFetch] 429 rate limit wait: ${clampedWaitMs}ms (wait ${limitWaits}/${maxRateLimitWaits}, total ${totalWaitMs}ms/${maxTotalWaitMs}ms)`)
+      await sleep(clampedWaitMs, signal)
+      totalWaitMs += clampedWaitMs
+      continue
+    }
+    // 503 with Retry-After is treated like 429: free wait, server asked us to slow down
+    if (res.status === 503 && res.headers.has('retry-after')) {
+      if (limitWaits >= maxRateLimitWaits) throw new Error(`HTTP ${res.status}`)
+      limitWaits++
+      const after = Number(res.headers.get('retry-after'))
+      const waitMs = Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs
+      const clampedWaitMs = Math.min(waitMs, maxRetryAfterMs)
+      if (totalWaitMs + clampedWaitMs > maxTotalWaitMs) throw new Error(`HTTP ${res.status}`)
+      console.warn(`[wmFetch] 503 rate limit wait: ${clampedWaitMs}ms (wait ${limitWaits}/${maxRateLimitWaits}, total ${totalWaitMs}ms/${maxTotalWaitMs}ms)`)
+      await sleep(clampedWaitMs, signal)
+      totalWaitMs += clampedWaitMs
       continue
     }
     if (!res.ok) {
       const permanent = res.status >= 400 && res.status < 500
       if (permanent || attempt >= tries) throw new Error(`HTTP ${res.status}`)
-      await sleep(backoffMs * attempt)
+      await sleep(backoffMs * attempt, signal)
       attempt++
       continue
     }
@@ -370,7 +422,7 @@ Append inside the top-level `describe('mw-api', ...)` block of `test/mw-api.test
         .get('/gz')
         .reply(200, 'ok')
 
-      const res = await wmFetch(`${HOST}/gz`)
+      const res = await wmFetch(`${HOST}/gz`, { component: 'test' })
       assert.equal(res.status, 200)
     })
 
@@ -381,7 +433,7 @@ Append inside the top-level `describe('mw-api', ...)` block of `test/mw-api.test
         .get('/hdr')
         .reply(200, 'ok')
 
-      const res = await wmFetch(`${HOST}/hdr`, { headers: { Accept: 'application/json' } })
+      const res = await wmFetch(`${HOST}/hdr`, { component: 'test', headers: { Accept: 'application/json' } })
       assert.equal(res.status, 200)
     })
   })
@@ -390,7 +442,7 @@ Append inside the top-level `describe('mw-api', ...)` block of `test/mw-api.test
     it('parses a JSON body', async function() {
       nock(HOST).get('/json').reply(200, { items: [1, 2] })
 
-      const data = await wmFetchJson(`${HOST}/json`)
+      const data = await wmFetchJson(`${HOST}/json`, { component: 'test' })
       assert.deepEqual(data, { items: [1, 2] })
     })
 
@@ -398,7 +450,7 @@ Append inside the top-level `describe('mw-api', ...)` block of `test/mw-api.test
       nock(HOST).get('/json').reply(403, { error: 'nope' })
 
       try {
-        await wmFetchJson(`${HOST}/json`, { tries: 2, backoffMs: 1 })
+        await wmFetchJson(`${HOST}/json`, { component: 'test', tries: 2, backoffMs: 1 })
         assert.fail('should have thrown')
       } catch (error) {
         assert.equal(error.message, 'HTTP 403')
@@ -531,6 +583,11 @@ async function loadM3api() {
 // Accept-Encoding on this path comes from undici's dispatcher (gzip/deflate/br
 // by default) — invisible to nock, verified live in Phase 5.
 async function actionSession(host, component) {
+  // component is required for attribution; match user-agent.js's contract
+  if (!component || typeof component !== 'string') {
+    throw new Error('actionSession requires component (string)')
+  }
+
   if (sessions.has(host)) return sessions.get(host)
   // Session is m3api's DEFAULT export.
   const promise = loadM3api().then(({ default: Session }) => new Session(host, {
@@ -539,7 +596,11 @@ async function actionSession(host, component) {
     maxlag: 5
   }, {
     userAgent: userAgent(component)
-  }))
+  })).catch(error => {
+    // Clean up poisoned cache on rejection so next call can retry
+    sessions.delete(host)
+    throw error
+  })
   sessions.set(host, promise)
   return promise
 }
@@ -650,8 +711,12 @@ async function loadM3apiRest() {
 // GET a MediaWiki REST path on a cached session. `path` is RELATIVE to
 // rest.php (e.g. '/v1/revision/A/compare/B') — m3api-rest derives the rest.php
 // base from the session's api.php URL and appends this path. Pre-encode any
-// path segments.
-async function restGetJson(host, path, { component = 'mw-api', ...options } = {}) {
+// path segments. component is required for attribution.
+async function restGetJson(host, path, { component, ...options } = {}) {
+  // component is required for attribution; match user-agent.js's contract
+  if (!component || typeof component !== 'string') {
+    throw new Error('restGetJson requires component (string)')
+  }
   const [session, { getJson }] = await Promise.all([
     actionSession(host, component),
     loadM3apiRest()
