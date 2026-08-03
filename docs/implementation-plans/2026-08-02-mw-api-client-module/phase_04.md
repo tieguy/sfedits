@@ -349,7 +349,8 @@ judge by failures, not arithmetic).
 
 ```bash
 grep -rn "USER_AGENT = '" lib/ scripts/
-grep -rn "sfba-reassess\|mrfinnsmith" lib/ scripts/ public/
+grep -rn "sfba-reassess\|mrfinnsmith" lib/ scripts/
 ```
 
-Expected: both empty.
+Expected: both empty. (Note: public/server.js contains benign attribution links to upstream
+and is deliberately excluded.)
