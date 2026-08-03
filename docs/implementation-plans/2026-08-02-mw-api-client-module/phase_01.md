@@ -810,3 +810,14 @@ Merge order is a decision, not an accident. Present the overlap to Louie and get
 an explicit answer on whether delivery-merge lands first (then rebase this work)
 or this work proceeds on current `integration` (then delivery-merge rebases).
 Record the decision in this file before executing Phase 2.
+
+---
+
+## CHECKPOINT DECISION (recorded 2026-08-02)
+
+**Louie's answer: delivery-merge lands first.** This branch was rebased onto
+`delivery-merge` (tip `90ffa12` at decision time) so Phases 2-3 migrate the
+post-delivery-merge shapes of `lib/compare-diff.js`, `lib/subscription-delivery.js`
+and `public/server.js`. Line numbers quoted in phase_02/phase_03 predate the
+rebase and must be re-verified against the actual files. Landing delivery-merge
+into `integration` itself happens outside this plan; nothing here pushes anywhere.
