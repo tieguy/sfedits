@@ -36,14 +36,48 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 
 ### 1. Create configuration
 
-Non-secret config is committed in `config.base.json`. Secrets and local overrides go in `config.json` (gitignored):
+**Non-secret config** is committed in `config.base.json`. **Secrets and local dev overrides** go in `config.json` (gitignored). The two files are merged: `config.json` can override or add keys.
+
+**For local development:** Edit `config.json` with only the fields you want to override. Start with secrets:
+
+```json
+{
+  "accounts": [
+    {
+      "discord": {
+        "webhook_url": "https://discord.com/api/webhooks/…"
+      }
+    }
+  ]
+}
+```
+
+To develop with Bluesky or Mastodon in addition, add them the same way (they're omitted from `config.base.json` since production runs Discord-only):
+
+```json
+{
+  "accounts": [
+    {
+      "bluesky": {
+        "identifier": "your-username.bsky.social",
+        "password": "your-app-password"
+      },
+      "mastodon": {
+        "instance": "https://your-instance.social",
+        "access_token": "your-access-token",
+        "visibility": "unlisted"
+      },
+      "discord": {
+        "webhook_url": "https://discord.com/api/webhooks/…"
+      }
+    }
+  ]
+}
+```
+
+**For Toolforge/CI:** Use environment variables instead of `config.json`:
 
 ```bash
-# Option 1: Local file overrides (for development)
-cp config.base.json config.json
-# Then edit config.json with your credentials
-
-# Option 2: Environment variables (for Toolforge/CI)
 export SFEDITS_BLUESKY_PASSWORD="your-password"
 export SFEDITS_MASTODON_ACCESS_TOKEN="your-token"
 export SFEDITS_DISCORD_WEBHOOK_URL="your-webhook-url"
@@ -152,32 +186,9 @@ docker system prune -af
 
 ## Configuration
 
-Create `config.json` from the template:
+See the **Create configuration** section under Setup (above). The base config is in `config.base.json`; override or add fields in `config.json` (gitignored).
 
-```json
-{
-  "nick": "sfedits",
-  "accounts": [{
-    "template": "{{{page}}} Wikipedia article edited by {{{name}}} {{&url}}",
-    "watchlist": {
-      "English Wikipedia": {
-        "San Francisco Board of Supervisors": true,
-        "Daniel Lurie": true
-      }
-    },
-    "bluesky": {
-      "identifier": "your-username.bsky.social",
-      "password": "your-app-password"
-    },
-    "mastodon": {
-      "instance": "https://your-instance.social",
-      "access_token": "your-access-token"
-    }
-  }]
-}
-```
-
-**Important:** Never commit `config.json` - it contains credentials and is gitignored. Update it directly on the droplet when you need to change the watchlist or credentials.
+**Important:** Never commit `config.json` - it contains credentials and is gitignored. On the droplet, update it directly when you need to change watchlist or credentials.
 
 ### Edit Collapsing
 

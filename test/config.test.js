@@ -164,4 +164,77 @@ describe('lib/config', function() {
     assert.equal(config.topic_store.host, 'tools.db.svc.wikimedia.cloud')
     assert.equal(config.topic_store.database, 's51234__sfedits')
   })
+
+  it('overlay with shorter array replaces base array completely', function() {
+    const base = {
+      accounts: [{
+        watchlist_source: {
+          importance: ['Top', 'High', 'Mid']
+        }
+      }]
+    }
+    const overlay = {
+      accounts: [{
+        watchlist_source: {
+          importance: ['Top']
+        }
+      }]
+    }
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify(base))
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(overlay))
+
+    const config = loadConfig({ baseDir: dir, env: {} })
+    assert.deepEqual(config.accounts[0].watchlist_source.importance, ['Top'])
+  })
+
+  it('overlay can replace scalar array elements with different types', function() {
+    const base = {
+      accounts: [{
+        wikidata_claims: {
+          properties: ['P19', 'P20', 'P39']
+        }
+      }]
+    }
+    const overlay = {
+      accounts: [{
+        wikidata_claims: {
+          properties: ['P131']
+        }
+      }]
+    }
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify(base))
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(overlay))
+
+    const config = loadConfig({ baseDir: dir, env: {} })
+    assert.deepEqual(config.accounts[0].wikidata_claims.properties, ['P131'])
+  })
+
+  it('resolves account ranges file references relative to the config file', function() {
+    fs.writeFileSync(path.join(dir, 'ranges.json'), JSON.stringify({ 'Some Org': ['192.0.2.0/24'] }))
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify({
+      accounts: [{ ranges: './ranges.json' }]
+    }))
+
+    const config = loadConfig({ baseDir: dir, env: {} })
+    assert.deepEqual(config.accounts[0].ranges, { 'Some Org': ['192.0.2.0/24'] })
+  })
+
+  it('throws a clear error for invalid JSON in config.base.json', function() {
+    fs.writeFileSync(path.join(dir, 'config.base.json'), 'not json{')
+
+    assert.throws(
+      () => loadConfig({ baseDir: dir, env: {} }),
+      /config\.base\.json is not valid JSON/
+    )
+  })
+
+  it('throws a clear error for invalid JSON in config.json', function() {
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify({ accounts: [] }))
+    fs.writeFileSync(path.join(dir, 'config.json'), 'not json{')
+
+    assert.throws(
+      () => loadConfig({ baseDir: dir, env: {} }),
+      /config\.json is not valid JSON/
+    )
+  })
 })

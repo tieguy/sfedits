@@ -187,6 +187,19 @@ with no config at all.
 the deployed config a schema behind?" — the question that cost a failed
 `migrate` on the first deploy. See LUI-108 for the longer-term fix.
 
+### Pre-Phase 7 migration check
+
+Before Phase 7 (when `SFEDITS_CONFIG` is deleted and config.base.json becomes
+the source of truth), verify that `config.base.json` reflects the deployed config.
+Values observable from `/api/topics.json` are mostly recoverable, but template
+strings and other non-observable values are not. Run this verification:
+
+```bash
+toolforge envvars show SFEDITS_CONFIG --raw | jq > /tmp/deployed-config.json
+# Then diff /tmp/deployed-config.json against config.base.json in the repo
+# Reconcile any differences before the Phase 7 cutover
+```
+
 ## 4. Build
 
 ```bash

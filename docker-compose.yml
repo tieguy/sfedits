@@ -16,9 +16,8 @@ services:
       dockerfile: admin/Dockerfile
     ports:
       - "3000:3000"
-    environment:
-      - CONFIG_PATH=/opt/sfedits/config.json
     volumes:
+      # config.json overlay is bind-mounted; config.base.json is in the image
       - ./config.json:/opt/sfedits/config.json:ro
       - ./drafts:/opt/sfedits/drafts
       - ./data:/opt/sfedits/data

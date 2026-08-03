@@ -14,21 +14,12 @@
         }
       },
       "watchlist_source": {
-        "project": "California/San Francisco Bay Area task force",
-        "wikipedia": "English Wikipedia",
-        "importance": ["Top", "High"],
+        "titles_url": "https://san-francisco-edit-stream.toolforge.org/watchlist-500.json",
         "refresh_hours": 24
-      },
-      "bluesky": {
-        "identifier": "sfedits.bsky.social"
-      },
-      "mastodon": {
-        "instance": "https://mastodon.social",
-        "visibility": "unlisted"
       },
       "discord": {},
       "wikidata_claims": {
-        "properties": ["P19", "P20", "P131", "P159", "P276", "P937"],
+        "properties": ["P19", "P20", "P131", "P159", "P276", "P937", "P39"],
         "refresh_hours": 24,
         "rate_cap": { "max": 5, "window_minutes": 10 }
       }
