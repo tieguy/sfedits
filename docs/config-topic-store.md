@@ -70,6 +70,47 @@ the window rolls over, the subscriber gets a single summary embed —
 "…and N more edits not shown (rate cap)" — which names the likely cause,
 since an oversized region is what usually produces it.
 
+## Edit filters (per-subscription)
+
+Subscriptions can filter edits before rendering and posting. Each subscription
+has its own filters, independent of the topic and of other subscriptions to the
+same topic.
+
+Filters live in the `edit_filters` column (JSON) on the subscription row, set
+when the subscription is created (via `/create`). Override at the database level
+with:
+
+```sql
+UPDATE subscriptions SET edit_filters = JSON_OBJECT('bots', false, 'minor', false)
+  WHERE id = ?;
+```
+
+Schema:
+
+```json
+{
+  "bots": false,           # Drop bot edits (true/absent = allow)
+  "minor": false,          # Drop minor edits (true/absent = allow)
+  "min_delta": 0,          # Drop edits with |delta| < this (0/absent = allow all)
+  "cosmetic_only": false   # Drop cosmetic-only diffs (true = drop, false/absent = allow)
+}
+```
+
+**Polarity note:** `bots` and `minor` are "allow?" booleans (`false` = drop that
+class). `min_delta` is a floor (drop smaller edits). `cosmetic_only` is an
+opt-in switch (`true` = drop cosmetic-only, `false`/absent = allow). Absent or
+`null` = no filtering for that field.
+
+**Default (SF account):** `{ "bots": false, "minor": false }` — SF edits bot
+drops bot edits and minor edits, which matches the historical watchlist
+behaviour (Top+High importance on-wiki usually excludes bots). Other
+subscriptions can override with different rules.
+
+The filter is **not** part of `filters_hash`, so two subscriptions with
+different `edit_filters` to the same region-filter pair share one topic row —
+the topic's articles are resolved once, each edit is rendered once, but
+delivery is filtered per subscription.
+
 ## Webhook URLs
 
 Delivery URLs are allowlisted: `https` only, to `discord.com`,

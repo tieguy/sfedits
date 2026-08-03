@@ -105,132 +105,77 @@ The database name here must match `topic_store.database` in `SFEDITS_CONFIG`
 exactly. A mismatch surfaces as a connection failure in the bot's logs and
 reads like a credentials problem.
 
-## 3. Write the config
+## 3. Stage secrets as environment variables
 
-`SFEDITS_CONFIG` is the whole config as one JSON string, so nothing sensitive
-lands in git. Build it in a file first — it is long, and `toolforge envvars
-create` prompts for the value rather than taking it on the command line:
+**Non-secret config** is committed in `config.base.json`. **Secrets live in
+environment variables on Toolforge**, set once and managed separately from
+git. There are four:
 
 ```bash
-cat > /tmp/sfedits-config.json <<'JSON'
-{
-  "accounts": [
-    {
-      "template": "{{page}} was edited by {{name}}",
-      "discord": { "webhook_url": "https://discord.com/api/webhooks/…" },
-      "watchlist_source": {
-        "project": "California/San Francisco Bay Area task force",
-        "importance": ["Top", "High"]
-      }
-    }
-  ],
-  "topic_store": {
-    "host": "tools.db.svc.wikimedia.cloud",
-    "database": "s57894__sfedits",
-    "connection_limit": 5,
-    "max_posts_per_hour": 20
-  },
-  "web": {
-    "invite_codes": ["pick-something-unguessable"],
-    "max_articles": 5000
-  }
-}
-JSON
+# The three real secrets (only needed if stanzas exist in config.base.json):
+toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL        # from accounts[0].discord.webhook_url
+toolforge envvars create SFEDITS_BLUESKY_PASSWORD          # from accounts[0].bluesky.password
+toolforge envvars create SFEDITS_MASTODON_ACCESS_TOKEN     # from accounts[0].mastodon.access_token
 
-toolforge envvars create SFEDITS_CONFIG < /tmp/sfedits-config.json
-rm /tmp/sfedits-config.json
+# The configuration-level secret (always needed):
+toolforge envvars create SFEDITS_INVITE_CODES              # comma-separated codes for /create
 ```
 
-Notes that matter:
+**Note:** The deployed account is Discord-only. `SFEDITS_BLUESKY_PASSWORD` and
+`SFEDITS_MASTODON_ACCESS_TOKEN` are documented for completeness — they are
+required only if their corresponding stanzas are added to `config.base.json`.
+`SFEDITS_DISCORD_WEBHOOK_URL` and `SFEDITS_INVITE_CODES` are always needed.
 
-- **No `user`/`password` under `topic_store`.** The build service injects
-  `TOOL_TOOLSDB_USER` and `TOOL_TOOLSDB_PASSWORD`, and `lib/topic-store.js`
-  reads those when the config omits them. Keeping credentials out of the config
-  is the entire reason `SFEDITS_CONFIG` exists.
-- **`web.invite_codes` is what opens `/create`.** Omit the whole `web` stanza to
-  deploy with the form closed; the coverage page runs either way.
-- Confirm afterwards with `toolforge envvars list` (it shows names, not values).
+Confirm afterwards with `toolforge envvars list` (it shows names, not values).
 
-### Changing the config later
+### Changing config later
 
-`envvars create` will not overwrite, so it is delete-then-create. Edit the
-existing value rather than retyping it — that way the credentials are never
-displayed and never re-entered:
+The non-secret config lives in `config.base.json` in the repo. Edit it and push;
+autoupdate redeploys within 15 minutes.
+
+For secrets, use `toolforge envvars` — each one is independent, so change only
+what needs changing:
 
 ```bash
 umask 077                      # anything written below is 0600
-toolforge envvars show --raw SFEDITS_CONFIG > cfg.json
+toolforge envvars show --raw SFEDITS_INVITE_CODES
 ```
 
 **`--raw` is required.** Without it `envvars show` prints a decorated table and
-`jq` chokes on it, which reads as "my config is corrupt" rather than "wrong
-output mode".
+the value is wrapped in quotes, which is confusing.
+
+To update:
 
 ```bash
-jq '.topic_store = { host: "tools.db.svc.wikimedia.cloud", port: 3306,
-                     database: "s57894__sfedits", connection_limit: 5,
-                     max_posts_per_hour: 20 }' cfg.json > cfg.new.json
-
-jq 'keys' cfg.new.json                  # expect the stanzas you meant to have
-jq '.accounts[0] | keys' cfg.new.json   # proves nothing was dropped
-
-toolforge envvars delete SFEDITS_CONFIG
-toolforge envvars create SFEDITS_CONFIG < cfg.new.json
-rm cfg.json cfg.new.json
+toolforge envvars delete SFEDITS_INVITE_CODES
+toolforge envvars create SFEDITS_INVITE_CODES
+# (or if you want to script it:)
+echo "new-code-1,new-code-2" | toolforge envvars create SFEDITS_INVITE_CODES
 ```
 
-Between the delete and the create the variable does not exist. Harmless before
+Between delete and create the variable does not exist. Harmless before
 anything is running; once the bot is live, a restart in that window starts it
-with no config at all.
+without that credential.
 
-`jq 'keys'` against the deployed value is also the quickest way to answer "is
-the deployed config a schema behind?" — the question that cost a failed
-`migrate` on the first deploy. See LUI-108 for the longer-term fix.
+### Phase 3 cutover check: SFEDITS_CONFIG must be deleted after config split
 
-### Phase 3 cutover check: SFEDITS_CONFIG must be deleted before merge to integration
+**This phase rejects `SFEDITS_CONFIG` at startup.** If the old envvar still
+exists when the new code starts, every process exits immediately.
 
-**This phase rejects `SFEDITS_CONFIG` at startup.** Pushing this branch to
-`fork/integration` without deleting the envvar in the same window takes down
-every process (push = live deploy in 15 min).
-
-**Required before this branch reaches `integration`:**
+**Before pushing this branch to `fork/integration`:**
 
 1. Verify `config.base.json` reflects the deployed config. Values observable from
    `/api/topics.json` are mostly recoverable, but template strings and other
    non-observable values are not:
 
 ```bash
+# If SFEDITS_CONFIG still exists (it should, until you push):
 toolforge envvars show SFEDITS_CONFIG --raw | jq > /tmp/deployed-config.json
 # Then diff /tmp/deployed-config.json against config.base.json in the repo
 # Reconcile any differences before proceeding
 ```
 
-2. Stage the four new secret envvars on Toolforge (see section 3 above for the
-   current stanzas):
-
-```bash
-toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL
-toolforge envvars create SFEDITS_INVITE_CODES
-# (and SFEDITS_BLUESKY_PASSWORD, SFEDITS_MASTODON_ACCESS_TOKEN if you added those stanzas)
-```
-
-3. **In the same deploy window** (ordered with the documented web-before-bot
-   restart rule):
-
-```bash
-# Push this branch to fork/integration to trigger autoupdate (or manually build/migrate)
-git push fork integration
-
-# Wait ~15 minutes for autoupdate, or force rebuild now:
-# toolforge build start https://github.com/tieguy/sfedits --ref integration
-
-# Delete SFEDITS_CONFIG AFTER the new image is built but BEFORE bot restarts:
-toolforge envvars delete SFEDITS_CONFIG
-
-# Restart (order matters: web before bot, per the deployment rules)
-toolforge webservice buildservice restart
-toolforge jobs restart bot
-```
+2. Stage the four new secret envvars on Toolforge (documented above).
 
 ## 4. Build
 
@@ -337,7 +282,116 @@ toolforge jobs run gc-topics \
 Step 4 is the one thing no test covers. Everything up to the moment of posting
 is exercised by the suite and was verified locally against a real database.
 
+## 10. Rollout runbook (for the config split to `fork/integration`)
+
+**DO NOT EXECUTE without explicit operator go.** The push to `fork/integration`
+is a live deploy within 15 minutes via `autoupdate`. The new code rejects
+`SFEDITS_CONFIG`, so order and timing matter.
+
+### Phase 3 cutover: Six-step rollout
+
+**1. Before pushing** — stage the secrets on Toolforge from the current
+`SFEDITS_CONFIG` blob (if you haven't already, see section 3 above):
+
+```bash
+# Extract the current values
+toolforge envvars show SFEDITS_CONFIG --raw | jq -r '.accounts[0].discord.webhook_url' \
+  | toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL
+
+# (Repeat for .accounts[0].bluesky.password and .mastodon.access_token if those stanzas exist)
+
+# And for invite codes
+toolforge envvars show SFEDITS_CONFIG --raw | jq -r '.web.invite_codes | join(",")' \
+  | toolforge envvars create SFEDITS_INVITE_CODES
+```
+
+Also: **KEEP a copy of the `SFEDITS_CONFIG` blob value somewhere safe (NOT in
+the repo) for rollback.** The old code reads it; a revert will need it.
+
+**Do NOT delete `SFEDITS_CONFIG` yet** — the running (old) code still reads it.
+
+**2. Merge and test locally:**
+
+```bash
+# In the main checkout (which has integration branch)
+git checkout integration
+git merge delivery-merge
+SFEDITS_REQUIRE_DB=1 npm test
+# Expected: 646 passing, 0 pending
+```
+
+**3. On explicit operator go: Push to fork.**
+
+```bash
+git push fork integration
+# Migration 002 runs via autoupdate
+```
+
+**IMPORTANT:** `autoupdate` runs every 15 minutes. The tick that picks up this
+push will run the OLD image's migrate step while `SFEDITS_CONFIG` is still set.
+The new code rejects it, so **that tick FAILS**. This is expected and not an
+outage signal. Delete `SFEDITS_CONFIG` immediately after the push (within the
+same window), and the NEXT tick (≤15 min later) lands the deploy successfully.
+
+```bash
+toolforge envvars delete SFEDITS_CONFIG
+```
+
+**4. Verify the deploy:**
+
+```bash
+# Check that /changelog shows the new SHA
+curl -s https://san-francisco-edit-stream.toolforge.org/changelog | jq '.deploys[0]'
+
+# Check web and bot logs
+toolforge jobs logs web      # should show recent restarts
+toolforge jobs logs bot      # watch for '✓ Watchlist sync: N articles' with N>0
+```
+
+Look for these lines in the bot log:
+- `✓ Watchlist sync: N articles from "…"` (proves config was loaded)
+- `filtered:` / `filter-pass:` lines (proves edit filters are working)
+
+Observe one real Discord post (the deployed account is Discord-only).
+
+**5. After verification: Delete SFEDITS_CONFIG permanently.**
+
+```bash
+# Confirm it is actually gone (step 3 deleted it, but verify)
+toolforge envvars list | grep SFEDITS_CONFIG
+
+# If it is still there (it shouldn't be), delete it:
+toolforge envvars delete SFEDITS_CONFIG
+
+# Restart both processes once more and re-check the watchlist-sync line
+# (proves nothing still needed the blob)
+toolforge webservice buildservice restart
+toolforge jobs restart bot
+toolforge jobs logs bot | grep "Watchlist sync"
+```
+
+**6. Rollback path (if needed before soak is over):**
+
+```bash
+# Revert the merge commit and push
+git revert -m 1 <merge-commit-sha>
+git push fork integration
+# autoupdate redeploys the old code within 15 minutes
+
+# The old code reads SFEDITS_CONFIG, so recreate it from your saved copy:
+cat > /tmp/sfedits-config.json <<'JSON'
+<paste the blob value>
+JSON
+toolforge envvars create SFEDITS_CONFIG < /tmp/sfedits-config.json
+rm /tmp/sfedits-config.json
+
+# Verify rollback
+toolforge jobs logs bot | grep "Watchlist sync"
+```
+
 ## Redeploying
+
+For routine updates (no config split, autoupdate already running):
 
 ```bash
 toolforge build start https://github.com/tieguy/sfedits --ref integration

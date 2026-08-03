@@ -6,25 +6,25 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 
 ## Architecture
 
-**Three-service microservice architecture (docker-compose):**
+**Three-service architecture (Node.js + MariaDB):**
 
 1. **Bot service** (Node.js)
-   - Monitors Wikipedia IRC feed for real-time edits
-   - Watches configured SF-related articles
-   - Enriches anonymous IPs with country flags (MaxMind GeoLite2-City)
-   - Renders diff images via satori and resvg (no browser)
-   - Posts to Bluesky and Mastodon
+   - Monitors Wikipedia EventStreams feed for real-time edits
+   - Watches configured SF-related articles via task-force dynamic watchlists and custom lists
+   - Renders diff images via satori and resvg (headless, no browser)
+   - Delivers posts through a unified delivery layer (Discord, Bluesky, Mastodon) with per-subscription edit filters
+   - Syncs with MariaDB topic store for multi-region, multi-subscriber support
 
-2. **Admin console** (Node.js/Express)
-   - Bluesky DM authentication (disabled: the DM recipient config was removed with PII screening; the console cannot currently be logged into)
-   - Review and post queued drafts (nothing currently enqueues drafts; the producer was removed with PII screening)
-   - Posts to Bluesky and Mastodon with retry logic
-   - Exposed on port 3000
+2. **Web service** (Node.js/Express)
+   - Public coverage page listing monitored places
+   - Self-serve `/create` form (invite-code gated) for multi-region subscriptions
+   - Webservice API for watchlist and topic status
+   - Admin console disabled (would need Bluesky DM auth; current deployment is Discord-only)
 
-3. **MaxMind updater** (curl)
-   - Downloads latest IP geolocation database weekly
-   - Runs continuously in background
-   - Updates transparently - no restarts needed
+3. **Database** (MariaDB, Toolforge ToolsDB)
+   - Persistent subscriptions and topic store
+   - Schema migrations via Procfile `migrate` entry
+   - Topics (region + filters) and subscriptions (user + webhook + edit_filters)
 
 ## How it works
 
@@ -36,9 +36,13 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 
 ### 1. Create configuration
 
-**Non-secret config** is committed in `config.base.json`. **Secrets and local dev overrides** go in `config.json` (gitignored). The two files are merged: `config.json` can override or add keys.
+**Non-secret config** is committed in `config.base.json`. **Secrets** come from
+environment variables, never from `config.json` (which is gitignored and local
+only). The loader reads `config.base.json`, merges any local `config.json`
+overrides, then reads secrets from env vars.
 
-**For local development:** Edit `config.json` with only the fields you want to override. Start with secrets:
+**For local development:** Create `config.json` with only the fields you want
+to override (most commonly, secrets):
 
 ```json
 {
@@ -52,7 +56,8 @@ Based on [anon](https://github.com/edsu/anon), originally created for @congresse
 }
 ```
 
-To develop with Bluesky or Mastodon in addition, add them the same way (they're omitted from `config.base.json` since production runs Discord-only):
+To develop with Bluesky or Mastodon in addition, add them the same way (they're
+omitted from `config.base.json` since production runs Discord-only):
 
 ```json
 {
@@ -75,14 +80,17 @@ To develop with Bluesky or Mastodon in addition, add them the same way (they're 
 }
 ```
 
-**For Toolforge/CI:** Use environment variables instead of `config.json`:
+**For Toolforge:** Secrets are injected via environment variables (set via
+`toolforge envvars`). The bot reads them at startup and merges them into the
+config:
 
 ```bash
-export SFEDITS_DISCORD_WEBHOOK_URL="your-webhook-url"
-export SFEDITS_INVITE_CODES="code1,code2"
-# Only if you have added the corresponding stanzas to config.json:
-# export SFEDITS_BLUESKY_PASSWORD="your-password"
-# export SFEDITS_MASTODON_ACCESS_TOKEN="your-token"
+# Set once on Toolforge (not in the code):
+toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL "https://discord.com/api/webhooks/…"
+toolforge envvars create SFEDITS_INVITE_CODES "code1,code2"
+# Only if the corresponding stanzas are in config.base.json:
+# toolforge envvars create SFEDITS_BLUESKY_PASSWORD "your-password"
+# toolforge envvars create SFEDITS_MASTODON_ACCESS_TOKEN "your-token"
 ```
 
 ### 2. Run locally
@@ -98,109 +106,73 @@ npm install
 node page-watch.js --noop  # Test mode - doesn't post
 ```
 
-### 3. Deploy to production
+### 3. Deploy to Toolforge
 
-When ready to deploy to a live server:
+The primary deployment target is Toolforge (Wikimedia Cloud Services). See
+`docs/deploy-toolforge.md` for the full runbook.
 
-1. **Get a droplet** (minimum 512MB RAM, Ubuntu 22.04+)
+**TL;DR:**
 
-2. **On your local machine**, create `.env`:
+1. Ensure `config.base.json` reflects the desired non-secret config
+2. Set secrets via `toolforge envvars`: `SFEDITS_DISCORD_WEBHOOK_URL`,
+   `SFEDITS_INVITE_CODES`, etc.
+3. Push to `fork/integration` — `autoupdate` builds and deploys within 15 minutes
+4. Migrations run automatically via the `migrate` Procfile entry
+5. Check `/changelog` for deploy history
+
+## Toolforge Management
+
+**View logs:**
 ```bash
-DROPLET_IP=your.droplet.ip
+ssh login.toolforge.org
+become san-francisco-edit-stream
+
+toolforge jobs logs bot
+toolforge jobs logs web
 ```
 
-3. **First-time setup on droplet:**
+**Change config:**
+- Non-secret: Edit `config.base.json` and push to `fork/integration`
+- Secrets: Use `toolforge envvars delete/create` to update secrets
+
+**Restart processes:**
 ```bash
-ssh root@YOUR_DROPLET_IP
-cd /root/sfedits
-
-# Initialize git repository
-git init
-git remote add origin YOUR_GIT_URL
-git fetch origin
-git reset --hard origin/main
-
-# Create droplet .env
-cat > .env << 'EOF'
-DROPLET_IP=YOUR_DROPLET_IP
-EOF
-
-# Create local config.json with secrets (optional; env vars work too)
-cat > config.json << 'EOF'
-{
-  "accounts": [
-    {
-      "discord": {
-        "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
-      }
-    }
-  ]
-}
-EOF
-
-# Start all services
-docker-compose up -d
+toolforge webservice buildservice restart
+toolforge jobs restart bot
+toolforge jobs restart rebuild-topics
 ```
 
-4. **Deploy updates:**
+**Monitor deployment:**
 ```bash
-git add .
-git commit -m "Your changes"
-git push origin main
-./deploy.sh
-```
+# Check autoupdate progress
+toolforge jobs logs autoupdate
 
-The deploy script pulls latest code, rebuilds containers, and restarts all services.
-
-## Management
-
-Once deployed, SSH into the droplet:
-
-```bash
-ssh root@YOUR_DROPLET_IP
-cd /root/sfedits
-
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f
-docker-compose logs -f bot
-docker-compose logs -f admin
-
-# Restart services
-docker-compose restart
-
-# Stop all
-docker-compose down
-```
-
-**To update code:** Run `./deploy.sh` on your local machine.
-
-**To change config:** Edit `config.json` on the droplet and run `docker-compose restart bot admin`.
-
-## Maintenance
-
-Services automatically restart if interrupted or if the server reboots.
-
-**Check disk usage:**
-```bash
-df -h /
-docker system df
-```
-
-**Clean up old Docker images:**
-```bash
-docker system prune -af
+# View deployment history
+curl -s https://san-francisco-edit-stream.toolforge.org/changelog | jq '.deploys[:5]'
 ```
 
 ## Configuration
 
-See the **Create configuration** section under Setup (above). The base config is in `config.base.json`; override or add fields in `config.json` (gitignored).
+**Structure:** `config.base.json` (committed) + `config.json` (gitignored, local
+dev only) + environment variables (Toolforge secrets).
 
-**Important:** Never commit `config.json` - it contains credentials and is gitignored. On the droplet, update it directly when you need to change watchlist or credentials.
+1. Load `config.base.json` from the repo
+2. Merge `config.json` overrides (if present locally)
+3. Inject secrets from environment variables (`SFEDITS_DISCORD_WEBHOOK_URL`,
+   `SFEDITS_BLUESKY_PASSWORD`, `SFEDITS_MASTODON_ACCESS_TOKEN`,
+   `SFEDITS_INVITE_CODES`)
 
-**Array replacement:** When your `config.json` contains an `accounts` array, it **replaces** the base array wholesale — list every account you want kept. For example, overlaying `{"accounts":[{"discord":{"webhook_url":"..."}}]}` over a future two-account base yields one account, not two.
+**Important:** Never commit `config.json` — it's gitignored and holds your local
+credentials. Never commit secrets to the repo; use environment variables instead.
+
+**Array replacement:** When `config.json` contains an `accounts` array, it
+**replaces** the base array wholesale — list every account you want to keep.
+For example, overlaying `{"accounts":[{"discord":{"webhook_url":"..."}}]}` over
+a two-account base yields one account, not two.
+
+**Delivery layer:** Each account has a `deliveries` array specifying where edits
+go and what edit filters apply. See `docs/config-topic-store.md` for
+per-subscription edit filters (`bots`, `minor`, `min_delta`, `cosmetic_only`).
 
 ### Edit Collapsing
 
