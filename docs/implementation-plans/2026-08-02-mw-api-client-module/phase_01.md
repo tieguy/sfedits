@@ -254,15 +254,36 @@ const { userAgent } = require('./user-agent')
 // Sleep that can be aborted via a signal. If aborted, throws AbortError immediately.
 const sleep = async (ms, signal) => {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    if (signal) {
-      signal.addEventListener('abort', () => {
-        clearTimeout(timer)
-        reject(new DOMException('Aborted', 'AbortError'))
-      })
-    }
-  })
+  let timer = null
+  let abortHandler = null
+  try {
+    return await new Promise((resolve, reject) => {
+      timer = setTimeout(resolve, ms)
+      if (signal) {
+        abortHandler = () => {
+          clearTimeout(timer)
+          reject(new DOMException('Aborted', 'AbortError'))
+        }
+        signal.addEventListener('abort', abortHandler, { once: true })
+      }
+    })
+  } finally {
+    if (timer !== null) clearTimeout(timer)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+  }
+}
+
+// Helper to handle rate limit waits (429 or 503 with Retry-After)
+async function waitForRateLimit(res, state, { rateLimitWaitMs, maxRetryAfterMs, maxRateLimitWaits, maxTotalWaitMs, signal }) {
+  if (state.limitWaits >= maxRateLimitWaits) throw new Error(`HTTP ${res.status}`)
+  state.limitWaits++
+  const after = Number(res.headers.get('retry-after'))
+  const waitMs = Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs
+  const clampedWaitMs = Math.min(waitMs, maxRetryAfterMs)
+  if (state.totalWaitMs + clampedWaitMs > maxTotalWaitMs) throw new Error(`HTTP ${res.status}`)
+  console.warn(`[wmFetch] ${res.status} rate limit wait: ${clampedWaitMs}ms (wait ${state.limitWaits}/${maxRateLimitWaits}, total ${state.totalWaitMs}ms/${maxTotalWaitMs}ms)`)
+  await sleep(clampedWaitMs, signal)
+  state.totalWaitMs += clampedWaitMs
 }
 
 // Retry semantics ported from the tested apiGet in place-bot-platform-design
@@ -297,14 +318,17 @@ async function wmFetch(url, {
   headersObj.set('User-Agent', userAgent(component))
   headersObj.set('Accept-Encoding', 'gzip')
 
-  // Compose caller's signal with timeout ONCE before the loop.
-  const abortSignals = [AbortSignal.timeout(timeoutMs)]
-  if (signal) abortSignals.push(signal)
-  const composedSignal = AbortSignal.any(abortSignals)
-
-  let limitWaits = 0
-  let totalWaitMs = 0
+  const state = { limitWaits: 0, totalWaitMs: 0 }
   for (let attempt = 1; ; ) {
+    // Check if caller's signal is already aborted before attempting the request
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+
+    // Compose a fresh timeout signal for this attempt, so each attempt gets
+    // a separate timeout that doesn't span waits between retries.
+    const attemptAbortSignals = [AbortSignal.timeout(timeoutMs)]
+    if (signal) attemptAbortSignals.push(signal)
+    const composedSignal = AbortSignal.any(attemptAbortSignals)
+
     let res
     try {
       res = await fetch(url, {
@@ -321,29 +345,9 @@ async function wmFetch(url, {
       attempt++
       continue
     }
-    if (res.status === 429) {
-      if (limitWaits >= maxRateLimitWaits) throw new Error('HTTP 429')
-      limitWaits++
-      const after = Number(res.headers.get('retry-after'))
-      const waitMs = Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs
-      const clampedWaitMs = Math.min(waitMs, maxRetryAfterMs)
-      if (totalWaitMs + clampedWaitMs > maxTotalWaitMs) throw new Error('HTTP 429')
-      console.warn(`[wmFetch] 429 rate limit wait: ${clampedWaitMs}ms (wait ${limitWaits}/${maxRateLimitWaits}, total ${totalWaitMs}ms/${maxTotalWaitMs}ms)`)
-      await sleep(clampedWaitMs, signal)
-      totalWaitMs += clampedWaitMs
-      continue
-    }
-    // 503 with Retry-After is treated like 429: free wait, server asked us to slow down
-    if (res.status === 503 && res.headers.has('retry-after')) {
-      if (limitWaits >= maxRateLimitWaits) throw new Error(`HTTP ${res.status}`)
-      limitWaits++
-      const after = Number(res.headers.get('retry-after'))
-      const waitMs = Number.isFinite(after) && after > 0 ? after * 1000 : rateLimitWaitMs
-      const clampedWaitMs = Math.min(waitMs, maxRetryAfterMs)
-      if (totalWaitMs + clampedWaitMs > maxTotalWaitMs) throw new Error(`HTTP ${res.status}`)
-      console.warn(`[wmFetch] 503 rate limit wait: ${clampedWaitMs}ms (wait ${limitWaits}/${maxRateLimitWaits}, total ${totalWaitMs}ms/${maxTotalWaitMs}ms)`)
-      await sleep(clampedWaitMs, signal)
-      totalWaitMs += clampedWaitMs
+    // 429 or 503 with Retry-After: free wait (doesn't consume a retry attempt)
+    if (res.status === 429 || (res.status === 503 && res.headers.has('retry-after'))) {
+      await waitForRateLimit(res, state, { rateLimitWaitMs, maxRetryAfterMs, maxRateLimitWaits, maxTotalWaitMs, signal })
       continue
     }
     if (!res.ok) {

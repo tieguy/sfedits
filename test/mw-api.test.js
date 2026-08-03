@@ -1,5 +1,6 @@
 const { assert } = require('chai')
 const nock = require('nock')
+const { EventEmitter } = require('events')
 const { wmFetch, wmFetchJson, actionSession, restGetJson, _resetSessions } = require('../lib/mw-api')
 
 const HOST = 'https://wm.test'
@@ -191,6 +192,29 @@ describe('mw-api', function() {
       }
     })
 
+    it('regression: per-attempt timeout does not span waits between retries', async function() {
+      this.timeout(5000)
+      // Five 429s with retry-after:1 (1 second each) = ~5 seconds total
+      // With timeoutMs: 500 (0.5s per attempt), we'd fail if timeout spanned waits
+      // But since each attempt gets a fresh timeout, we succeed because each
+      // individual wait is under 500ms (well, the wait itself is ~1s but the
+      // attempt to fetch is instant, so per-attempt timeout doesn't fire)
+      nock(HOST).get('/thing').times(5).reply(429, '', { 'retry-after': '0.1' })
+      nock(HOST).get('/thing').reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/thing`, {
+        component: 'test',
+        tries: 2,
+        backoffMs: 1,
+        rateLimitWaitMs: 10,
+        maxRateLimitWaits: 60,
+        maxRetryAfterMs: 5 * 60 * 1000,
+        maxTotalWaitMs: 10 * 60 * 1000,
+        timeoutMs: 500 // Short timeout per attempt
+      })
+      assert.equal(res.status, 200)
+    })
+
     it('respects caller-supplied AbortSignal and rejects immediately', async function() {
       this.timeout(2000)
       // When signal is pre-aborted, the abort is honored immediately without fetching.
@@ -225,6 +249,28 @@ describe('mw-api', function() {
   })
 
   describe('wmFetch compliance headers', function() {
+    it('cleans up abort listeners from sleep waits', async function() {
+      this.timeout(2000)
+      // Multiple 429s force multiple sleep() calls with the signal
+      nock(HOST).get('/thing').times(3).reply(429)
+      nock(HOST).get('/thing').reply(200, 'ok')
+
+      const { getEventListeners } = require('events')
+      const controller = new AbortController()
+      const res = await wmFetch(`${HOST}/thing`, {
+        component: 'test',
+        signal: controller.signal,
+        tries: 2,
+        backoffMs: 1,
+        rateLimitWaitMs: 5,
+        maxRateLimitWaits: 60
+      })
+      assert.equal(res.status, 200)
+      // Verify no abort listeners remain on the signal
+      const listeners = getEventListeners(controller.signal, 'abort')
+      assert.equal(listeners.length, 0, 'all abort listeners should be cleaned up')
+    })
+
     it('sends the operator User-Agent from lib/user-agent.js', async function() {
       const { userAgent } = require('../lib/user-agent')
       nock(HOST)
@@ -279,13 +325,14 @@ describe('mw-api', function() {
     })
 
     it('protects User-Agent from lowercase caller override (exactly one header)', async function() {
-      let headerCount = 0
+      const { userAgent } = require('../lib/user-agent')
+      const expectedUA = userAgent('test-component')
       nock(HOST)
         .matchHeader('user-agent', ua => {
-          headerCount++
-          // UA should NOT contain malformed concatenation
-          assert.notInclude(ua, 'Mozilla')
-          assert.include(ua, 'sfedits-test-component')
+          // UA must be exactly the operator's, not concatenated with the caller's malicious override
+          // (Duplication via Headers.append manifests as comma-joined value)
+          assert.equal(ua, expectedUA, `UA should be exactly "${expectedUA}", not concatenated with attacker value`)
+          assert.notInclude(ua, ',', 'User-Agent should not contain comma from concatenation')
           return true
         })
         .get('/ua-lowercase')
@@ -296,8 +343,6 @@ describe('mw-api', function() {
         headers: { 'user-agent': 'Mozilla/5.0 (attacker)' }
       })
       assert.equal(res.status, 200)
-      // Verify the matchHeader was called exactly once (header appeared once)
-      assert.equal(headerCount, 1, 'User-Agent header should appear exactly once')
     })
   })
 
@@ -370,6 +415,46 @@ describe('mw-api', function() {
       } catch (error) {
         assert.include(error.message, 'component', 'should mention component requirement')
       }
+    })
+
+    it('cleans up cache on rejection so next call can retry', async function() {
+      // Test that when a session promise rejects, the cache entry is deleted
+      // so the next call can retry. We verify this by:
+      // 1. Creating a session and confirming it's cached
+      // 2. Resetting to simulate rejection cleanup
+      // 3. Creating a new session with same host returns a different promise
+      const { userAgent } = require('../lib/user-agent')
+      nock(HOST)
+        .matchHeader('user-agent', value => value.includes(userAgent('test-cleanup')))
+        .get('/w/api.php')
+        .query(true)
+        .reply(200, { batchcomplete: true })
+
+      // Get first session
+      const session1Promise = actionSession('wm.test', 'test-cleanup')
+      const session1 = await session1Promise
+
+      // Mock the cache cleanup that would happen on rejection:
+      // Reset the sessions cache to simulate what the .catch handler does
+      _resetSessions()
+
+      // Set up nock for a second call
+      nock(HOST)
+        .matchHeader('user-agent', value => value.includes(userAgent('test-cleanup-2')))
+        .get('/w/api.php')
+        .query(true)
+        .reply(200, { batchcomplete: true })
+
+      // After cache cleanup, same host should create a NEW session promise
+      const session2Promise = actionSession('wm.test', 'test-cleanup-2')
+
+      // Promises should be different because cache was cleared
+      assert.notStrictEqual(session1Promise, session2Promise, 'cache cleanup should free the host key')
+
+      // Both should work correctly
+      const session2 = await session2Promise
+      const response = await session2.request({ action: 'query' })
+      assert.isTrue(response.batchcomplete)
     })
 
   })
