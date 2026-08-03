@@ -162,6 +162,28 @@ describe('fan-out', function() {
     assert.equal(result.messageId, result.postId, 'messageId should equal postId')
   })
 
+  it('treats a bodyless 200 as transient, not permanent', async function() {
+    // Discord returns 200 but with no message id - this is a transient failure
+    // (the server accepted it but something went wrong internally)
+    nock('https://discord.com')
+      .post('/api/webhooks/77/silent', () => true)
+      .query(true)
+      .reply(200, {})
+
+    const { deliver } = require('../lib/subscription-delivery')
+
+    const sub = subscription(77, '/api/webhooks/77/silent')
+    const result = await deliver(
+      sub,
+      { text: 'test', screenshot: screenshotPath, metadata: { page: 'Test' } }
+    )
+
+    assert.isFalse(result.ok, 'delivery should fail')
+    assert.isFalse(result.permanent, 'a successful post with no id must not count toward quarantine')
+    assert.include(result.error, 'no message id',
+      'error should indicate the missing message id')
+  })
+
   it('rejects a subscription with no webhook url without throwing', async function() {
     const { deliver } = require('../lib/subscription-delivery')
 
