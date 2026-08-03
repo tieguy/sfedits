@@ -390,7 +390,7 @@ Look for these lines in the bot log:
 
 Observe one real Discord post (the deployed account is Discord-only).
 
-**Caution (LUI-109):** The first automated deploy may report `✓ Watchlist sync: 0 articles` or a failed sync. This happens when the bot restarts before the webservice — the bot tries to fetch its watchlist from the webservice endpoint and fails. Remedy: if this occurs, restart the webservice **first** (`toolforge webservice buildservice restart`), then the bot (`toolforge jobs restart bot`), then re-check the sync line.
+**Caution (LUI-109):** Watch for `✓ Watchlist sync: 0 articles` or a failed sync — it means the bot came up while the webservice (which serves its watchlist) was unreachable, and the bot will watch nothing for `refresh_hours` (24h). As of LUI-115, `autoupdate` restarts the webservice **before** the bot and waits (bounded, `SFEDITS_WEB_WAIT_TIMEOUT`, default 120s) for the watchlist URL to answer, so this should no longer happen on automated deploys — but the probe timing out is alerted, not fatal, so still check the sync line. Manual remedy if it does occur: restart the webservice **first** (`toolforge webservice buildservice restart`), then the bot (`toolforge jobs restart bot`), then re-check the sync line.
 
 **5. After verification: Delete SFEDITS_CONFIG permanently.**
 
