@@ -5,7 +5,7 @@ const os = require('os')
 const path = require('path')
 
 const nock = require('nock')
-const { extractRevisionInfo, recordPost, loadActive, updateEntries } = require('../lib/post-log')
+const { extractRevisionInfo, recordPost, loadActive, updateEntries, entryDeliveries } = require('../lib/post-log')
 const { classifyRevisions, decideActions, deletePosts } = require('../lib/revdel-check')
 
 describe('post-log', function() {
@@ -50,6 +50,48 @@ describe('post-log', function() {
       assert.equal(active[0].mastodonId, '42')
       assert.equal(active[0].status, 'active')
       assert.equal(active[0].missingCount, 0)
+    })
+
+    it('(Task 3e) entryDeliveries: new format passthrough', function() {
+      const entry = {
+        host: 'en.wikipedia.org',
+        revId: 123,
+        page: 'Test',
+        status: 'active',
+        deliveries: [
+          { type: 'bluesky', postId: 'at://uri', deleted: false },
+          { type: 'mastodon', postId: '999', deleted: false },
+          { type: 'discord', postId: 'msg-123', subscriptionId: 456, deleted: false }
+        ]
+      }
+
+      const deliveries = entryDeliveries(entry)
+
+      assert.lengthOf(deliveries, 3)
+      assert.deepEqual(deliveries[0], { type: 'bluesky', postId: 'at://uri', deleted: false })
+      assert.deepEqual(deliveries[2], { type: 'discord', postId: 'msg-123', subscriptionId: 456, deleted: false })
+    })
+
+    it('(Task 3e) entryDeliveries: legacy format mapping', function() {
+      const entry = {
+        host: 'en.wikipedia.org',
+        revId: 456,
+        page: 'Test',
+        status: 'active',
+        blueskyUri: 'at://legacy-uri',
+        blueskyDeleted: false,
+        mastodonId: '888',
+        mastodonDeleted: true,
+        discordMessageId: 'msg-456',
+        discordDeleted: false
+      }
+
+      const deliveries = entryDeliveries(entry)
+
+      assert.lengthOf(deliveries, 3)
+      assert.deepEqual(deliveries[0], { type: 'bluesky', postId: 'at://legacy-uri', deleted: false })
+      assert.deepEqual(deliveries[1], { type: 'mastodon', postId: '888', deleted: true })
+      assert.deepEqual(deliveries[2], { type: 'discord', postId: 'msg-456', deleted: false })
     })
 
     it('returns null and records nothing for an unparseable URL', function() {
@@ -174,51 +216,148 @@ describe('revdel-check', function() {
       assert.lengthOf(toUpdate, 0)
     })
   })
-  describe('deletePosts (Discord)', function() {
+  describe('deletePosts', function() {
     const WEBHOOK = 'https://discord.com/api/webhooks/123/token-abc'
-    const baseEntry = {
-      host: 'en.wikipedia.org', revId: 1, page: 'Cat', status: 'active',
-      reason: 'hidden', discordMessageId: '111222333'
-    }
 
     afterEach(function() {
       nock.cleanAll()
     })
 
-    it('deletes the webhook message and completes the entry', async function() {
-      nock('https://discord.com')
-        .delete('/api/webhooks/123/token-abc/messages/111222333')
-        .reply(204)
+    describe('legacy format (Discord)', function() {
+      const baseEntry = {
+        host: 'en.wikipedia.org', revId: 1, page: 'Cat', status: 'active',
+        reason: 'hidden', discordMessageId: '111222333'
+      }
 
-      const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
-      assert.isTrue(updated.discordDeleted)
-      assert.equal(updated.status, 'deleted')
+      it('deletes the webhook message and completes the entry', async function() {
+        nock('https://discord.com')
+          .delete('/api/webhooks/123/token-abc/messages/111222333')
+          .reply(204)
+
+        const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
+        assert.isTrue(updated.discordDeleted)
+        assert.equal(updated.status, 'deleted')
+      })
+
+      it('treats 404 (already gone) as success', async function() {
+        nock('https://discord.com')
+          .delete('/api/webhooks/123/token-abc/messages/111222333')
+          .reply(404)
+
+        const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
+        assert.isTrue(updated.discordDeleted)
+        assert.equal(updated.status, 'deleted')
+      })
+
+      it('keeps the entry active on server errors so it retries', async function() {
+        nock('https://discord.com')
+          .delete('/api/webhooks/123/token-abc/messages/111222333')
+          .reply(500)
+
+        const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
+        assert.notOk(updated.discordDeleted)
+        assert.equal(updated.status, 'active')
+      })
+
+      it('completes with a warning when no webhook is configured anymore', async function() {
+        const updated = await deletePosts({ ...baseEntry }, {})
+        assert.isTrue(updated.discordDeleted)
+        assert.equal(updated.status, 'deleted')
+      })
     })
 
-    it('treats 404 (already gone) as success', async function() {
-      nock('https://discord.com')
-        .delete('/api/webhooks/123/token-abc/messages/111222333')
-        .reply(404)
+    describe('new deliveries format (Task 4)', function() {
+      it('(Task 4l) topicStore absent when subscription delivery needs it', async function() {
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 127,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          deliveries: [
+            { type: 'discord', postId: 'msg-noop', subscriptionId: 777, deleted: false }
+          ]
+        }
 
-      const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
-      assert.isTrue(updated.discordDeleted)
-      assert.equal(updated.status, 'deleted')
-    })
+        let loggedError = null
+        const originalConsoleError = console.error
+        console.error = function(...args) {
+          loggedError = args.join(' ')
+        }
 
-    it('keeps the entry active on server errors so it retries', async function() {
-      nock('https://discord.com')
-        .delete('/api/webhooks/123/token-abc/messages/111222333')
-        .reply(500)
+        const account = {}
+        // topicStore is null (IMPORTANT 6)
 
-      const updated = await deletePosts({ ...baseEntry }, { discord: { webhook_url: WEBHOOK } })
-      assert.notOk(updated.discordDeleted)
-      assert.equal(updated.status, 'active')
-    })
+        const updated = await deletePosts(entry, account, null)
 
-    it('completes with a warning when no webhook is configured anymore', async function() {
-      const updated = await deletePosts({ ...baseEntry }, {})
-      assert.isTrue(updated.discordDeleted)
-      assert.equal(updated.status, 'deleted')
+        console.error = originalConsoleError
+
+        // Should mark as deleted without throwing (IMPORTANT 6 fix)
+        assert.isTrue(updated.deliveries[0].deleted, 'Should mark delivery deleted when topicStore absent')
+        assert.ok(loggedError, 'Should log a warning')
+        assert.include(loggedError.toLowerCase(), 'not available')
+      })
+
+      it('(Task 4j) missing subscription marks delivery deleted + logs', async function() {
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 125,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          deliveries: [
+            { type: 'discord', postId: 'msg-999', subscriptionId: 404, deleted: false }
+          ]
+        }
+
+        let loggedError = null
+        const originalConsoleError = console.error
+        console.error = function(...args) {
+          loggedError = args.join(' ')
+        }
+
+        const account = {}
+        const mockTopicStore = {
+          subscriptionById: async () => null  // Subscription not found
+        }
+
+        const updated = await deletePosts(entry, account, mockTopicStore)
+
+        console.error = originalConsoleError
+
+        // Should mark as deleted without throwing
+        assert.isTrue(updated.deliveries[0].deleted)
+        assert.ok(loggedError, 'Should log an error about missing subscription')
+        assert.include(loggedError, 'not found')
+      })
+
+      it('(Task 4k) legacy-shape entry can be processed', async function() {
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 126,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          blueskyUri: 'at://legacy-uri',
+          blueskyDeleted: false,
+          discordMessageId: 'msg-legacy-123',
+          discordDeleted: false
+        }
+
+        // Simulate successful Discord deletion for legacy entry
+        nock('https://discord.com')
+          .delete('/api/webhooks/111/token/messages/msg-legacy-123')
+          .reply(204)
+
+        const account = {
+          discord: { webhook_url: 'https://discord.com/api/webhooks/111/token' }
+        }
+
+        const updated = await deletePosts(entry, account)
+
+        // Discord should be marked deleted
+        assert.isTrue(updated.discordDeleted)
+      })
     })
   })
 })

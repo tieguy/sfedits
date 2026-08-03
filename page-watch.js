@@ -9,9 +9,6 @@ const { EditStream } = require('./lib/edit-stream')
 const { enrichIPsInText, initializeReader } = require('./lib/geolocation')
 const { captureDiffImage } = require('./lib/diff-image')
 const { buildFacets } = require('./lib/bluesky-utils')
-const bluesky = require('./lib/bluesky-platform')
-const mastodon = require('./lib/mastodon-platform')
-const discord = require('./lib/discord-platform')
 const { post: deliveryPost, resolveConfigDeliveries } = require('./lib/delivery')
 const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
 const { createTopicStore } = require('./lib/topic-store')
@@ -230,6 +227,13 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
         // stop the others, and so thread refs survive partial failures.
         for (const delivery of deliveries) {
           try {
+            // CRITICAL 4: Delivery-level template override
+            let deliveryText = enrichedText
+            if (delivery.template) {
+              const overrideStatus = getStatus(edit, edit.user, delivery.template)
+              deliveryText = await enrichIPsInText(overrideStatus.text)
+            }
+
             // Prepare platform-specific replyTo if threading is needed
             let replyTo = null
             if (thread && thread.parent) {
@@ -248,7 +252,7 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
 
             // Post to this delivery target
             const result = await deliveryPost(delivery, {
-              text: enrichedText,
+              text: deliveryText,
               screenshot,
               metadata,
               replyTo
@@ -256,6 +260,7 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
 
             // Handle validation rejection (null result)
             if (!result) {
+              console.warn(`[sendStatus] ${delivery.type} post was rejected (allowlist or validation failure)`)
               continue
             }
 
@@ -295,6 +300,13 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
               .filter(r => r.ok)
               .map(r => ({ type: r.type, postId: r.postId, subscriptionId: r.subscriptionId }))
           ]
+
+          // CRITICAL 2+3: Total failure case (no successful deliveries)
+          // If allDeliveries is empty, no post succeeded - don't write heartbeat or entry
+          if (allDeliveries.length === 0) {
+            console.warn('[sendStatus] All deliveries failed - no post recorded, no heartbeat written')
+            return null
+          }
 
           const recordUrls = edit.collapsedUrls || [edit.url]
           for (const diffUrl of recordUrls) {

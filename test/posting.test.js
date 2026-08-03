@@ -243,6 +243,67 @@ describe('posting flow', function() {
       nock.cleanAll()
     })
 
+    it('(CRITICAL 2+3) sendStatus with all deliveries failing returns null and doesn\'t record', async function() {
+      this.timeout(10000)
+
+      let recordPostCalled = false
+
+      const pageWatch = proxyquire('../page-watch', {
+        './lib/diff-image': {
+          captureDiffImage: async () => ({ screenshot: fakeScreenshotPath, altText: 'Diff' })
+        },
+        './lib/geolocation': {
+          enrichIPsInText: async (text) => text,
+          initializeReader: async () => null
+        },
+        './lib/post-log': {
+          recordPost: () => { recordPostCalled = true; return null }
+        }
+      })
+
+      // Mock Wikipedia diff page
+      nock('https://en.wikipedia.org')
+        .get('/w/index.php')
+        .query({ diff: '123', oldid: '456' })
+        .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
+
+      // All platform calls will fail or be rejected
+      nock('https://bsky.social')
+        .post('/xrpc/com.atproto.server.createSession')
+        .reply(500)
+
+      nock('https://mastodon.example.com')
+        .post('/api/v1/media')
+        .reply(500)
+
+      const fakeAccount = {
+        bluesky: { identifier: 'test.bsky.social', password: 'pass' },
+        mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
+        discord: { webhook_url: 'http://example.com/webhook' },  // Invalid: not https
+        deliveries: [
+          { type: 'bluesky' },
+          { type: 'mastodon' },
+          { type: 'discord' }
+        ],
+        template: '{{page}}'
+      }
+
+      const fakeEdit = {
+        page: 'Test',
+        user: 'User',
+        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+      }
+
+      const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+      const result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
+
+      // Total failure must return null
+      assert.isNull(result, 'sendStatus should return null when all deliveries fail')
+
+      // recordPost should NOT have been called
+      assert.isFalse(recordPostCalled, 'recordPost should not be called on total failure')
+    })
+
     it('posts to Bluesky and Mastodon without errors', async function() {
       this.timeout(10000)
 
