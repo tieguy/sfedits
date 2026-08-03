@@ -78,10 +78,11 @@ To develop with Bluesky or Mastodon in addition, add them the same way (they're 
 **For Toolforge/CI:** Use environment variables instead of `config.json`:
 
 ```bash
-export SFEDITS_BLUESKY_PASSWORD="your-password"
-export SFEDITS_MASTODON_ACCESS_TOKEN="your-token"
 export SFEDITS_DISCORD_WEBHOOK_URL="your-webhook-url"
 export SFEDITS_INVITE_CODES="code1,code2"
+# Only if you have added the corresponding stanzas to config.json:
+# export SFEDITS_BLUESKY_PASSWORD="your-password"
+# export SFEDITS_MASTODON_ACCESS_TOKEN="your-token"
 ```
 
 ### 2. Run locally
@@ -125,8 +126,17 @@ DROPLET_IP=YOUR_DROPLET_IP
 EOF
 
 # Create local config.json with secrets (optional; env vars work too)
-cp config.base.json config.json
-nano config.json  # Edit to add your Bluesky/Mastodon credentials and webhook URLs
+cat > config.json << 'EOF'
+{
+  "accounts": [
+    {
+      "discord": {
+        "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+      }
+    }
+  ]
+}
+EOF
 
 # Start all services
 docker-compose up -d
@@ -189,6 +199,8 @@ docker system prune -af
 See the **Create configuration** section under Setup (above). The base config is in `config.base.json`; override or add fields in `config.json` (gitignored).
 
 **Important:** Never commit `config.json` - it contains credentials and is gitignored. On the droplet, update it directly when you need to change watchlist or credentials.
+
+**Array replacement:** When your `config.json` contains an `accounts` array, it **replaces** the base array wholesale — list every account you want kept. For example, overlaying `{"accounts":[{"discord":{"webhook_url":"..."}}]}` over a future two-account base yields one account, not two.
 
 ### Edit Collapsing
 
@@ -344,6 +356,8 @@ npm test                    # Run tests
 node page-watch.js --noop   # Test mode - doesn't post
 node page-watch.js --verbose # Show all edit activity
 ```
+
+A plain clone pulls the live production watchlist from `config.base.json` (harmless with `--noop`). To change the watchlist locally, override `watchlist_source` in your `config.json`.
 
 **Test mode (`--noop`):**
 - Monitors Wikipedia edits in real-time

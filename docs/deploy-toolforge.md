@@ -187,17 +187,49 @@ with no config at all.
 the deployed config a schema behind?" — the question that cost a failed
 `migrate` on the first deploy. See LUI-108 for the longer-term fix.
 
-### Pre-Phase 7 migration check
+### Phase 3 cutover check: SFEDITS_CONFIG must be deleted before merge to integration
 
-Before Phase 7 (when `SFEDITS_CONFIG` is deleted and config.base.json becomes
-the source of truth), verify that `config.base.json` reflects the deployed config.
-Values observable from `/api/topics.json` are mostly recoverable, but template
-strings and other non-observable values are not. Run this verification:
+**This phase rejects `SFEDITS_CONFIG` at startup.** Pushing this branch to
+`fork/integration` without deleting the envvar in the same window takes down
+every process (push = live deploy in 15 min).
+
+**Required before this branch reaches `integration`:**
+
+1. Verify `config.base.json` reflects the deployed config. Values observable from
+   `/api/topics.json` are mostly recoverable, but template strings and other
+   non-observable values are not:
 
 ```bash
 toolforge envvars show SFEDITS_CONFIG --raw | jq > /tmp/deployed-config.json
 # Then diff /tmp/deployed-config.json against config.base.json in the repo
-# Reconcile any differences before the Phase 7 cutover
+# Reconcile any differences before proceeding
+```
+
+2. Stage the four new secret envvars on Toolforge (see section 3 above for the
+   current stanzas):
+
+```bash
+toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL
+toolforge envvars create SFEDITS_INVITE_CODES
+# (and SFEDITS_BLUESKY_PASSWORD, SFEDITS_MASTODON_ACCESS_TOKEN if you added those stanzas)
+```
+
+3. **In the same deploy window** (ordered with the documented web-before-bot
+   restart rule):
+
+```bash
+# Push this branch to fork/integration to trigger autoupdate (or manually build/migrate)
+git push fork integration
+
+# Wait ~15 minutes for autoupdate, or force rebuild now:
+# toolforge build start https://github.com/tieguy/sfedits --ref integration
+
+# Delete SFEDITS_CONFIG AFTER the new image is built but BEFORE bot restarts:
+toolforge envvars delete SFEDITS_CONFIG
+
+# Restart (order matters: web before bot, per the deployment rules)
+toolforge webservice buildservice restart
+toolforge jobs restart bot
 ```
 
 ## 4. Build
