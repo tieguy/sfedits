@@ -211,6 +211,11 @@ async function deliverToTopics(subscriptions, payload) {
   return delivered
 }
 
+/** How a consumer is named in filtered:/filter-pass: log lines. */
+function consumerLabel(consumer) {
+  return consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+}
+
 /**
  * Post an edit to all configured platforms and matching topic subscriptions.
  *
@@ -223,11 +228,6 @@ async function deliverToTopics(subscriptions, payload) {
  *   shape), or null if nothing was posted (noop mode, blocked, or all
  *   platforms failed).
  */
-/** How a consumer is named in filtered:/filter-pass: log lines. */
-function consumerLabel(consumer) {
-  return consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-}
-
 async function sendStatus(account, statusData, edit, topicIds = [], thread = null) {
   try {
     console.log(statusData.text)
