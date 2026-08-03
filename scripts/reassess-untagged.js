@@ -62,7 +62,8 @@ async function sparqlRowsWithRetry(query, maxAttempts = 5, retryDelayMs = 5000) 
     } catch (error) {
       lastError = error
       if (attempt < maxAttempts && isRetryable(error)) {
-        if (retryDelayMs > 0) await sleep(retryDelayMs)
+        // Escalating backoff: matches pre-port semantics (5000 * attempt = 5/10/15/20s, tolerates ~50s overload)
+        if (retryDelayMs > 0) await sleep(retryDelayMs * attempt)
         continue
       }
       // Final attempt or non-retryable error: give up

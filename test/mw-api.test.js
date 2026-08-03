@@ -697,6 +697,7 @@ describe('mw-api', function() {
       this.timeout(5000)
       // Sustained bare 429 (no Retry-After header): keep returning 429
       let requestCount = 0
+      const started = Date.now()
       nock(HOST)
         .get('/w/api.php')
         .query(true)
@@ -709,14 +710,16 @@ describe('mw-api', function() {
       try {
         await session.request(
           { action: 'query' },
-          { maxRetriesSeconds: 0.1, bare429WaitMs: 50 }  // tiny budget: 100ms
+          { maxRetriesSeconds: 0.5, bare429WaitMs: 100 }
         )
         assert.fail('should have thrown')
       } catch (error) {
+        const elapsed = Date.now() - started
         // Should throw with an HTTP error, not hang forever
         assert.include(error.message, 'HTTP', 'should throw an HTTP error')
         // Verify we actually made requests (not zero, not infinite)
-        assert.isAbove(requestCount, 0, 'should have made at least one request')
+        assert.isAtLeast(requestCount, 2, 'handler must retry at least once')
+        assert.isAtLeast(elapsed, 100, 'must have waited')
         assert.isBelow(requestCount, 10, 'should not have exhausted all mocked replies')
       }
     })
