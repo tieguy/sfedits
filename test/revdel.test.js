@@ -423,6 +423,127 @@ describe('revdel-check', function() {
         // This is the legacy partial-failure contract
         assert.equal(updated.status, 'active', 'Entry should stay active: partial failure (discord deleted, bluesky not)')
       })
+
+      it('(Task 4h) mixed entry: account bluesky + subscription discord both deleted', async function() {
+        const mockTopicStore = {
+          subscriptionById: async (id) => {
+            if (id === 777) {
+              return {
+                id: 777,
+                deliveryConfig: {
+                  webhook_url: 'https://discord.com/api/webhooks/sub-hook/token-sub'
+                }
+              }
+            }
+            return null
+          }
+        }
+
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 200,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          deliveries: [
+            { type: 'bluesky', postId: 'at://did:plc:test/app.bsky.feed.post/blue200', deleted: false },
+            { type: 'discord', postId: 'discord-msg-777', subscriptionId: 777, deleted: false }
+          ]
+        }
+
+        const blueskyScope = nock('https://bsky.social')
+          .post('/xrpc/com.atproto.server.createSession')
+          .reply(200, { accessJwt: 'token', refreshJwt: 'refresh', did: 'did:plc:test', handle: 'test.bsky.social' })
+          .post('/xrpc/com.atproto.repo.deleteRecord')
+          .reply(200, {})
+
+        const discordScope = nock('https://discord.com')
+          .delete('/api/webhooks/sub-hook/token-sub/messages/discord-msg-777')
+          .reply(204)
+
+        const account = {
+          bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' }
+        }
+
+        const updated = await deletePosts(entry, account, mockTopicStore)
+
+        assert.isTrue(blueskyScope.isDone(), 'Bluesky delete should be called')
+        assert.isTrue(discordScope.isDone(), 'Discord webhook delete should be called')
+        assert.isTrue(updated.deliveries[0].deleted, 'Bluesky delivery should be marked deleted')
+        assert.isTrue(updated.deliveries[1].deleted, 'Discord subscription delivery should be marked deleted')
+        assert.equal(updated.status, 'deleted', 'Entry should be marked deleted when all deliveries deleted')
+      })
+
+      it('(Task 4i) partial failure: bluesky 500, discord succeeds, retry only bluesky next sweep', async function() {
+        const mockTopicStore = {
+          subscriptionById: async (id) => {
+            if (id === 888) {
+              return {
+                id: 888,
+                deliveryConfig: { webhook_url: 'https://discord.com/api/webhooks/sub-hook/token-sub' }
+              }
+            }
+            return null
+          }
+        }
+
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 201,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          deliveries: [
+            { type: 'bluesky', postId: 'at://did:plc:test/app.bsky.feed.post/blue201', deleted: false },
+            { type: 'discord', postId: 'discord-msg-888', subscriptionId: 888, deleted: false }
+          ]
+        }
+
+        // First sweep: Bluesky fails with 500, Discord succeeds
+        const blueskyScope1 = nock('https://bsky.social')
+          .post('/xrpc/com.atproto.server.createSession')
+          .reply(200, { accessJwt: 'token', refreshJwt: 'refresh', did: 'did:plc:test', handle: 'test.bsky.social' })
+          .post('/xrpc/com.atproto.repo.deleteRecord')
+          .reply(500, { error: 'Server error' })
+
+        const discordScope1 = nock('https://discord.com')
+          .delete('/api/webhooks/sub-hook/token-sub/messages/discord-msg-888')
+          .reply(204)
+
+        const account = {
+          bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' }
+        }
+
+        const updated1 = await deletePosts(entry, account, mockTopicStore)
+
+        // After first sweep: Discord should be deleted, Bluesky should NOT
+        assert.isTrue(blueskyScope1.isDone(), 'Bluesky delete should be attempted')
+        assert.isTrue(discordScope1.isDone(), 'Discord delete should succeed')
+        assert.isFalse(updated1.deliveries[0].deleted, 'Bluesky should NOT be marked deleted after 500')
+        assert.isTrue(updated1.deliveries[1].deleted, 'Discord should be marked deleted')
+        assert.equal(updated1.status, 'active', 'Entry should stay active: partial failure')
+
+        // Second sweep: Only Bluesky (Discord endpoint should NOT be hit)
+        const blueskyScope2 = nock('https://bsky.social')
+          .post('/xrpc/com.atproto.server.createSession')
+          .reply(200, { accessJwt: 'token', refreshJwt: 'refresh', did: 'did:plc:test', handle: 'test.bsky.social' })
+          .post('/xrpc/com.atproto.repo.deleteRecord')
+          .reply(200, {})
+
+        const discordScope2 = nock('https://discord.com')
+          .delete('/api/webhooks/sub-hook/token-sub/messages/discord-msg-888')
+          .reply(204)
+
+        // Second delete call should only retry the Bluesky delivery
+        const updated2 = await deletePosts(updated1, account, mockTopicStore)
+
+        assert.isTrue(blueskyScope2.isDone(), 'Bluesky delete should succeed on retry')
+        // Discord endpoint should NOT have been hit (scope2 should not be done)
+        assert.isFalse(discordScope2.isDone(), 'Discord should NOT be called again (already deleted)')
+        assert.isTrue(updated2.deliveries[0].deleted, 'Bluesky should be marked deleted on success')
+        assert.isTrue(updated2.deliveries[1].deleted, 'Discord should still be marked deleted')
+        assert.equal(updated2.status, 'deleted', 'Entry should be marked deleted after retry succeeds')
+      })
     })
   })
 })
