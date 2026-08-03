@@ -15,7 +15,7 @@ function bindings(rows) {
 }
 
 describe('sparql', function() {
-  this.timeout(5000)
+  this.timeout(15000)
 
   afterEach(function() {
     nock.cleanAll()
@@ -133,6 +133,40 @@ describe('sparql', function() {
         assert.isTrue(errorLogged)
       } finally {
         console.error = originalError
+      }
+    })
+  })
+
+  describe('sparqlRaw rate-limit error handling', function() {
+    it('exhausts maxRateLimitWaits on 429, restores status, and throws', async function() {
+      // Four 429s (exceeds maxRateLimitWaits: 3 in sparqlRaw options).
+      // Retry-After: 1 = 1 second; small but > 0 so wmFetch uses it.
+      nock(WDQS).post('/sparql').times(4).reply(429, '', { 'retry-after': '1' })
+
+      try {
+        await sparqlRows('SELECT ?p WHERE { }')
+        assert.fail('Expected error to be thrown')
+      } catch (error) {
+        assert.equal(error.message, 'HTTP 429')
+        assert.equal(error.status, 429, 'catch restore must attach .status for 429')
+        assert.equal(error.body, '', 'catch restore must attach empty .body')
+        assert.isTrue(isRetryable(error), 'restored error must classify as retryable')
+      }
+    })
+
+    it('exhausts maxRateLimitWaits on 503+Retry-After, restores status, and throws', async function() {
+      // Four 503s with Retry-After (exceeds maxRateLimitWaits: 3).
+      // Retry-After: 1 = 1 second; small but > 0 so wmFetch uses it.
+      nock(WDQS).post('/sparql').times(4).reply(503, '', { 'retry-after': '1' })
+
+      try {
+        await sparqlRows('SELECT ?p WHERE { }')
+        assert.fail('Expected error to be thrown')
+      } catch (error) {
+        assert.equal(error.message, 'HTTP 503')
+        assert.equal(error.status, 503, 'catch restore must attach .status for 503')
+        assert.equal(error.body, '', 'catch restore must attach empty .body')
+        assert.isTrue(isRetryable(error), 'restored 503 error must classify as retryable')
       }
     })
   })
