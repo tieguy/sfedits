@@ -1,53 +1,100 @@
 # SF Edits
 
-A Wikipedia edit monitoring bot that watches for edits to San Francisco-related articles and posts screenshots to Bluesky and Mastodon. Includes automated PII screening, geolocation enrichment for anonymous edits, and a web UI for reviewing blocked posts.
+A Wikipedia edit monitoring bot that watches for edits to San Francisco-related articles and posts screenshots to Bluesky and Mastodon. Includes geolocation enrichment for anonymous edits.
 
 Based on [anon](https://github.com/edsu/anon), originally created for @congressedits.
 
 ## Architecture
 
-**Four-service microservice architecture (docker-compose):**
+**Three-service architecture (Node.js + MariaDB):**
 
 1. **Bot service** (Node.js)
-   - Monitors Wikipedia IRC feed for real-time edits
-   - Watches configured SF-related articles
-   - Screens edits for PII before posting
-   - Enriches anonymous IPs with country flags (MaxMind GeoLite2-City)
-   - Takes screenshots with Puppeteer
-   - Posts to Bluesky and Mastodon
+   - Monitors Wikipedia EventStreams feed for real-time edits
+   - Watches configured SF-related articles via task-force dynamic watchlists and custom lists
+   - Renders diff images via satori and resvg (headless, no browser)
+   - Delivers posts through a unified delivery layer (Discord, Bluesky, Mastodon) with per-subscription edit filters
+   - Syncs with MariaDB topic store for multi-region, multi-subscriber support
 
-2. **PII service** (Python/Flask)
-   - Persistent analyzer with pre-loaded spaCy model
-   - Screens edits for personally identifiable information
-   - Responds in ~100-200ms via HTTP API
-   - Used by bot and admin console
+2. **Web service** (Node.js/Express)
+   - Public coverage page listing monitored places
+   - Self-serve `/create` form (invite-code gated) for multi-region subscriptions
+   - Webservice API for watchlist and topic status
+   - Admin console disabled (would need Bluesky DM auth; current deployment is Discord-only)
 
-3. **Admin console** (Node.js/Express)
-   - Web UI for reviewing PII-blocked drafts
-   - Bluesky DM authentication (passwordless login)
-   - Posts to Bluesky and Mastodon with retry logic
-   - Exposed on port 3000
+3. **Database** (MariaDB, Toolforge ToolsDB)
+   - Persistent subscriptions and topic store
+   - Schema migrations via Procfile `migrate` entry
+   - Topics (region + filters) and subscriptions (user + webhook + edit_filters)
 
-4. **MaxMind updater** (curl)
-   - Downloads latest IP geolocation database weekly
-   - Runs continuously in background
-   - Updates transparently - no restarts needed
+**Legacy files:** `docker-compose.yml`, `deploy.sh`, and the `admin/Dockerfile`
+are unmaintained remnants from the droplet deployment and may not work. Toolforge
+is the supported deployment path.
 
 ## How it works
 
 1. Bot detects Wikipedia edit
-2. Fetches diff HTML and extracts text
-3. Sends text to PII service for screening
-4. **If PII detected:** Block post, save draft, send DM alerts
-5. **If clean:** Enrich IP with country flag, take screenshot, post to both platforms
+2. Fetches diff HTML and verifies it matches the claimed article
+3. Enriches IP with country flag, takes screenshot, posts to both platforms
 
 ## Setup
 
 ### 1. Create configuration
 
+**Non-secret config** is committed in `config.base.json`. **Secrets** come from
+environment variables, never from `config.json` (which is gitignored and local
+only). The loader reads `config.base.json`, merges any local `config.json`
+overrides, then reads secrets from env vars.
+
+**For local development:** Create `config.json` with only the fields you want
+to override (most commonly, secrets):
+
+```json
+{
+  "accounts": [
+    {
+      "discord": {
+        "webhook_url": "https://discord.com/api/webhooks/…"
+      }
+    }
+  ]
+}
+```
+
+To develop with Bluesky or Mastodon in addition, add them the same way (they're
+omitted from `config.base.json` since production runs Discord-only):
+
+```json
+{
+  "accounts": [
+    {
+      "bluesky": {
+        "identifier": "your-username.bsky.social",
+        "password": "your-app-password"
+      },
+      "mastodon": {
+        "instance": "https://your-instance.social",
+        "access_token": "your-access-token",
+        "visibility": "unlisted"
+      },
+      "discord": {
+        "webhook_url": "https://discord.com/api/webhooks/…"
+      }
+    }
+  ]
+}
+```
+
+**For Toolforge:** Secrets are injected via environment variables (set via
+`toolforge envvars`). The bot reads them at startup and merges them into the
+config:
+
 ```bash
-cp config.json.template config.json
-# Edit with your Bluesky/Mastodon credentials and article watchlist
+# Set once on Toolforge (not in the code):
+toolforge envvars create SFEDITS_DISCORD_WEBHOOK_URL "https://discord.com/api/webhooks/…"
+toolforge envvars create SFEDITS_INVITE_CODES "code1,code2"
+# Only if the corresponding stanzas are in config.base.json:
+# toolforge envvars create SFEDITS_BLUESKY_PASSWORD "your-password"
+# toolforge envvars create SFEDITS_MASTODON_ACCESS_TOKEN "your-token"
 ```
 
 ### 2. Run locally
@@ -57,134 +104,82 @@ cp config.json.template config.json
 docker-compose up -d
 ```
 
-**Node.js (requires Python/PII service separate):**
+**Node.js:**
 ```bash
 npm install
 node page-watch.js --noop  # Test mode - doesn't post
 ```
 
-The PII service will take ~20-30 seconds to load spaCy models on first start. The bot waits for the PII service to be healthy before starting.
+### 3. Deploy to Toolforge
 
-### 3. Deploy to production
+The primary deployment target is Toolforge (Wikimedia Cloud Services). See
+`docs/deploy-toolforge.md` for the full runbook.
 
-When ready to deploy to a live server:
+**TL;DR:**
 
-1. **Get a droplet** (minimum 512MB RAM, Ubuntu 22.04+)
+1. Ensure `config.base.json` reflects the desired non-secret config
+2. Set secrets via `toolforge envvars`: `SFEDITS_DISCORD_WEBHOOK_URL`,
+   `SFEDITS_INVITE_CODES`, etc.
+3. Push to `fork/integration` — `autoupdate` builds and deploys within 15 minutes
+4. Migrations run automatically via the `migrate` Procfile entry
+5. Check `/changelog` for deploy history
 
-2. **On your local machine**, create `.env`:
+## Toolforge Management
+
+**View logs:**
 ```bash
-DROPLET_IP=your.droplet.ip
+ssh login.toolforge.org
+become san-francisco-edit-stream
+
+toolforge jobs logs bot
+toolforge jobs logs web
 ```
 
-3. **First-time setup on droplet:**
+**Change config:**
+- Non-secret: Edit `config.base.json` and push to `fork/integration`
+- Secrets: Use `toolforge envvars delete/create` to update secrets
+
+**Restart processes:**
 ```bash
-ssh root@YOUR_DROPLET_IP
-cd /root/sfedits
-
-# Initialize git repository
-git init
-git remote add origin YOUR_GIT_URL
-git fetch origin
-git reset --hard origin/main
-
-# Create droplet .env
-cat > .env << 'EOF'
-DROPLET_IP=YOUR_DROPLET_IP
-EOF
-
-# Create config.json with credentials
-cp config.json.template config.json
-nano config.json  # Edit with your credentials
-
-# Start all services
-docker-compose up -d
+toolforge webservice buildservice restart
+toolforge jobs restart bot
+toolforge jobs restart rebuild-topics
 ```
 
-4. **Deploy updates:**
+**Monitor deployment:**
 ```bash
-git add .
-git commit -m "Your changes"
-git push origin main
-./deploy.sh
-```
+# Check autoupdate progress
+toolforge jobs logs autoupdate
 
-The deploy script pulls latest code, rebuilds containers, and restarts all services.
-
-## Management
-
-Once deployed, SSH into the droplet:
-
-```bash
-ssh root@YOUR_DROPLET_IP
-cd /root/sfedits
-
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f
-docker-compose logs -f bot
-docker-compose logs -f pii-service
-docker-compose logs -f admin
-
-# Restart services
-docker-compose restart
-
-# Stop all
-docker-compose down
-```
-
-**To update code:** Run `./deploy.sh` on your local machine.
-
-**To change config:** Edit `config.json` on the droplet and run `docker-compose restart bot admin`.
-
-## Maintenance
-
-Services automatically restart if interrupted or if the server reboots.
-
-**Check disk usage:**
-```bash
-df -h /
-docker system df
-```
-
-**Clean up old Docker images:**
-```bash
-docker system prune -af
+# View deployment history
+curl -s https://san-francisco-edit-stream.toolforge.org/changelog | jq '.deploys[:5]'
 ```
 
 ## Configuration
 
-Create `config.json` from the template:
+**Structure:** `config.base.json` (committed) + `config.json` (gitignored, local
+dev only) + environment variables (Toolforge secrets).
 
-```json
-{
-  "nick": "sfedits",
-  "accounts": [{
-    "template": "{{{page}}} Wikipedia article edited by {{{name}}} {{&url}}",
-    "watchlist": {
-      "English Wikipedia": {
-        "San Francisco Board of Supervisors": true,
-        "Daniel Lurie": true
-      }
-    },
-    "bluesky": {
-      "identifier": "your-username.bsky.social",
-      "password": "your-app-password"
-    },
-    "mastodon": {
-      "instance": "https://your-instance.social",
-      "access_token": "your-access-token"
-    },
-    "pii_alerts": {
-      "bluesky_recipient": "yourhandle.bsky.social",
-      "mastodon_recipient": "yourhandle"
-    }
-  }]
-}
-```
+1. Load `config.base.json` from the repo
+2. Merge `config.json` overrides (if present locally)
+3. Inject secrets from environment variables (`SFEDITS_DISCORD_WEBHOOK_URL`,
+   `SFEDITS_BLUESKY_PASSWORD`, `SFEDITS_MASTODON_ACCESS_TOKEN`,
+   `SFEDITS_INVITE_CODES`)
 
-**Important:** Never commit `config.json` - it contains credentials and is gitignored. Update it directly on the droplet when you need to change the watchlist or credentials.
+**Important:** Never commit `config.json` — it's gitignored and holds your local
+credentials. Never commit secrets to the repo; use environment variables instead.
+
+**Array replacement:** When `config.json` contains an `accounts` array, it
+**replaces** the base array wholesale — list every account you want to keep.
+For example, overlaying `{"accounts":[{"discord":{"webhook_url":"..."}}]}` over
+a two-account base yields one account, not two.
+
+**Delivery layer:** Each account has a `deliveries` array specifying where edits
+go (platform webhook/credentials). Two kinds of edit filters exist:
+- **Config-level** (per delivery, in `config.base.json`): `deliveries[].edit_filters` — 
+  optional filters hardcoded in the config.
+- **Subscription-level** (per topic subscriber, in the database): independent of 
+  config — set via `lib/topic-store.js` or direct SQL. See `docs/config-topic-store.md`.
 
 ### Edit Collapsing
 
@@ -210,7 +205,7 @@ Configure per account with the optional `collapse` stanza:
 - `window_minutes`: collapse window length (default 15).
 - `template`: Mustache template for combined posts; `{{count}}` is the number of collapsed edits. Defaults to the template shown above.
 
-Buffered edits and thread refs are held in memory, so restarting the bot drops any not-yet-posted buffer, and a burst spanning a restart starts a fresh thread. Combined posts go through the same diff verification and PII screening as single-edit posts, applied to the combined diff. For the revdel sweeper, a combined post is recorded in the post log under **every** revision it covers, so hiding any one of them on-wiki takes the combined post down.
+Buffered edits and thread refs are held in memory, so restarting the bot drops any not-yet-posted buffer, and a burst spanning a restart starts a fresh thread. Combined posts go through the same diff verification as single-edit posts, applied to the combined diff. For the revdel sweeper, a combined post is recorded in the post log under **every** revision it covers, so hiding any one of them on-wiki takes the combined post down.
 
 ### Dynamic Watchlist (WikiProject task forces)
 
@@ -252,8 +247,6 @@ Integrations → Webhooks → New Webhook) and add it to the account:
 Discord posts are rich embeds (no platform length squeeze): article title
 and Wikidata description, editor link, change counts, quoted added/removed
 excerpts, the article's lead image as a thumbnail, and the diff screenshot.
-If the structured diff isn't available (fallback screenshot path), a plain
-markdown message is posted instead.
 
 No bot user or OAuth setup is needed - webhooks are per-channel URLs. Posts
 include the edit screenshot as an attachment, with the article and editor as
@@ -261,25 +254,20 @@ clickable links.
 
 ### Bluesky Setup
 
-To set up Bluesky posting and PII alert DMs:
+To set up Bluesky posting:
 
 1. Go to Bluesky Settings → App Passwords → Add App Password
-2. **Critical:** Check "Allow access to your direct messages" (required for PII alerts)
-3. Copy the app password to your config.json
-
-**Note:** If PII alerts don't work, regenerate the app password with DM access enabled.
+2. Copy the app password to your config.json
 
 ### Mastodon Setup
 
-To set up Mastodon posting and PII alert DMs:
+To set up Mastodon posting:
 
 1. Go to your Mastodon instance's settings → Development → New Application
-2. **Critical:** When selecting scopes, choose:
+2. When selecting scopes, choose:
    - `write:media` - upload media files
    - `write:statuses` - publish posts
 3. Copy the access token to your config.json
-
-**Note:** Without the correct scopes (`write:media` and `write:statuses`), Mastodon posting will fail silently while Bluesky continues to work.
 
 **Post visibility:** community instances often want bots posting `unlisted` so
 automated posts stay off the local timeline (posts still appear on the bot's
@@ -295,94 +283,7 @@ profile, to followers, and in threads). Set it per account:
 
 Accepted values are Mastodon's: `public`, `unlisted`, `private` (followers
 only). Omit the key to use the server's default (normally public). This
-applies to regular posts, collapsed/threaded posts, and admin console
-reposts alike; PII alert DMs are always sent `direct` regardless.
-
-## PII Screening
-
-The bot automatically screens all edits for personally identifiable information (PII) before posting to prevent malicious actors from using the bot to amplify private data.
-
-### How it works
-
-1. Bot fetches Wikipedia diff HTML and extracts text
-2. Sends text to PII microservice (Python/Flask with Microsoft Presidio)
-3. PII service analyzes for:
-   - Email addresses
-   - Phone numbers
-   - Social Security Numbers
-   - Credit card numbers
-4. **If PII found:** Block post, save draft, send DM alerts, log to file
-5. **If clean:** Post normally to Bluesky/Mastodon
-
-The PII service runs continuously with pre-loaded spaCy models, providing fast analysis (~100-200ms per edit).
-
-### Setup
-
-Add `pii_alerts` to your `config.json` (shown in Configuration section above) with your personal handles:
-
-```json
-"pii_alerts": {
-  "bluesky_recipient": "yourhandle.bsky.social",
-  "mastodon_recipient": "yourhandle@instance.social"
-}
-```
-
-**Important setup steps:**
-1. **Bluesky:** Create a DM conversation between your bot account and your personal Bluesky account (send a DM manually in the app first)
-2. **Bluesky:** Ensure the bot's app password has "Allow access to your direct messages" checked
-3. **Mastodon:** Use format `username@instance.social` for cross-instance DMs (e.g., if bot is on `sfba.social` but you're on `mastodon.social`, use `you@mastodon.social`)
-
-### When PII is detected
-
-You'll receive DMs on both Bluesky and Mastodon with:
-- Article name and editor
-- Diff URL
-- The text that would have been posted
-- What PII was detected (type and confidence score)
-
-The blocked edit is also logged to `pii-blocks.log` for SSH review.
-
-### Admin Console for Draft Review
-
-When PII is detected, posts are blocked and saved as drafts. The admin console is a web UI for reviewing and posting drafts.
-
-**Deployment:**
-
-The admin console is automatically deployed as part of `docker-compose up -d`. No separate deployment needed.
-
-**Requirements:**
-- Bot's Bluesky app password has "Allow access to your direct messages" enabled
-- DM conversation exists between bot and recipient (start manually in Bluesky app)
-- `pii_alerts.bluesky_recipient` is set in config.json
-- Port 3000 is accessible
-
-**Access:**
-- URL: `http://your-droplet-ip:3000`
-- Click "Send Code to Bluesky" → Check DMs → Enter 6-digit code
-- Session lasts 24 hours
-
-**Features:**
-- Review blocked posts with screenshots
-- See detected PII types and confidence scores
-- Post to both platforms with one click
-- Automatic retry if one platform fails
-
-### Fail-safe design
-
-The system blocks posts if:
-- PII is detected with any confidence level
-- Diff text cannot be extracted from Wikipedia
-- PII service is unreachable or times out (5s timeout)
-- Any unexpected error occurs during screening
-
-If the PII service is unavailable, the bot allows posts through with a warning log (avoiding complete service outage). The persistent microservice architecture makes this scenario rare.
-
-### Accuracy
-
-Based on testing with Wikipedia-style content:
-- **87.5% accuracy** overall
-- **0% false positives** on clean Wikipedia edits
-- **100% detection** on emails, phone numbers, and SSNs
+applies to regular posts and collapsed/threaded posts.
 
 ## Monitored Articles
 
@@ -434,6 +335,8 @@ npm test                    # Run tests
 node page-watch.js --noop   # Test mode - doesn't post
 node page-watch.js --verbose # Show all edit activity
 ```
+
+A plain clone pulls the live production watchlist from `config.base.json` (harmless with `--noop`). To change the watchlist locally, override `watchlist_source` in your `config.json`.
 
 **Test mode (`--noop`):**
 - Monitors Wikipedia edits in real-time

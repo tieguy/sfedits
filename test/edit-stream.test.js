@@ -55,5 +55,11 @@ describe('edit-stream', function() {
         assert.isString(WIKI_NAMES[host], host)
       }
     })
+
+    it('exposes the minor flag from events', function() {
+      assert.isTrue(toEdit({ ...baseEvent, minor: true }).minor)
+      assert.isFalse(toEdit({ ...baseEvent, minor: false }).minor)
+      assert.isFalse(toEdit({ ...baseEvent }).minor)
+    })
   })
 })

@@ -1,24 +1,6 @@
 services:
-  pii-service:
-    build: ./pii-service
-    restart: unless-stopped
-    # Memory limits to prevent OOM on small droplets
-    mem_limit: 256m
-    mem_reservation: 128m
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
   bot:
     build: .
-    depends_on:
-      pii-service:
-        condition: service_healthy
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
     volumes:
       - ./config.json:/opt/sfedits/config.json:ro
       - ./drafts:/opt/sfedits/drafts
@@ -34,17 +16,13 @@ services:
       dockerfile: admin/Dockerfile
     ports:
       - "3000:3000"
-    environment:
-      - CONFIG_PATH=/opt/sfedits/config.json
     volumes:
+      # config.json overlay is bind-mounted; config.base.json is in the image
       - ./config.json:/opt/sfedits/config.json:ro
       - ./drafts:/opt/sfedits/drafts
       - ./data:/opt/sfedits/data
     restart: unless-stopped
-    depends_on:
-      pii-service:
-        condition: service_healthy
-    # Memory limits for admin web UI (needs 256MB for Puppeteer/Chromium)
+    # Memory limits for admin web UI
     mem_limit: 256m
     mem_reservation: 128m
 

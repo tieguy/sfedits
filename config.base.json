@@ -1,0 +1,41 @@
+{
+  "nick": "sfedits",
+  "accounts": [
+    {
+      "template": "{{{page}}} Wikipedia article edited by {{{name}}} {{&url}}",
+      "collapse": {
+        "enabled": true,
+        "window_minutes": 15,
+        "template": "{{{page}}} Wikipedia article edited {{count}} times by {{{name}}} {{&url}}"
+      },
+      "watchlist": {
+        "English Wikipedia": {
+          "User:LuisVilla/edits-bot-test-page": true
+        }
+      },
+      "watchlist_source": {
+        "titles_url": "https://san-francisco-edit-stream.toolforge.org/watchlist-500.json",
+        "refresh_hours": 24
+      },
+      "discord": {},
+      "deliveries": [
+        { "type": "discord", "edit_filters": { "bots": false, "minor": false } }
+      ],
+      "wikidata_claims": {
+        "properties": ["P19", "P20", "P131", "P159", "P276", "P937", "P39"],
+        "refresh_hours": 24,
+        "rate_cap": { "max": 5, "window_minutes": 10 }
+      }
+    }
+  ],
+  "topic_store": {
+    "host": "tools.db.svc.wikimedia.cloud",
+    "port": 3306,
+    "database": "s57894__sfedits",
+    "connection_limit": 5,
+    "max_posts_per_hour": 20
+  },
+  "web": {
+    "max_articles": 5000
+  }
+}
