@@ -681,16 +681,70 @@ describe('mw-api', function() {
         .reply(200, { batchcomplete: true })
 
       _resetSessions()
-      const session = await actionSession('wm.test', 'test-bare-429', { bare429WaitMs: 50 })
+      const session = await actionSession('wm.test', 'test-bare-429')
       const started = Date.now()
       const response = await session.request(
         { action: 'query' },
-        { maxRetriesSeconds: 10 }
+        { maxRetriesSeconds: 10, bare429WaitMs: 50 }
       )
       const elapsed = Date.now() - started
 
       assert.isTrue(response.batchcomplete, 'request should succeed after bare 429 wait')
       assert.isAtLeast(elapsed, 40, 'should have waited before retrying')
+    })
+
+    it('terminates sustained bare 429 with non-200 error when budget exhausted', async function() {
+      this.timeout(5000)
+      // Sustained bare 429 (no Retry-After header): keep returning 429
+      let requestCount = 0
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .times(10)
+        .reply(429, function() { requestCount++; return '' })
+
+      _resetSessions()
+      const session = await actionSession('wm.test', 'test-bare-429-sustained')
+
+      try {
+        await session.request(
+          { action: 'query' },
+          { maxRetriesSeconds: 0.1, bare429WaitMs: 50 }  // tiny budget: 100ms
+        )
+        assert.fail('should have thrown')
+      } catch (error) {
+        // Should throw with an HTTP error, not hang forever
+        assert.include(error.message, 'HTTP', 'should throw an HTTP error')
+        // Verify we actually made requests (not zero, not infinite)
+        assert.isAbove(requestCount, 0, 'should have made at least one request')
+        assert.isBelow(requestCount, 10, 'should not have exhausted all mocked replies')
+      }
+    })
+
+    it('bare 429 handler does not interfere with 500 errors (pass-through)', async function() {
+      this.timeout(2000)
+      // A 500 error should fail immediately, not trigger bare 429 handler
+      let requestCount = 0
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .reply(500, function() { requestCount++; return 'server error' })
+
+      _resetSessions()
+      const session = await actionSession('wm.test', 'test-500-passthrough')
+
+      try {
+        await session.request(
+          { action: 'query' },
+          { maxRetriesSeconds: 10, bare429WaitMs: 5000 }
+        )
+        assert.fail('should have thrown')
+      } catch (error) {
+        // 500 should fail with a retryable error (not bare 429 logic)
+        assert.include(error.message, '500', 'should report 500 error')
+        // Should make a normal number of attempts (m3api retries 5xx), not blocked by bare 429
+        assert.isAbove(requestCount, 0, 'should have made requests')
+      }
     })
 
   })

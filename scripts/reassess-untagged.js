@@ -28,7 +28,7 @@ const {
   percentileRanks, median, leadScore, fetchPageviews,
   api, batches, EN_API, WD_API, PROJECT
 } = require('./reassess')
-const { sparqlRows } = require('../lib/sparql')
+const { sparqlRows, isRetryable } = require('../lib/sparql')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
 const COUNTIES = ['Q62', 'Q107146', 'Q108058', 'Q108117', 'Q108137',
@@ -50,6 +50,26 @@ function requireMain(stage) {
   const p = path.join(DATA_DIR, `${stage}.json`)
   if (!fs.existsSync(p)) throw new Error(`run scripts/reassess.js first (missing ${stage}.json)`)
   return JSON.parse(fs.readFileSync(p, 'utf8'))
+}
+
+// Helper to retry sparqlRows calls that fail transiently.
+// The old local loop absorbed 5 failures; this preserves that semantics.
+async function sparqlRowsWithRetry(query, maxAttempts = 5, retryDelayMs = 5000) {
+  let lastError = null
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await sparqlRows(query)
+    } catch (error) {
+      lastError = error
+      if (attempt < maxAttempts && isRetryable(error)) {
+        if (retryDelayMs > 0) await sleep(retryDelayMs)
+        continue
+      }
+      // Final attempt or non-retryable error: give up
+      break
+    }
+  }
+  throw lastError
 }
 
 // ----------------------------------------------------------------- stages
@@ -78,20 +98,20 @@ async function stageCandidates() {
   let n = 0
   const total = COUNTIES.length * (PROPERTIES.length + 2)
   for (const county of COUNTIES) {
-    // the places themselves
-    add(await sparqlRows(`SELECT DISTINCT ?item ?title WHERE {
+    // the places themselves (with retry: old loop absorbed up to 5 failures)
+    add(await sparqlRowsWithRetry(`SELECT DISTINCT ?item ?title WHERE {
       ?item wdt:P131+ wd:${county} . ${sitelink} }`), 'P131')
     process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
-    // items pointing at those places
+    // items pointing at those places (with retry)
     for (const prop of PROPERTIES) {
-      add(await sparqlRows(`SELECT DISTINCT ?item ?title WHERE {
+      add(await sparqlRowsWithRetry(`SELECT DISTINCT ?item ?title WHERE {
         ?item wdt:${prop} ?place .
         ?place wdt:P131* wd:${county} . ${sitelink} }`), prop)
       process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
       await sleep(250)
     }
-    // holders of offices with Bay Area jurisdiction
-    add(await sparqlRows(`SELECT DISTINCT ?item ?title WHERE {
+    // holders of offices with Bay Area jurisdiction (with retry)
+    add(await sparqlRowsWithRetry(`SELECT DISTINCT ?item ?title WHERE {
       ?item wdt:P39 ?pos .
       { ?pos wdt:P1001 wd:${county} }
       UNION { ?j wdt:P131+ wd:${county} . ?pos wdt:P1001 ?j }
