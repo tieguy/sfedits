@@ -23,6 +23,7 @@
  *                                        create a one-off job, poll to completion
  *   job-logs <name>                      print a job's logs
  *   webservice-restart                   recycle webservice pods via the k8s API
+ *   webservice-restart-wait [timeout]    recycle pods, wait for a NEW Ready pod
  *
  * Overrides (all optional): TOOL_TOOLFORGE_API_URL (gateway),
  * TOOL_DATA_DIR/HOME (tool home), TF_API_POLL_MS (job poll interval).
@@ -226,6 +227,51 @@ async function webserviceRestart() {
   if (count === 0) console.error('warning: no pods matched the webservice selector')
 }
 
+function listWebservicePods() {
+  const { server, namespace } = kubeconfig()
+  if (!server || !namespace) throw new Error('no usable kubeconfig for pod listing')
+  const selector = encodeURIComponent(`name=${toolName()}`)
+  const url = `${server}/api/v1/namespaces/${namespace}/pods?labelSelector=${selector}`
+  return request('GET', url).then(({ text }) => JSON.parse(text).items || [])
+}
+
+function podIsReady(pod) {
+  if (pod.metadata && pod.metadata.deletionTimestamp) return false
+  if (!pod.status || pod.status.phase !== 'Running') return false
+  return (pod.status.conditions || []).some((c) => c.type === 'Ready' && c.status === 'True')
+}
+
+/**
+ * Restart the webservice and wait for a genuinely NEW pod to become Ready.
+ *
+ * The plain restart is an async pod DELETE: it returns while the old pod is
+ * still Terminating and still answering HTTP, so a URL probe right after it
+ * can green-light the *dying* pod (LUI-115). Distinguishing by pod UID makes
+ * the wait deterministic: success means a pod that did not exist before the
+ * delete is Running and Ready.
+ */
+async function webserviceRestartWait(timeoutSecArg) {
+  const timeoutSec = Number(timeoutSecArg) > 0 ? Number(timeoutSecArg) : 120
+  const before = new Set((await listWebservicePods()).map((p) => p.metadata.uid))
+  await webserviceRestart()
+  const deadline = Date.now() + timeoutSec * 1000
+  while (Date.now() < deadline) {
+    await sleep(POLL_MS)
+    let pods
+    try {
+      pods = await listWebservicePods()
+    } catch (e) {
+      continue // transient API blip mid-rollout; keep polling until the deadline
+    }
+    const fresh = pods.find((p) => !before.has(p.metadata.uid) && podIsReady(p))
+    if (fresh) {
+      console.log(`new webservice pod ready: ${fresh.metadata.name}`)
+      return
+    }
+  }
+  throw new Error(`no new Ready webservice pod within ${timeoutSec}s`)
+}
+
 const COMMANDS = {
   'build-start': buildStart,
   'build-status': buildStatus,
@@ -233,7 +279,8 @@ const COMMANDS = {
   'job-delete': jobDelete,
   'job-run-wait': jobRunWait,
   'job-logs': jobLogs,
-  'webservice-restart': webserviceRestart
+  'webservice-restart': webserviceRestart,
+  'webservice-restart-wait': webserviceRestartWait
 }
 
 async function main() {

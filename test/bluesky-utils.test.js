@@ -14,18 +14,24 @@ describe('lib/bluesky-utils', function() {
     const PAGE_URL = 'https://en.wikipedia.org/wiki/x'
     const USER_URL = 'https://en.wikipedia.org/wiki/Special:Contributions/x'
 
+    // Facets are emitted in ascending byteStart order, so tests locate them
+    // by link URI rather than by array position.
+    const byUri = (facets, uri) => facets.find(f => f.features[0].uri === uri)
+
     it('finds the username when the template puts the name before the page', function() {
       // Sequential search offsets used to drop the name facet entirely here.
       const text = 'Alice edited Cat https://example.com/diff'
       const facets = buildFacets(text, 'Cat', 'Alice', PAGE_URL, USER_URL)
 
       assert.equal(facets.length, 3, 'page + name + url facets')
-      const pageFacet = facets[0]
-      const nameFacet = facets[1]
+      const pageFacet = byUri(facets, PAGE_URL)
+      const nameFacet = byUri(facets, USER_URL)
       assert.equal(pageFacet.index.byteStart, 13, 'page anchors on the standalone "Cat"')
       assert.equal(pageFacet.index.byteEnd, 16)
       assert.equal(nameFacet.index.byteStart, 0, 'name anchors on "Alice" at the start')
       assert.equal(nameFacet.index.byteEnd, 5)
+      const starts = facets.map(f => f.index.byteStart)
+      assert.deepEqual(starts, [...starts].sort((a, b) => a - b), 'facets emitted in text order')
     })
 
     it('does not anchor the page name inside a longer word', function() {
@@ -34,10 +40,12 @@ describe('lib/bluesky-utils', function() {
       const facets = buildFacets(text, 'Cat', 'Catherine', PAGE_URL, USER_URL)
 
       assert.equal(facets.length, 3)
-      assert.equal(facets[0].index.byteStart, 17, 'page facet on the standalone "Cat"')
-      assert.equal(facets[0].index.byteEnd, 20)
-      assert.equal(facets[1].index.byteStart, 0, 'name facet on "Catherine"')
-      assert.equal(facets[1].index.byteEnd, 9)
+      const pageFacet = byUri(facets, PAGE_URL)
+      const nameFacet = byUri(facets, USER_URL)
+      assert.equal(pageFacet.index.byteStart, 17, 'page facet on the standalone "Cat"')
+      assert.equal(pageFacet.index.byteEnd, 20)
+      assert.equal(nameFacet.index.byteStart, 0, 'name facet on "Catherine"')
+      assert.equal(nameFacet.index.byteEnd, 9)
     })
 
     it('does not anchor a name that only appears inside the diff URL', function() {
