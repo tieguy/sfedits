@@ -22,7 +22,7 @@ Per `CLAUDE.md`, `integration` is the fork's deployable base:
 # on your machine, in the main checkout
 git checkout integration
 git merge place-bot-platform
-npm test                      # 646 passing, 0 pending with the test db up
+npm test                      # 656 passing, 0 pending with the test db up
 git push fork integration
 ```
 
@@ -320,9 +320,9 @@ git checkout integration
 git merge fork/integration     # fast-forward local to the deployed state
 git merge delivery-merge
 SFEDITS_REQUIRE_DB=1 npm test
-# Expected: 675 passing, 0 pending — verified by a trial merge against
-# fork/integration@b8e5f9e (656 on delivery-merge + 19 integration-only tests,
-# minus the deleted send-alert test).
+# Expected: 676 passing, 0 pending — verified by a trial merge against
+# fork/integration@b8e5f9e (656 on delivery-merge + 10 toolforge-api tests +
+# 10 claim-watch tests from PR #10; send-alert's test is deleted with its script).
 ```
 
 **Merge conflicts (verified by trial merge; expect 4):**
