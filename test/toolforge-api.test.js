@@ -177,13 +177,18 @@ describe('toolforge-api.js', function () {
   })
 
   it('webservice-restart-wait waits for a pod that did not exist before the delete', async function () {
-    // GET #1 (before-set): old pod, Running+Ready. GET #2: old pod dying but
-    // STILL Ready — the state that fools a URL probe. GET #3: new pod Ready.
+    // GET #1 (before-set): old pod, Running+Ready. Then a NEW-uid pod is
+    // walked through every unready state — each must be rejected by its own
+    // podIsReady predicate (the UID gate cannot save us here, the uid is new):
+    // #2 Terminating but still Ready, #3 Running but Ready=False, #4 Pending.
+    // Only #5, Running+Ready, may end the wait.
     let gets = 0
     respond((r) => r.method === 'GET', () => {
       gets++
       if (gets === 1) return { json: { items: [podJson('old-uid')] } }
-      if (gets === 2) return { json: { items: [podJson('old-uid', { terminating: true })] } }
+      if (gets === 2) return { json: { items: [podJson('new-uid', { terminating: true })] } }
+      if (gets === 3) return { json: { items: [podJson('new-uid', { ready: false })] } }
+      if (gets === 4) return { json: { items: [podJson('new-uid', { phase: 'Pending' })] } }
       return { json: { items: [podJson('new-uid')] } }
     })
     respond((r) => r.method === 'DELETE', () => ({ json: { items: [{}] } }))
@@ -194,8 +199,8 @@ describe('toolforge-api.js', function () {
     // The before-set must be captured BEFORE the delete.
     expect(requests[0].method).to.equal('GET')
     expect(requests[1].method).to.equal('DELETE')
-    // The dying-but-Ready old pod must not have satisfied the wait.
-    expect(gets).to.be.at.least(3)
+    // None of the three unready states may have satisfied the wait.
+    expect(gets).to.be.at.least(5)
   })
 
   it('webservice-restart-wait times out when only the old pod ever answers', async function () {
