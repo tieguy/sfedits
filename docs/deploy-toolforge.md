@@ -22,7 +22,7 @@ Per `CLAUDE.md`, `integration` is the fork's deployable base:
 # on your machine, in the main checkout
 git checkout integration
 git merge place-bot-platform
-npm test                      # 656 passing, 0 pending with the test db up
+npm test                      # 778 passing, 0 pending with the test db up (2026-08-03)
 git push fork integration
 ```
 
@@ -310,46 +310,23 @@ the repo) for rollback.** The old code reads it; a revert will need it.
 
 **Do NOT delete `SFEDITS_CONFIG` yet** — the running (old) code still reads it.
 
-**2. Merge and test locally:**
+**2. Verify the merged branch (the merges are already DONE):**
+
+The delivery-merge, m3api (LUI-94), and bugfixes branches were all merged into
+local `integration` on 2026-08-02/03 (`ff2ca84`, then the m3api merge, then
+`8fa05d5`), with conflicts resolved and reviewed at the time; `main` was
+fast-forwarded to the same commit. The historical conflict list lived here —
+see git history of this file if archaeology is ever needed.
 
 ```bash
-# FETCH FIRST — the local integration branch can be stale (it was, during the
-# dry run of this very runbook: fork/integration had a merged PR local didn't).
+# Confirm the remote didn't move again while local work continued
+# (it did once during the runbook dry-run — never assume).
 git fetch fork
-git checkout integration
-git merge fork/integration     # fast-forward local to the deployed state
-git merge delivery-merge
+git log --oneline integration..fork/integration   # expect EMPTY; if not, merge
+                                                  # and re-run the suite first
 SFEDITS_REQUIRE_DB=1 npm test
-# Expected: 676 passing, 0 pending — verified by a trial merge against
-# fork/integration@b8e5f9e (656 on delivery-merge + 10 toolforge-api tests +
-# 10 claim-watch tests from PR #10; send-alert's test is deleted with its script).
+# Expected: 778 passing, 0 pending (verified 2026-08-03 at 8fa05d5).
 ```
-
-**Merge conflicts (verified by trial merge; expect 4):**
-
-Use a trial worktree to verify before pushing (git worktree add .../merge-trial
-<temp branch from fork/integration>; merge delivery-merge there; resolve; test;
-remove the worktree).
-
-1. **page-watch.js** (content conflict): integration has platform-direct
-   code (bluesky, mastodon, discord modules), delivery-merge has the unified
-   `deliveryPost` abstraction. **Resolution:** take delivery-merge's version.
-
-2. **scripts/send-alert.js** (modify/delete): integration modified it to read
-   SFEDITS_CONFIG via lib/config.js, delivery-merge deleted it in Phase 1
-   (PII screening removal). **Resolution:** accept the deletion.
-
-3. **test/posting.test.js** (content conflict): integration added a Bluesky
-   300-grapheme truncation test there; that feature and its tests were PORTED
-   onto delivery-merge (lib/bluesky-utils.js `fitBlueskyText`, wired in
-   lib/bluesky-platform.js), so **Resolution:** take delivery-merge's version —
-   nothing is lost.
-
-4. **config.json.template** (modify/delete): deleted by the Phase 3 config
-   split. **Resolution:** accept the deletion.
-
-Also `git rm` **test/send-alert.test.js** (its script was deleted; integration
-still carries the test file and it fails against the merge result).
 
 **DB note:** Each test run now creates its own throwaway database on the
 shared container (LUI-103), so concurrent runs from different worktrees and
