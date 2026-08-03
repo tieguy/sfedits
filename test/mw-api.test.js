@@ -168,4 +168,36 @@ describe('mw-api', function() {
     })
 
   })
+
+  describe('restGetJson', function() {
+    afterEach(function() {
+      _resetSessions()
+    })
+
+    it('GETs a REST path and returns parsed JSON', async function() {
+      // caller passes the path relative to rest.php; m3api-rest turns the
+      // session's /w/api.php into /w/rest.php and appends it
+      nock(HOST)
+        .get('/w/rest.php/v1/revision/100/compare/200')
+        .reply(200, { diff: [{ type: 0, text: 'unchanged' }] })
+
+      const data = await restGetJson('wm.test', '/v1/revision/100/compare/200', {
+        component: 'test-rest'
+      })
+      assert.deepEqual(data.diff, [{ type: 0, text: 'unchanged' }])
+    })
+
+    it('carries the operator User-Agent', async function() {
+      const { userAgent } = require('../lib/user-agent')
+      nock(HOST)
+        .matchHeader('user-agent', value => value.includes(userAgent('test-rest')))
+        .get('/w/rest.php/v1/page/Foo')
+        .reply(200, { title: 'Foo' })
+
+      const data = await restGetJson('wm.test', '/v1/page/Foo', {
+        component: 'test-rest'
+      })
+      assert.equal(data.title, 'Foo')
+    })
+  })
 })
