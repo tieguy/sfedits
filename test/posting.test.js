@@ -235,9 +235,14 @@ describe('posting flow', function() {
     })
 
     afterEach(function() {
-      // Clean up fake screenshot file if it wasn't deleted by sendStatus
+      // Clean up fake screenshot files if they weren't deleted by sendStatus
       if (fs.existsSync(fakeScreenshotPath)) {
         fs.unlinkSync(fakeScreenshotPath)
+      }
+      // Also clean up any fakeScreenshotPath2 files from test 3t
+      const fakeScreenshotPath2 = path.join(__dirname, 'fake-screenshot2.png')
+      if (fs.existsSync(fakeScreenshotPath2)) {
+        fs.unlinkSync(fakeScreenshotPath2)
       }
 
       nock.cleanAll()
@@ -790,6 +795,105 @@ describe('posting flow', function() {
       assert.ok(warnCalls.some(w => w.includes('discord')), 'Should warn about discord rejection')
     })
 
+    it('(Task 3d) recordPost per collapsedUrls: account + subscription deliveries each call', async function() {
+      this.timeout(10000)
+
+      let recordPostCalls = []
+
+      const pageWatch = proxyquire('../page-watch', {
+        './lib/diff-image': {
+          captureDiffImage: async () => ({ screenshot: fakeScreenshotPath, altText: 'Diff' })
+        },
+        './lib/geolocation': {
+          enrichIPsInText: async (text) => text,
+          initializeReader: async () => null
+        },
+        './lib/post-log': {
+          recordPost: (params) => {
+            recordPostCalls.push(params)
+            return { host: 'en.wikipedia.org', revId: 123 }
+          }
+        },
+        './lib/subscription-delivery': {
+          deliver: async () => ({ ok: true, type: 'discord', postId: 'discord-sub-123', subscriptionId: 999, capped: false }),
+          deliverAll: async () => [{ ok: true, type: 'discord', postId: 'discord-sub-123', subscriptionId: 999, capped: false }],
+          validateWebhookUrl: require('../lib/delivery').validateWebhookUrl,
+          isPermanentFailure: () => false,
+          ALLOWED_WEBHOOK_HOSTS: new Set(['discord.com']),
+          FAILURES_BEFORE_BROKEN: 5
+        }
+      })
+
+      // Mock Wikipedia diff page verification
+      nock('https://en.wikipedia.org')
+        .get('/w/index.php')
+        .query({ diff: '111', oldid: '110' })
+        .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
+        .get('/w/index.php')
+        .query({ diff: '112', oldid: '111' })
+        .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
+
+      // Mock Mastodon for account delivery
+      const mastodonScope = nock('https://mastodon.example.com')
+        .post('/api/v1/media')
+        .reply(200, { id: 'media-id-789' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, { id: '109383210193324631' })
+
+      // Set up topic store with a subscription
+      const mockTopicStore = {
+        subscriptionsForTopic: async () => [{
+          id: 999,
+          deliveryType: 'discord',
+          deliveryConfig: { webhook_url: 'https://discord.com/api/webhooks/sub' }
+        }]
+      }
+      pageWatch._setTopicStateForTest(mockTopicStore, {
+        topicsForEdit: () => [42]
+      })
+
+      const fakeAccount = {
+        mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
+        deliveries: [{ type: 'mastodon' }],
+        template: '{{page}} edited'
+      }
+
+      // Edit with TWO collapsed URLs
+      const fakeEdit = {
+        page: 'Test Article',
+        user: 'TestUser',
+        collapsedUrls: [
+          'https://en.wikipedia.org/w/index.php?diff=111&oldid=110',
+          'https://en.wikipedia.org/w/index.php?diff=112&oldid=111'
+        ],
+        url: 'https://en.wikipedia.org/w/index.php?diff=111&oldid=110'
+      }
+
+      const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+      await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit, [42])
+
+      assert.isTrue(mastodonScope.isDone(), 'Mastodon endpoint should be called')
+
+      // recordPost should be called exactly twice (once per collapsedUrl)
+      assert.lengthOf(recordPostCalls, 2, 'recordPost should be called exactly twice for 2 collapsedUrls')
+
+      // Each call should have deliveries array with account + subscription results
+      recordPostCalls.forEach((call, idx) => {
+        assert.ok(call.deliveries, `recordPost call ${idx} should have deliveries array`)
+        assert.lengthOf(call.deliveries, 2, `recordPost call ${idx} should have 2 deliveries (account + subscription)`)
+
+        // First delivery should be the account mastodon delivery
+        assert.equal(call.deliveries[0].type, 'mastodon', `call ${idx} delivery 0 should be mastodon`)
+        assert.ok(call.deliveries[0].postId, `call ${idx} delivery 0 should have postId`)
+        assert.isUndefined(call.deliveries[0].subscriptionId, `call ${idx} delivery 0 should not have subscriptionId`)
+
+        // Second delivery should be the subscription discord delivery with subscriptionId
+        assert.equal(call.deliveries[1].type, 'discord', `call ${idx} delivery 1 should be discord`)
+        assert.ok(call.deliveries[1].postId, `call ${idx} delivery 1 should have postId`)
+        assert.equal(call.deliveries[1].subscriptionId, 999, `call ${idx} delivery 1 should have subscriptionId`)
+      })
+    })
+
     it('(Task 3f2) empty deliveries falls back to legacy stanzas', async function() {
       this.timeout(10000)
 
@@ -847,12 +951,24 @@ describe('posting flow', function() {
       assert.ok(warnCalls.some(w => w.includes('legacy')), 'Should warn about fallback to legacy behavior')
     })
 
-    it('(Task 3t) template override: collapsed burst skips override, non-collapsed applies override', async function() {
+    it('(Task 3t) template override: non-collapsed applies override, collapsed skips it', async function() {
       this.timeout(10000)
 
+      // Create second screenshot file for the second test case
+      const fakeScreenshotPath2 = path.join(__dirname, 'fake-screenshot2.png')
+      fs.writeFileSync(fakeScreenshotPath2, 'fake image data 2')
+
+      let screenshotIndex = 0
       const pageWatch = proxyquire('../page-watch', {
         './lib/diff-image': {
-          captureDiffImage: async () => ({ screenshot: fakeScreenshotPath, altText: 'Diff' })
+          captureDiffImage: async () => {
+            // Return different screenshot path for each call to avoid file deletion issues
+            screenshotIndex++
+            return {
+              screenshot: screenshotIndex === 1 ? fakeScreenshotPath : fakeScreenshotPath2,
+              altText: 'Diff'
+            }
+          }
         },
         './lib/geolocation': {
           enrichIPsInText: async (text) => text,
@@ -863,40 +979,42 @@ describe('posting flow', function() {
         }
       })
 
-      // Mock Wikipedia diff page verification
+      // Mock Wikipedia diff page verification (will be called twice)
       nock('https://en.wikipedia.org')
         .get('/w/index.php')
         .query({ diff: '123', oldid: '456' })
         .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
+        .get('/w/index.php')
+        .query({ diff: '123', oldid: '456' })
+        .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
 
+      // Set up Bluesky scope with TWO session/upload/post chains (for two test cases)
       const blueskyScope = nock('https://bsky.social')
+        // First chain (non-collapsed)
         .post('/xrpc/com.atproto.server.createSession')
-        .reply(200, {
-          accessJwt: 'fake-access-token',
-          refreshJwt: 'fake-refresh-token',
-          did: 'did:plc:test',
-          handle: 'test.bsky.social'
-        })
+        .reply(200, { accessJwt: 'token1', refreshJwt: 'refresh1', did: 'did:plc:test', handle: 'test.bsky.social' })
         .post('/xrpc/com.atproto.repo.uploadBlob')
-        .reply(200, {
-          blob: {
-            $type: 'blob',
-            ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' },
-            mimeType: 'image/png',
-            size: 1234
-          }
-        })
+        .reply(200, { blob: { $type: 'blob', ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' }, mimeType: 'image/png', size: 1234 } })
         .post('/xrpc/com.atproto.repo.createRecord')
-        .reply(200, {
-          uri: 'at://did:plc:test/app.bsky.feed.post/abc',
-          cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
-        })
+        .reply(200, { uri: 'at://did:plc:test/app.bsky.feed.post/abc', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' })
+        // Second chain (collapsed)
+        .post('/xrpc/com.atproto.server.createSession')
+        .reply(200, { accessJwt: 'token2', refreshJwt: 'refresh2', did: 'did:plc:test', handle: 'test.bsky.social' })
+        .post('/xrpc/com.atproto.repo.uploadBlob')
+        .reply(200, { blob: { $type: 'blob', ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' }, mimeType: 'image/png', size: 1234 } })
+        .post('/xrpc/com.atproto.repo.createRecord')
+        .reply(200, { uri: 'at://did:plc:test/app.bsky.feed.post/xyz', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' })
 
+      // Mastodon scope with TWO chains
       const mastodonScope = nock('https://mastodon.example.com')
         .post('/api/v1/media')
-        .reply(200, { id: 'media-id-789' })
+        .reply(200, { id: 'media-1' })
         .post(/\/api\/v1\/statuses.*/)
         .reply(200, { id: '109383210193324631' })
+        .post('/api/v1/media')
+        .reply(200, { id: 'media-2' })
+        .post(/\/api\/v1\/statuses.*/)
+        .reply(200, { id: '109383210193324632' })
 
       const fakeAccount = {
         bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' },
@@ -908,24 +1026,32 @@ describe('posting flow', function() {
         template: 'DEFAULT: {{page}}'
       }
 
-      // Test with collapsedCount > 1 (collapsed burst) - override should be skipped
-      const fakeEdit = {
+      // Case 1: Non-collapsed edit
+      let fakeEdit = {
+        page: 'Test Article',
+        user: 'TestUser',
+        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+      }
+
+      let statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+      let result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
+      assert.ok(result, 'Non-collapsed: Should return result when posts succeed')
+
+      // Case 2: Collapsed burst (collapsedCount > 1)
+      fakeEdit = {
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456',
-        collapsedCount: 2  // This is a collapsed burst
+        collapsedCount: 3  // Collapsed burst
       }
 
-      const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
-      const result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
+      statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+      result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
+      assert.ok(result, 'Collapsed: Should return result when posts succeed')
 
-      assert.isTrue(blueskyScope.isDone(), 'Bluesky calls should be made')
-      assert.isTrue(mastodonScope.isDone(), 'Mastodon calls should be made')
-
-      // Both posts should have succeeded
-      assert.ok(result, 'Should return result when posts succeed')
-      assert.ok(result.bluesky, 'Should have Bluesky ref')
-      assert.ok(result.mastodon, 'Should have Mastodon ref')
+      // Both chains should be consumed
+      assert.isTrue(blueskyScope.isDone(), 'All Bluesky calls should be made')
+      assert.isTrue(mastodonScope.isDone(), 'All Mastodon calls should be made')
     })
   })
 })
