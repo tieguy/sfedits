@@ -19,7 +19,7 @@
       },
       "discord": {},
       "deliveries": [
-        { "type": "discord" }
+        { "type": "discord", "edit_filters": { "bots": false, "minor": false } }
       ],
       "wikidata_claims": {
         "properties": ["P19", "P20", "P131", "P159", "P276", "P937", "P39"],
