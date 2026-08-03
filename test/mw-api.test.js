@@ -391,15 +391,6 @@ describe('mw-api', function() {
 
     it('socket timeout fires against stalling real server (actionSession)', async function() {
       this.timeout(5000)
-      // Node 26 has a known incompatibility with undici 6.28 + CookieAgent that
-      // causes real socket requests to hang indefinitely. This test bypasses nock
-      // (which intercepts before the socket layer), so it's vulnerable to this issue.
-      // Skip on Node 26 and later; the timeout behavior is verified live in Phase 5.
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       // Real server test: create a server that accepts connections but never sends
       // a response. The socket timeout should fire and reject with UND_ERR_HEADERS_TIMEOUT.
@@ -448,11 +439,6 @@ describe('mw-api', function() {
       // undici FastTimers have ~1s granularity: 100ms and 500ms both fire ~1s, but
       // 2500ms fires ~2.5s. Verify the CONFIGURED timeout matters by checking elapsed time.
       // This proves our configuration is actually being enforced, not just a fixed delay.
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       const http = require('http')
 
@@ -523,14 +509,6 @@ describe('mw-api', function() {
 
     it('socket timeout does not interrupt m3api Retry-After waits (real server)', async function() {
       this.timeout(5000)
-      // Node 26 has a known incompatibility with undici 6.28 + CookieAgent that
-      // causes real socket requests to hang indefinitely. This test bypasses nock,
-      // so it's vulnerable to this issue. Skip on Node 26 and later; verified live in Phase 5.
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       // Real server test: verify that socket timeouts (headersTimeout on the
       // dispatcher) do not interrupt m3api's Retry-After waits that happen
@@ -619,6 +597,17 @@ describe('mw-api', function() {
       assert.isTrue(response.batchcomplete)
     })
 
+    it('caches sessions per host + options (different timeouts are distinct)', async function() {
+      // Same host + same options → same cached session
+      const a1 = await actionSession('wm.test', 'comp-a', { timeoutMs: 30000 })
+      const a2 = await actionSession('wm.test', 'comp-b', { timeoutMs: 30000 })
+      assert.strictEqual(a1, a2, 'same host + same options should reuse cached session')
+
+      // Same host + different options → distinct cached sessions
+      const b = await actionSession('wm.test', 'comp-c', { timeoutMs: 15000 })
+      assert.notStrictEqual(a1, b, 'same host + different timeoutMs should be distinct sessions')
+    })
+
     it('keeps sessions for different hosts distinct', async function() {
       const a = await actionSession('wm.test', 'c')
       const b = await actionSession('other.test', 'c')
@@ -684,14 +673,6 @@ describe('mw-api', function() {
 
     it('socket timeout fires on REST requests against stalling server', async function() {
       this.timeout(5000)
-      // Node 26 has a known incompatibility with undici 6.28 + CookieAgent that
-      // causes real socket requests to hang indefinitely. This test bypasses nock,
-      // so it's vulnerable to this issue. Skip on Node 26 and later; verified live in Phase 5.
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       // Real server test: REST requests (which use session.fetch, not session.request)
       // should also respect socket-level timeouts.
@@ -736,14 +717,6 @@ describe('mw-api', function() {
 
     it('body timeout fires when server sends headers but never ends body', async function() {
       this.timeout(10000)
-      // Node 26 has a known incompatibility with undici 6.28 + CookieAgent that
-      // causes real socket requests to hang indefinitely. This test bypasses nock,
-      // so it's vulnerable to this issue. Skip on Node 26 and later; verified live in Phase 5.
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       // Real server test: server sends response headers but never sends body.
       // The socket bodyTimeout should fire and reject with UND_ERR_BODY_TIMEOUT.
@@ -805,12 +778,6 @@ describe('mw-api', function() {
       // Real server test: verify that if a request stalls (tries to connect but
       // the server never responds), the deadline fires and rejects with AbortError,
       // not leaving the request hanging forever.
-      // Skip on Node 26+ due to the known CookieAgent+undici issue (verified live in Phase 5).
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       const http = require('http')
       // Create a server that accepts connections but never responds
@@ -872,17 +839,81 @@ describe('mw-api', function() {
       }
     })
 
+    it('real dispatcher: responsive server returns parsed Action API response', async function() {
+      this.timeout(5000)
+      // Transport test: real HTTP server (no nock interception) responding with
+      // a valid Action API JSON body. Verifies the dispatcher correctly handles
+      // the response and m3api parses it.
+      const http = require('http')
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ batchcomplete: true, query: { pages: [] } }))
+      })
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      const { port } = server.address()
+      const baseUrl = `http://127.0.0.1:${port}`
+
+      try {
+        nock.cleanAll()
+        nock.enableNetConnect(/127\.0\.0\.1/)
+
+        _resetSessions()
+        const session = await actionSession(baseUrl, 'test-real-dispatcher')
+
+        const response = await session.request({ action: 'query', meta: 'siteinfo' })
+        assert.isTrue(response.batchcomplete)
+        assert.deepEqual(response.query.pages, [])
+      } finally {
+        server.close()
+        nock.cleanAll()
+        nock.enableNetConnect()
+        _resetSessions()
+      }
+    })
+
+    it('real dispatcher: session.fetch returns valid REST JSON', async function() {
+      this.timeout(5000)
+      // Transport test: real HTTP server returning valid REST JSON.
+      // Verifies session.fetch (used by m3api-rest) correctly handles responses.
+      const http = require('http')
+      const server = http.createServer((req, res) => {
+        if (req.url === '/w/rest.php/v1/page/Test') {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ title: 'Test', id: 123 }))
+        } else {
+          res.writeHead(404)
+          res.end('Not found')
+        }
+      })
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+      const { port } = server.address()
+      const baseUrl = `http://127.0.0.1:${port}`
+
+      try {
+        nock.cleanAll()
+        nock.enableNetConnect(/127\.0\.0\.1/)
+
+        _resetSessions()
+        const session = await actionSession(baseUrl, 'test-rest-fetch')
+
+        // Simulate what m3api-rest does: call session.fetch directly
+        const res = await session.fetch(`${baseUrl}/w/rest.php/v1/page/Test`)
+        const data = await res.json()
+        assert.equal(data.title, 'Test')
+        assert.equal(data.id, 123)
+      } finally {
+        server.close()
+        nock.cleanAll()
+        nock.enableNetConnect()
+        _resetSessions()
+      }
+    })
+
     it('request deadline fires against stalling real server', async function() {
       this.timeout(5000)
       // Real server test: verify that if a request stalls (socket times out is
       // bypassed somehow), the request deadline fires and rejects with AbortError.
       // This tests the out-of-band deadline guard works independently of socket timeouts.
-      // Skip on Node 26+ due to the known CookieAgent+undici issue (to be resolved in Phase 5).
-      const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10)
-      if (NODE_MAJOR >= 26) {
-        this.skip()
-        return
-      }
 
       const http = require('http')
       // Create a server that accepts connections but never responds, forcing
