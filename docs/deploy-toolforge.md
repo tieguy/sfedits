@@ -351,9 +351,12 @@ remove the worktree).
 Also `git rm` **test/send-alert.test.js** (its script was deleted; integration
 still carries the test file and it fails against the merge result).
 
-**DB note:** The DB-backed suite can fail spuriously if the local MariaDB 
-container is stale. If test count doesn't match, try `npm run test:db:stop && 
-npm run test:db:start` and re-run before treating a count mismatch as a blocker.
+**DB note:** Each test run now creates its own throwaway database on the
+shared container (LUI-103), so concurrent runs from different worktrees and
+branch-specific migrations no longer collide, and there is no reason to
+restart the container between runs — `npm run test:db:stop` mid-run **kills
+other sessions' suites** (stop also removes the container), so avoid it
+unless the container itself is wedged.
 
 **3. On explicit operator go: Push to fork.**
 
