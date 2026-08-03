@@ -139,6 +139,29 @@ describe('fan-out', function() {
     assert.isTrue(live.isDone(), 'a dead webhook must not silence the next subscriber')
   })
 
+  it('returns deliver() result with task 2 contract (ok, type, postId, subscriptionId)', async function() {
+    // Task 2 contract verification: deliver() result structure
+    nock('https://discord.com')
+      .post('/api/webhooks/99/abc', () => true)
+      .query(true)
+      .reply(200, { id: 'msg-id-456' })
+
+    const { deliver } = require('../lib/subscription-delivery')
+
+    const sub = subscription(99, '/api/webhooks/99/abc')
+    const result = await deliver(
+      sub,
+      { text: 'test', screenshot: screenshotPath, metadata: { page: 'Test' } }
+    )
+
+    // Verify task 2 contract
+    assert.isTrue(result.ok, 'delivery should succeed')
+    assert.equal(result.type, 'discord', 'type should match subscription deliveryType')
+    assert.equal(result.postId, 'msg-id-456', 'postId should be the message ID from platform')
+    assert.equal(result.subscriptionId, 99, 'subscriptionId should be from the subscription')
+    assert.equal(result.messageId, result.postId, 'messageId should equal postId')
+  })
+
   it('rejects a subscription with no webhook url without throwing', async function() {
     const { deliver } = require('../lib/subscription-delivery')
 
