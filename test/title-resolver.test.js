@@ -12,6 +12,7 @@ describe('title-resolver', function() {
 
   afterEach(function() {
     nock.cleanAll()
+    require('../lib/mw-api')._resetSessions()
   })
 
   describe('normalizeTitle', function() {
