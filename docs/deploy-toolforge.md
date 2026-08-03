@@ -313,35 +313,43 @@ the repo) for rollback.** The old code reads it; a revert will need it.
 **2. Merge and test locally:**
 
 ```bash
-# In the main checkout (which has integration branch)
+# FETCH FIRST — the local integration branch can be stale (it was, during the
+# dry run of this very runbook: fork/integration had a merged PR local didn't).
+git fetch fork
 git checkout integration
+git merge fork/integration     # fast-forward local to the deployed state
 git merge delivery-merge
 SFEDITS_REQUIRE_DB=1 npm test
-# Expected: ~657 passing, 0 pending (post-merge with delivery-merge; verified by trial merge)
+# Expected: 675 passing, 0 pending — verified by a trial merge against
+# fork/integration@b8e5f9e (656 on delivery-merge + 19 integration-only tests,
+# minus the deleted send-alert test).
 ```
 
-**Merge conflicts (expect 3):**
+**Merge conflicts (verified by trial merge; expect 4):**
 
-Three conflicts will arise — all expected and resolvable. Use a trial worktree
-to verify the merge before pushing (git worktree add .../merge-trial integration;
-merge delivery-merge there; resolve conflicts; test; remove the worktree).
+Use a trial worktree to verify before pushing (git worktree add .../merge-trial
+<temp branch from fork/integration>; merge delivery-merge there; resolve; test;
+remove the worktree).
 
-1. **page-watch.js** (content conflict): integration's HEAD has platform-direct 
-   code (bluesky, mastodon, discord modules), delivery-merge has unified 
-   `deliveryPost` abstraction. **Resolution:** Use delivery-merge's version 
-   (coherent with other phase changes).
+1. **page-watch.js** (content conflict): integration has platform-direct
+   code (bluesky, mastodon, discord modules), delivery-merge has the unified
+   `deliveryPost` abstraction. **Resolution:** take delivery-merge's version.
 
 2. **scripts/send-alert.js** (modify/delete): integration modified it to read
-   SFEDITS_CONFIG via lib/config.js, delivery-merge deleted it in Phase 1 
-   (PII screening removal). **Resolution:** Accept the deletion (PII code is 
-   dead, config.js handles SFEDITS_CONFIG properly now).
+   SFEDITS_CONFIG via lib/config.js, delivery-merge deleted it in Phase 1
+   (PII screening removal). **Resolution:** accept the deletion.
 
-3. **test/posting.test.js** (content conflict): integration adds a Bluesky text
-   truncation test, delivery-merge has a different test. **Resolution:** Use
-   integration's version, test the newer feature.
+3. **test/posting.test.js** (content conflict): integration added a Bluesky
+   300-grapheme truncation test there; that feature and its tests were PORTED
+   onto delivery-merge (lib/bluesky-utils.js `fitBlueskyText`, wired in
+   lib/bluesky-platform.js), so **Resolution:** take delivery-merge's version —
+   nothing is lost.
 
-Also delete **test/send-alert.test.js** (its script was deleted; remove the test
-file too).
+4. **config.json.template** (modify/delete): deleted by the Phase 3 config
+   split. **Resolution:** accept the deletion.
+
+Also `git rm` **test/send-alert.test.js** (its script was deleted; integration
+still carries the test file and it fails against the merge result).
 
 **DB note:** The DB-backed suite can fail spuriously if the local MariaDB 
 container is stale. If test count doesn't match, try `npm run test:db:stop && 
