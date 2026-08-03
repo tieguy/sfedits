@@ -14,15 +14,116 @@
  * Require it (fail instead of skip):  SFEDITS_REQUIRE_DB=1 npm test
  */
 
-const { describe, before } = require('mocha')
+const { describe, before, after } = require('mocha')
 
 const { connect, canConnect, migrate } = require('../../lib/db')
 
-/** DSN for the disposable test database, overridable by env. */
-function testDsn() {
-  return process.env.SFEDITS_TEST_DB
-    || 'mysql://root:sfedits-test@127.0.0.1:3307/sfedits_test'
+/**
+ * Each mocha process gets its OWN database on the shared container.
+ *
+ * One shared `sfedits_test` database produced every flake in LUI-103: two
+ * worktrees/sessions running suites concurrently (one's truncateAll wiping the
+ * other's rows mid-test → FK failures), branches with different migration
+ * sets sharing one schema ("Duplicate column name 'edit_filters'"), and
+ * leftover fixture rows between runs. A per-process database makes those
+ * collisions impossible by construction; `truncateAll` still isolates tests
+ * WITHIN a run. The container itself stays shared and long-lived — there is
+ * no reason to `test:db:stop` between runs any more (doing so still kills
+ * other sessions' runs mid-flight).
+ *
+ * The name encodes its creation time so crashed runs' leftovers are GC'd by
+ * the next run rather than accumulating.
+ */
+// pid alone is not unique across PID namespaces (two containers sharing the
+// server on :3307 can collide on <epoch>_<pid>); the random suffix removes
+// the assumption. The strict shape is also the GC's DROP-safety filter.
+const RUN_DB_SHAPE = /^sfedits_test_r(\d+)_\d+_[0-9a-f]{4}$/
+const RUN_DB = `sfedits_test_r${Math.floor(Date.now() / 1000)}_${process.pid}_${
+  Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0')}`
+const GC_AGE_SECONDS = 3600
+
+/**
+ * Server-level DSN, used only to probe reachability and CREATE/DROP run
+ * databases. information_schema always exists, so the probe tests the SERVER
+ * rather than depending on the container's bootstrap database.
+ */
+function serverDsn() {
+  if (process.env.SFEDITS_TEST_DB) return process.env.SFEDITS_TEST_DB
+  return 'mysql://root:sfedits-test@127.0.0.1:3307/information_schema'
 }
+
+let warnedAboutOverride = false
+
+/** DSN for this process's own disposable database. */
+function testDsn() {
+  // An explicit SFEDITS_TEST_DB is honored exactly: whoever sets it has
+  // chosen a specific database and gets to keep both halves if it is shared.
+  if (process.env.SFEDITS_TEST_DB) {
+    if (!warnedAboutOverride) {
+      warnedAboutOverride = true
+      console.log(
+        '\n  [SFEDITS_TEST_DB is set: running against that exact database.' +
+        '\n   Per-run isolation (LUI-103) is DISABLED — concurrent runs on the' +
+        '\n   same database can interfere.]\n')
+    }
+    return process.env.SFEDITS_TEST_DB
+  }
+  return `mysql://root:sfedits-test@127.0.0.1:3307/${RUN_DB}`
+}
+
+let setupPromise = null
+
+/** Create this run's database (once per process) and GC stale ones. */
+function ensureRunDatabase() {
+  if (testDsn() === serverDsn()) return Promise.resolve() // explicit override
+  if (!setupPromise) {
+    setupPromise = (async () => {
+      const pool = await connect(serverDsn())
+      try {
+        // Collation mirrors production ToolsDB (utf8mb4_bin is load-bearing).
+        await pool.query(
+          `CREATE DATABASE IF NOT EXISTS ${RUN_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_bin`)
+
+        // GC databases left by crashed runs (creation epoch in the name).
+        const rows = await pool.query(
+          "SELECT schema_name AS s FROM information_schema.schemata WHERE schema_name LIKE 'sfedits\\_test\\_r%'")
+        // Never drop a schema something is still connected to: an unusually
+        // long soak past GC_AGE_SECONDS must not lose its tables mid-run.
+        const active = new Set(
+          (await pool.query(
+            'SELECT DISTINCT db AS d FROM information_schema.processlist WHERE db IS NOT NULL'))
+            .map(r => String(r.d)))
+        const cutoff = Math.floor(Date.now() / 1000) - GC_AGE_SECONDS
+        for (const row of rows) {
+          const name = String(row.s)
+          // The shape check is also the injection guard: `name` is interpolated
+          // into DROP DATABASE, so only exact program-generated names qualify.
+          const shape = name.match(RUN_DB_SHAPE)
+          if (!shape) continue
+          const epoch = Number(shape[1])
+          if (epoch < cutoff && name !== RUN_DB && !active.has(name)) {
+            await pool.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {})
+          }
+        }
+      } finally {
+        await pool.end()
+      }
+    })()
+  }
+  return setupPromise
+}
+
+// Root-level cleanup: drop this run's database when the process's suites end.
+// (Registered once — this module is a singleton however many files require it.)
+after(async function() {
+  if (!setupPromise) return
+  this.timeout(20000)
+  try {
+    const pool = await connect(serverDsn())
+    await pool.query(`DROP DATABASE IF EXISTS ${RUN_DB}`)
+    await pool.end()
+  } catch (e) { /* container already gone; the GC in the next run covers it */ }
+})
 
 /**
  * describe() for a suite that needs the database.
@@ -49,15 +150,20 @@ function describeWithDb(title, fn) {
       // the red-on-a-fresh-clone outcome this mechanism exists to prevent.
       this.timeout(20000)
 
-      if (await canConnect(testDsn())) return
+      // Probe the SERVER (bootstrap database), not this run's database —
+      // which does not exist until ensureRunDatabase creates it.
+      if (await canConnect(serverDsn())) {
+        await ensureRunDatabase()
+        return
+      }
 
       if (process.env.SFEDITS_REQUIRE_DB === '1') {
         throw new Error(
-          `SFEDITS_REQUIRE_DB=1 but the database at ${testDsn()} is unreachable`)
+          `SFEDITS_REQUIRE_DB=1 but the database at ${serverDsn()} is unreachable`)
       }
 
       console.log(
-        `\n  [skipping "${title}": no database at ${testDsn()}.` +
+        `\n  [skipping "${title}": no database server at ${serverDsn()}.` +
         '\n   Start one with: npm run test:db:start]\n')
       suite.ctx.skip()
     })

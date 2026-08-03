@@ -351,9 +351,12 @@ remove the worktree).
 Also `git rm` **test/send-alert.test.js** (its script was deleted; integration
 still carries the test file and it fails against the merge result).
 
-**DB note:** The DB-backed suite can fail spuriously if the local MariaDB 
-container is stale. If test count doesn't match, try `npm run test:db:stop && 
-npm run test:db:start` and re-run before treating a count mismatch as a blocker.
+**DB note:** Each test run now creates its own throwaway database on the
+shared container (LUI-103), so concurrent runs from different worktrees and
+branch-specific migrations no longer collide, and there is no reason to
+restart the container between runs — `npm run test:db:stop` mid-run **kills
+other sessions' suites** (stop also removes the container), so avoid it
+unless the container itself is wedged.
 
 **3. On explicit operator go: Push to fork.**
 
@@ -390,7 +393,7 @@ Look for these lines in the bot log:
 
 Observe one real Discord post (the deployed account is Discord-only).
 
-**Caution (LUI-109):** The first automated deploy may report `✓ Watchlist sync: 0 articles` or a failed sync. This happens when the bot restarts before the webservice — the bot tries to fetch its watchlist from the webservice endpoint and fails. Remedy: if this occurs, restart the webservice **first** (`toolforge webservice buildservice restart`), then the bot (`toolforge jobs restart bot`), then re-check the sync line.
+**Caution (LUI-109):** Watch for `✓ Watchlist sync: 0 articles` or a failed sync — it means the bot came up while the webservice (which serves its watchlist) was unreachable, and the bot will watch nothing for `refresh_hours` (24h). As of LUI-115, `autoupdate` restarts the webservice **before** the bot and waits twice, each bounded by `SFEDITS_WEB_WAIT_TIMEOUT` (default 120s, so worst case ~2×): first for a genuinely **new** webservice pod to report Ready (pod-UID tracking via the k8s API — a URL probe alone can be answered by the old, dying pod), then for the watchlist URL itself to answer. So this should no longer happen on automated deploys — but the probe timing out is alerted, not fatal, so still check the sync line. Manual remedy if it does occur: restart the webservice **first** (`toolforge webservice buildservice restart`), then the bot (`toolforge jobs restart bot`), then re-check the sync line.
 
 **5. After verification: Delete SFEDITS_CONFIG permanently.**
 

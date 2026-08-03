@@ -12,8 +12,10 @@
 #   1. resolve the tracked branch's head (git ls-remote, or the GitHub API
 #      where the container has no git)
 #   2. if the SHA matches the last deployed SHA, exit 0 silently
-#   3. otherwise build, wait for the build, then restart the bot job
-#   4. record the SHA only after the restart succeeds
+#   3. otherwise build, wait for the build, migrate, restart the WEBSERVICE
+#      and wait for it to serve the watchlist again (the bot fetches its
+#      watchlist from it at startup — LUI-109/LUI-115), then restart the bot
+#   4. record the SHA only after the bot restart succeeds
 #
 # A failed build or restart leaves the recorded SHA untouched, so the next
 # tick retries. Failures alert through the same path as healthcheck.sh.
@@ -44,6 +46,23 @@ STATE_DIR="${SFEDITS_STATE_DIR:-${TOOL_DATA_DIR:-$HOME}/data}"
 SHA_FILE="$STATE_DIR/deployed-sha"
 LOCK_FILE="$STATE_DIR/autoupdate.lock"
 BUILD_TIMEOUT="${SFEDITS_BUILD_TIMEOUT:-900}"   # seconds
+
+# The bot fetches its dynamic watchlist from this tool's own webservice at
+# startup (LUI-109), so restarts must go web-then-bot, and the bot restart
+# waits until this URL answers (LUI-115). The default is resolved at runtime
+# from the same config the bot reads (see resolve_probe_url) so it cannot
+# drift from what the bot actually fetches; the literal here is the fallback.
+# SFEDITS_WATCHLIST_PROBE_URL overrides; set it empty to disable the probe.
+WATCHLIST_PROBE_FALLBACK="https://san-francisco-edit-stream.toolforge.org/watchlist-500.json"
+WEB_WAIT_TIMEOUT="${SFEDITS_WEB_WAIT_TIMEOUT:-120}"   # seconds
+case "$WEB_WAIT_TIMEOUT" in
+  ''|*[!0-9]*)
+    echo "SFEDITS_WEB_WAIT_TIMEOUT must be a whole number of seconds, got '$WEB_WAIT_TIMEOUT'; using 120" >&2
+    WEB_WAIT_TIMEOUT=120 ;;
+esac
+# Every request to a Wikimedia-hosted endpoint identifies the operator.
+PROBE_UA_REPO="${SFEDITS_DEPLOY_REPO:-https://github.com/tieguy/sfedits}"
+PROBE_UA="sfedits-autoupdate (${PROBE_UA_REPO%.git}; ${SFEDITS_CONTACT:-luis@lu.is})"
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
@@ -140,8 +159,92 @@ tf_bot_restart() {
 }
 
 tf_webservice_restart() {
+  # CLI restart waits for the rollout itself. The API form is an async pod
+  # DELETE — the old pod keeps serving while Terminating, so a URL probe
+  # alone can green-light the DYING pod. webservice-restart-wait tracks pod
+  # UIDs and returns only when a pod that did not exist before the delete is
+  # Running and Ready (LUI-115).
   if [ "$TF_MODE" = cli ]; then toolforge webservice restart
-  else tf_api webservice-restart; fi
+  else tf_api webservice-restart-wait "$WEB_WAIT_TIMEOUT"; fi
+}
+
+# The URL the bot will actually fetch: read watchlist_source.titles_url from
+# the same composed config the bot loads (lib/config.js). Falls back to the
+# committed default when config can't be read here (e.g. pre-cutover, when
+# SFEDITS_CONFIG is still set and the new loader rejects it) — measuring the
+# running config beats trusting a second copy, but a probe against the
+# fallback still beats no probe.
+resolve_probe_url() {
+  if [ -n "${SFEDITS_WATCHLIST_PROBE_URL+set}" ]; then
+    echo "$SFEDITS_WATCHLIST_PROBE_URL"   # explicit override, may be empty (= disabled)
+    return 0
+  fi
+  local from_config=""
+  if [ -n "$NODE" ]; then
+    from_config="$("$NODE" -e '
+      try {
+        const path = require("path");
+        const { loadConfig } = require(path.join(process.argv[1], "..", "lib", "config"));
+        const url = (loadConfig({ baseDir: path.join(process.argv[1], "..") }).accounts || [])
+          .map((a) => a.watchlist_source && a.watchlist_source.titles_url)
+          .find(Boolean);
+        if (url) console.log(url);
+      } catch (e) { /* fall back below */ }
+    ' "$SCRIPT_DIR" 2>/dev/null || true)"
+  fi
+  if [ -z "$from_config" ]; then
+    # stderr: this function's stdout is the URL (command substitution).
+    echo "probe URL: config unreadable here, using the committed fallback" >&2
+  fi
+  echo "${from_config:-$WATCHLIST_PROBE_FALLBACK}"
+}
+WATCHLIST_PROBE_URL="$(resolve_probe_url)"
+
+# One HTTP probe of WATCHLIST_PROBE_URL. Bastions have curl; build-service
+# containers do not, but they have node (found above) with global fetch.
+# rc=2 means "no probe tool" — defensive only: TF_MODE selection has already
+# required either the toolforge CLI (bastion, which has curl) or node.
+probe_watchlist_url() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 10 -A "$PROBE_UA" -o /dev/null "$WATCHLIST_PROBE_URL"
+  elif [ -n "$NODE" ]; then
+    "$NODE" -e '
+      fetch(process.argv[1], {
+        headers: { "user-agent": process.argv[2] },
+        signal: AbortSignal.timeout(10000),
+      }).then((res) => process.exit(res.ok ? 0 : 1))
+        .catch(() => process.exit(1));
+    ' "$WATCHLIST_PROBE_URL" "$PROBE_UA"
+  else
+    return 2  # no probe tool; caller treats as "cannot verify"
+  fi
+}
+
+# Wait until the webservice answers on the watchlist URL, bounded by
+# WEB_WAIT_TIMEOUT. Sets WEB_WAIT_FAILURE for the caller's alert text.
+# Returns non-zero if it never came up (or cannot be probed).
+WEB_WAIT_FAILURE=""
+wait_for_webservice() {
+  [ -n "$WATCHLIST_PROBE_URL" ] || { log "watchlist probe disabled; not waiting"; return 0; }
+  local deadline=$(( $(date +%s) + WEB_WAIT_TIMEOUT ))
+  local rc
+  while :; do
+    rc=0; probe_watchlist_url || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      log "webservice is answering on the watchlist URL"
+      return 0
+    fi
+    if [ "$rc" -eq 2 ]; then
+      log "no curl and no node; cannot probe the webservice"
+      WEB_WAIT_FAILURE="cannot probe the webservice (no curl, no node)"
+      return 1
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      WEB_WAIT_FAILURE="webservice not answering ${WEB_WAIT_TIMEOUT}s after restart"
+      return 1
+    fi
+    sleep 5
+  done
 }
 
 # Not fatal — the deploy itself is all toolforge CLI calls, and refusing to ship
@@ -248,6 +351,23 @@ fi
 
 # --- restart -----------------------------------------------------------
 
+# WEB BEFORE BOT (LUI-109 / LUI-115): the bot fetches its dynamic watchlist
+# from this tool's own webservice at startup. If the web pod is mid-restart
+# when the bot comes up, the first fetch fails and the bot runs with an EMPTY
+# watchlist for refresh_hours (24h) — silently. So the webservice restarts
+# first and the bot restart waits until the watchlist URL answers again.
+# A web failure is not fatal to the deploy (the bot restart is the deploy),
+# but it is alerted loudly because the quiet-bot symptom is what LUI-109
+# exists to prevent.
+if [ "$RESTART_WEBSERVICE" = "yes" ]; then
+  log "restarting webservice (before bot: it serves the bot's watchlist)"
+  if ! tf_webservice_restart; then
+    alert "webservice restart failed after ${REMOTE_SHA:0:8}; bot may start with an empty watchlist"
+  elif ! wait_for_webservice; then
+    alert "${WEB_WAIT_FAILURE}; bot may start with an empty watchlist — check '✓ Watchlist sync' in the bot log"
+  fi
+fi
+
 # Not a rolling swap: this drops the EventStreams connection. The bot resumes
 # from its own state on start, so the window is a gap in coverage, not data
 # loss — but it is why this runs on a schedule rather than on every push.
@@ -255,11 +375,6 @@ log "restarting job $BOT_JOB"
 if ! tf_bot_restart; then
   alert "built ${REMOTE_SHA:0:8} but failed to restart $BOT_JOB"
   exit 1
-fi
-
-if [ "$RESTART_WEBSERVICE" = "yes" ]; then
-  log "restarting webservice"
-  tf_webservice_restart || alert "webservice restart failed after ${REMOTE_SHA:0:8}"
 fi
 
 echo "$REMOTE_SHA" > "$SHA_FILE"
