@@ -88,6 +88,11 @@ describe('lib/delivery', function() {
     })
 
     it('passes replyTo through to bluesky platform', async function() {
+      const replyTo = {
+        root: { uri: 'at://did:plc:root/app.bsky.feed.post/root', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' },
+        parent: { uri: 'at://did:plc:parent/app.bsky.feed.post/parent', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' }
+      }
+
       nock('https://bsky.social')
         .post('/xrpc/com.atproto.server.createSession')
         .reply(200, {
@@ -105,16 +110,17 @@ describe('lib/delivery', function() {
             size: 1234
           }
         })
-        .post('/xrpc/com.atproto.repo.createRecord')
+        .post('/xrpc/com.atproto.repo.createRecord', body => {
+          // Verify replyTo was passed through to the platform
+          assert.ok(body.record.reply, 'reply field should be present')
+          assert.equal(body.record.reply.root.uri, replyTo.root.uri, 'root uri should match')
+          assert.equal(body.record.reply.parent.cid, replyTo.parent.cid, 'parent cid should match')
+          return true
+        })
         .reply(200, {
           uri: 'at://did:plc:test/app.bsky.feed.post/reply123',
           cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
         })
-
-      const replyTo = {
-        root: { uri: 'at://did:plc:root/app.bsky.feed.post/root', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' },
-        parent: { uri: 'at://did:plc:parent/app.bsky.feed.post/parent', cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' }
-      }
 
       const result = await delivery.post(
         {
@@ -129,7 +135,6 @@ describe('lib/delivery', function() {
         }
       )
 
-      // Verify it returns a valid response (bluesky-platform tests verify replyTo handling)
       assert.equal(result.type, 'bluesky')
       assert.equal(result.postId, 'at://did:plc:test/app.bsky.feed.post/reply123')
     })
@@ -169,6 +174,47 @@ describe('lib/delivery', function() {
       assert.equal(result.type, 'mastodon')
       assert.equal(result.postId, '109383210193324631')
       assert.equal(result.ref, '109383210193324631')
+    })
+
+    it('passes replyTo through to mastodon platform', async function() {
+      nock('https://mastodon.social')
+        .post('/api/v1/media')
+        .reply(200, { id: 'media-id-789' })
+        .post('/api/v1/statuses')
+        .reply(200, function(uri, requestBody) {
+          // Verify in_reply_to_id appears in the form body
+          if (requestBody && typeof requestBody === 'string') {
+            assert.include(requestBody, 'in_reply_to_id=12345', 'form body should include in_reply_to_id')
+          }
+          return {
+            id: '109383210193324631',
+            uri: 'https://mastodon.social/@bot/109383210193324631'
+          }
+        })
+
+      const result = await delivery.post(
+        {
+          type: 'mastodon',
+          credentials: {
+            access_token: 'fake-token',
+            instance: 'https://mastodon.social'
+          }
+        },
+        {
+          text: 'Reply',
+          screenshot: screenshotPath,
+          metadata: {
+            page: 'Test',
+            name: 'User',
+            pageUrl: 'https://example.com/wiki/Test',
+            userUrl: 'https://example.com/user'
+          },
+          replyTo: '12345'
+        }
+      )
+
+      assert.equal(result.type, 'mastodon')
+      assert.equal(result.postId, '109383210193324631')
     })
 
     it('dispatches to discord platform and returns normalized postId', async function() {
