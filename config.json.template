@@ -43,7 +43,8 @@
       "wikidata_claims": {
         "properties": ["P19", "P20", "P131", "P159", "P276", "P937"],
         "refresh_hours": 24,
-        "rate_cap": { "max": 5, "window_minutes": 10 }
+        "rate_cap": { "max": 5, "window_minutes": 10 },
+        "dedupe_seconds": 45
       },
       "pii_alerts": {
         "bluesky_recipient": "yourpersonalhandle.bsky.social",

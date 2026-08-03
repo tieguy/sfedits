@@ -618,6 +618,7 @@ async function inspect(account, edit) {
     return handleWikidataEdit(account, edit, {
       sets: account.claimWatch.sets,
       rateCap: account.claimWatch.rateCap,
+      dedupe: account.claimWatch.dedupe,
       noop: Boolean(argv.noop)
     }).catch(error => console.error('Claim-watch error:', error.message))
   }
