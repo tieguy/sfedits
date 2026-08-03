@@ -223,6 +223,11 @@ async function deliverToTopics(subscriptions, payload) {
  *   shape), or null if nothing was posted (noop mode, blocked, or all
  *   platforms failed).
  */
+/** How a consumer is named in filtered:/filter-pass: log lines. */
+function consumerLabel(consumer) {
+  return consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+}
+
 async function sendStatus(account, statusData, edit, topicIds = [], thread = null) {
   try {
     console.log(statusData.text)
@@ -230,26 +235,29 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
     // Resolve all consumers (config deliveries + subscriptions) and run metadata filtering
     const consumers = await resolveConsumers(account, edit, topicIds)
 
-    // METADATA STAGE: filter by stream-level properties before fetch/render
+    // METADATA STAGE: filter by stream-level properties before fetch/render.
+    // Drops log here; survivors log once, at the point they are finally
+    // confirmed (below for noop, after the content stage otherwise), so
+    // `grep -c filter-pass` counts each delivered consumer exactly once.
     const metadataFiltered = []
     for (const consumer of consumers) {
       if (passesMetadata(edit, consumer.editFilters)) {
         metadataFiltered.push(consumer)
-        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-        console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
       } else {
-        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
         const reason = metadataDropReason(edit, consumer.editFilters)
-        console.log(`filtered: ${edit.page} for ${consumerLabel} (${reason})`)
+        console.log(`filtered: ${edit.page} for ${consumerLabel(consumer)} (${reason})`)
       }
     }
 
-    // Early return: if no consumers remain after metadata filtering, skip fetch/render
-    if (metadataFiltered.length === 0 && argv.noop) {
+    if (argv.noop) {
+      // Noop stops before the diff fetch, so metadata survivors are final here.
+      for (const consumer of metadataFiltered) {
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel(consumer)}`)
+      }
       return null
     }
 
-    if (!argv.noop) {
+    {
       // Early return if no consumers survived metadata filtering
       if (metadataFiltered.length === 0) {
         return null
@@ -269,33 +277,20 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       // CONTENT STAGE: filter by cosmetic-only if any consumer needs it
       let consumersAfterContent = metadataFiltered
       const anyNeedsContentCheck = metadataFiltered.some(c => needsContentCheck(c.editFilters))
-      if (anyNeedsContentCheck) {
-        const isCosmetic = isCosmeticOnly(diffHtml)
-        if (isCosmetic) {
-          consumersAfterContent = []
-          for (const consumer of metadataFiltered) {
-            if (!needsContentCheck(consumer.editFilters)) {
-              consumersAfterContent.push(consumer)
-              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-              console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
-            } else {
-              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-              console.log(`filtered: ${edit.page} for ${consumerLabel} (cosmetic_only)`)
-            }
-          }
-        } else {
-          // Not cosmetic: all survivors pass content stage
-          for (const consumer of metadataFiltered) {
-            const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-            console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
-          }
-        }
-      } else {
-        // No consumers need content check: all pass trivially
+      if (anyNeedsContentCheck && isCosmeticOnly(diffHtml)) {
+        consumersAfterContent = []
         for (const consumer of metadataFiltered) {
-          const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-          console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
+          if (!needsContentCheck(consumer.editFilters)) {
+            consumersAfterContent.push(consumer)
+          } else {
+            console.log(`filtered: ${edit.page} for ${consumerLabel(consumer)} (cosmetic_only)`)
+          }
         }
+      }
+
+      // Survivors are final past this point — the single filter-pass log site.
+      for (const consumer of consumersAfterContent) {
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel(consumer)}`)
       }
 
       // Early return if no consumers remain after content filtering

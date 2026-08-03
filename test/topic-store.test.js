@@ -436,8 +436,11 @@ describeWithDb('topic-store (database)', function() {
           const editFilters1 = { bots: false, minor: false }
           const editFilters2 = { bots: true, cosmetic_only: true }
 
-          // First upsert creates the topic
-          const topic1 = await store.upsertTopic('Q62', topicFilters)
+          // First upsert creates the topic. Each upsert carries a DIFFERENT
+          // editFilters-shaped key inside the filters object: if filtersHash
+          // ever starts hashing it, the two upserts stop deduplicating and
+          // this test goes red (one shared feed silently splitting in two).
+          const topic1 = await store.upsertTopic('Q62', { ...topicFilters, editFilters: editFilters1 })
           assert.isTrue(topic1.created, 'first upsert creates the topic')
 
           // Add a subscription with editFilters1
@@ -449,7 +452,7 @@ describeWithDb('topic-store (database)', function() {
           })
 
           // Second upsert with same region and topic filters should return the SAME topic
-          const topic2 = await store.upsertTopic('Q62', topicFilters)
+          const topic2 = await store.upsertTopic('Q62', { ...topicFilters, editFilters: editFilters2 })
           assert.isFalse(topic2.created, 'second upsert finds existing topic')
           assert.equal(topic1.id, topic2.id, 'both upserts return the same topic.id')
 
