@@ -45,7 +45,8 @@ fi
 
 if [ -n "$ALERT" ]; then
   echo "[$(date)] ALERT: $ALERT"
-  node "$SCRIPT_DIR/send-alert.js" "sfedits healthcheck: $ALERT"
+  # send-alert.js was removed with PII screening (its recipients lived in the
+  # deleted pii_alerts config); alerting is the non-zero exit + job email now.
   exit 1
 else
   echo "[$(date)] OK: $BOT_RUNNING"
