@@ -1,7 +1,5 @@
-const { describe, it, beforeEach, afterEach } = require('mocha')
+const { describe, it } = require('mocha')
 const { assert } = require('chai')
-const sinon = require('sinon')
-const proxyquire = require('proxyquire')
 const { normalizeEditFilters, passesMetadata, needsContentCheck, isCosmeticOnly, passesContent } = require('../lib/edit-filters')
 
 describe('edit-filters', function() {
@@ -203,19 +201,12 @@ describe('edit-filters', function() {
       assert.isTrue(passesContent(html, null))
     })
 
-    it('does not parse HTML when cosmetic_only is false (short-circuit)', function() {
-      // Stub isCosmeticOnly to throw if called, proving the short-circuit works
-      const editFiltersModule = require('../lib/edit-filters')
-      const stub = sinon.stub(editFiltersModule, 'isCosmeticOnly').throws(new Error('isCosmeticOnly should not be called'))
-      try {
-        // Even with cosmetic_only: false, if short-circuit is removed this will throw
-        assert.isTrue(passesContent(null, { cosmetic_only: false }))
-        assert.isTrue(passesContent({}, { cosmetic_only: false }))
-        // Verify the stub was never called (proving short-circuit worked)
-        assert.strictEqual(stub.callCount, 0, 'isCosmeticOnly should not be called when cosmetic_only is false')
-      } finally {
-        stub.restore()
-      }
+    it('short-circuits without parsing when cosmetic_only is false', function() {
+      // When cosmetic_only is false, passesContent should return true immediately
+      // without calling isCosmeticOnly. Use template-only.html: if short-circuit
+      // is removed, isCosmeticOnly(template) returns true, making passesContent false (test fails).
+      const templateHtml = loadFixture('template-only.html')
+      assert.isTrue(passesContent(templateHtml, { cosmetic_only: false }))
     })
 
     it('drops cosmetic-only diffs when cosmetic_only: true', function() {
