@@ -42,8 +42,10 @@ does not, STOP and get it.
   (`errorformat=plaintext`, `maxlag=5`, `format=json`) will not break matching.
   If a test fails on an intercept, understand WHY the request changed before
   touching the intercept (design rule: intercepts are updated only deliberately).
-- Serial discipline: replace the one existing `Promise.all` at a Wikimedia host
-  (compare-diff BLP claims) with sequential awaits. Do not introduce new fan-out.
+- Serial discipline: replace all existing `Promise.all` fan-outs at Wikimedia hosts
+  with sequential awaits. Plan initially noted one (compare-diff BLP claims);
+  Phase 2 Task 1 review found and serialized two additional fan-outs in lib/diff-image.js
+  (fetchPageSummary ∥ fetchBlpStatus, and fetchCompareDiff ∥ fetchArticleMeta).
 - Run `npm test` after every task; `SFEDITS_REQUIRE_DB=1` with the DB container up
   for the final task.
 

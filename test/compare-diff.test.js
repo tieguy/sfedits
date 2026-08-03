@@ -620,12 +620,17 @@ describe('compare-diff', function() {
       require('../lib/mw-api')._resetSessions()
     })
 
-    it('reads the parent id from a formatversion 2 pages array', async function() {
+    it('sends formatversion 2 and reads the parent id from the pages array', async function() {
       nock('https://en.wikipedia.org')
         .get('/w/api.php')
         .query(q => q.action === 'query' && q.prop === 'revisions' && q.formatversion === '2')
         .reply(200, {
-          query: { pages: [{ pageid: 42, revisions: [{ revid: 200, parentid: 100 }] }] }
+          query: {
+            pages: [
+              { pageid: 41, revisions: [] },
+              { pageid: 42, revisions: [{ revid: 200, parentid: 100 }] }
+            ]
+          }
         })
 
       const { fetchParentRevision } = require('../lib/compare-diff')

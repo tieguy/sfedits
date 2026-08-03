@@ -371,6 +371,32 @@ describe('mw-api', function() {
       _resetSessions()
     })
 
+    it('wraps request() with a timeout that rejects stalled requests', async function() {
+      this.timeout(2000)
+      // Intercept the API call but delay its response past the timeout
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .delayConnection(150) // Delay response by 150ms (past the 100ms timeout)
+        .reply(200, { batchcomplete: true })
+
+      // Use a very short timeout for testing (100ms instead of 30s)
+      const session = await actionSession('wm.test', 'test-timeout', { timeoutMs: 100 })
+
+      try {
+        // This request will take 150ms to respond, but timeout is 100ms
+        await session.request({ action: 'query' })
+        assert.fail('request should have timed out')
+      } catch (error) {
+        // Verify the error is a timeout error. May be AbortError or a network error
+        // depending on how undici handles the timeout.
+        assert.isTrue(
+          error.message.includes('timeout') || error.message.includes('TimeoutError'),
+          `Expected timeout error, got: ${error.name}: ${error.message}`
+        )
+      }
+    })
+
     it('sends the Action API defaults and the operator User-Agent', async function() {
       const { userAgent } = require('../lib/user-agent')
       nock(HOST)
