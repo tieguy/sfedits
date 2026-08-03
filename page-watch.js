@@ -29,6 +29,7 @@ const { recordPost, entryDeliveries } = require('./lib/post-log')
 const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser')
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
+const { passesMetadata, needsContentCheck, isCosmeticOnly } = require('./lib/edit-filters')
 
 const path = require('path')
 
@@ -94,6 +95,73 @@ function getStatus(edit, name, template) {
     page: edit.page,
     name
   }
+}
+
+/**
+ * Resolve all consumers for an edit: config deliveries + subscriptions.
+ *
+ * Returns an array of consumers, each carrying its edit_filters.
+ * Caches subscription lookup per edit (keyed by topicIds) to avoid duplicate queries.
+ *
+ * @param {Object} account - Account config
+ * @param {Object} edit - Edit object (used for caching key)
+ * @param {number[]} topicIds - Topic IDs to fetch subscriptions for
+ * @returns {Promise<Array>} Array of consumers with edit_filters
+ */
+async function resolveConsumers(account, edit, topicIds = []) {
+  const consumers = []
+
+  // Start with config deliveries
+  let configDeliveries = resolveConfigDeliveries(account)
+  if (configDeliveries.length === 0) {
+    // Warn and fall back to legacy per-stanza behavior
+    console.warn('[resolveConsumers] account.deliveries is absent or empty - falling back to legacy per-stanza behavior')
+    configDeliveries = []
+    if (account.bluesky) {
+      configDeliveries.push({ type: 'bluesky', credentials: account.bluesky })
+    }
+    if (account.mastodon) {
+      configDeliveries.push({ type: 'mastodon', credentials: account.mastodon })
+    }
+    if (account.discord) {
+      configDeliveries.push({ type: 'discord', credentials: account.discord })
+    }
+  }
+
+  for (const delivery of configDeliveries) {
+    consumers.push({
+      type: 'config',
+      subType: delivery.type,
+      editFilters: delivery.edit_filters || null,
+      delivery
+    })
+  }
+
+  // Load subscriptions for matched topics
+  if (topicStore && topicIds.length > 0) {
+    const seenSubscriptions = new Set()
+    for (const topicId of topicIds) {
+      try {
+        const subs = await topicStore.subscriptionsForTopic(topicId)
+        for (const sub of subs) {
+          // Avoid duplicate subscriptions (one topic per subscription)
+          if (!seenSubscriptions.has(sub.id)) {
+            seenSubscriptions.add(sub.id)
+            consumers.push({
+              type: 'subscription',
+              id: sub.id,
+              editFilters: sub.editFilters || null,
+              subscription: sub
+            })
+          }
+        }
+      } catch (error) {
+        console.error(`Could not load subscriptions for topic ${topicId}:`, error.message)
+      }
+    }
+  }
+
+  return consumers
 }
 
 /**
@@ -164,8 +232,35 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
   try {
     console.log(statusData.text)
 
+    // Resolve all consumers (config deliveries + subscriptions) and run metadata filtering
+    let consumers = await resolveConsumers(account, edit, topicIds)
+
+    // METADATA STAGE: filter by stream-level properties before fetch/render
+    const metadataFiltered = []
+    for (const consumer of consumers) {
+      if (passesMetadata(edit, consumer.editFilters)) {
+        metadataFiltered.push(consumer)
+      } else {
+        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+        const reason = !consumer.editFilters ? 'no filters' :
+          (!consumer.editFilters.bots && edit.robot) ? 'bot' :
+          (!consumer.editFilters.minor && edit.minor) ? 'minor' : 'min_delta'
+        console.log(`filtered: ${edit.page} for ${consumerLabel} (${reason})`)
+      }
+    }
+
+    // Early return: if no consumers remain after metadata filtering, skip fetch/render
+    if (metadataFiltered.length === 0 && argv.noop) {
+      return null
+    }
+
     if (!argv.noop) {
-      // Fetch the diff once; reused for page verification
+      // Early return if no consumers survived metadata filtering
+      if (metadataFiltered.length === 0) {
+        return null
+      }
+
+      // Fetch the diff once; reused for page verification and content filtering
       const diffHtml = await fetchDiffHtml(edit.url)
 
       // Guard against the IRC feed parser splicing a stale page title onto a
@@ -173,6 +268,29 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       const verification = verifyDiffPage(diffHtml, edit.page)
       if (!verification.match) {
         console.error(`Post blocked: diff is for "${verification.actualPage}", not "${edit.page}"`)
+        return null
+      }
+
+      // CONTENT STAGE: filter by cosmetic-only if any consumer needs it
+      let consumersAfterContent = metadataFiltered
+      const anyNeedsContentCheck = metadataFiltered.some(c => needsContentCheck(c.editFilters))
+      if (anyNeedsContentCheck) {
+        const isCosmetic = isCosmeticOnly(diffHtml)
+        if (isCosmetic) {
+          consumersAfterContent = []
+          for (const consumer of metadataFiltered) {
+            if (!needsContentCheck(consumer.editFilters)) {
+              consumersAfterContent.push(consumer)
+            } else {
+              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
+              console.log(`filtered: ${edit.page} for ${consumerLabel} (cosmetic_only)`)
+            }
+          }
+        }
+      }
+
+      // Early return if no consumers remain after content filtering
+      if (consumersAfterContent.length === 0) {
         return null
       }
 
@@ -201,31 +319,16 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           article: capture.article
         }
 
-        // Resolve deliveries from account config, with fallback to legacy behavior
-        let deliveries = resolveConfigDeliveries(account)
-        if (deliveries.length === 0) {
-          // Warn and fall back to legacy per-stanza behavior
-          console.warn('[sendStatus] account.deliveries is absent or empty - falling back to legacy per-stanza behavior')
-          // Build legacy deliveries array from account stanzas for compatibility
-          deliveries = []
-          if (account.bluesky) {
-            deliveries.push({ type: 'bluesky', credentials: account.bluesky })
-          }
-          if (account.mastodon) {
-            deliveries.push({ type: 'mastodon', credentials: account.mastodon })
-          }
-          if (account.discord) {
-            deliveries.push({ type: 'discord', credentials: account.discord })
-          }
-        }
-
         // Build the refs object for threading and track all delivery results
         const refs = { bluesky: null, mastodon: null }
         const deliveryResults = []
 
-        // Post to each delivery target independently so one failing doesn't
+        // Post to each config delivery target independently so one failing doesn't
         // stop the others, and so thread refs survive partial failures.
-        for (const delivery of deliveries) {
+        for (const consumer of consumersAfterContent) {
+          if (consumer.type !== 'config') continue
+
+          const delivery = consumer.delivery
           try {
             // CRITICAL 4: Delivery-level template override
             let deliveryText = enrichedText
@@ -282,20 +385,53 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           }
         }
 
-        // Fan out to topic subscriptions, reusing the single render above.
+        // Filter subscriptions from consumersAfterContent and deliver to them
+        const subscriptionsToDeliver = consumersAfterContent
+          .filter(c => c.type === 'subscription')
+          .map(c => c.subscription)
+
+        // Fan out to subscriptions, reusing the single render above.
         // Delivery failures are logged per subscription and never abort the
         // account-level posts that already succeeded.
-        const subscriptionResults = await deliverToTopics({ topicStore, topicIds }, {
-          text: enrichedText,
-          screenshot,
-          metadata
-        })
+        const subscriptionResults = subscriptionsToDeliver.length > 0
+          ? await deliverAll(subscriptionsToDeliver, {
+            text: enrichedText,
+            screenshot,
+            metadata
+          }, { limiter: subscriptionLimiter })
+          : []
+
+        // Record subscription delivery results with health tracking
+        for (const result of subscriptionResults) {
+          if (result.capped) {
+            console.log(`Subscription ${result.subscriptionId}: rate capped`)
+            continue
+          }
+          if (result.ok) {
+            subscriptionHealth.record(result.subscriptionId, result)
+            continue
+          }
+
+          console.error(
+            `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
+
+          if (subscriptionHealth.record(result.subscriptionId, result)) {
+            try {
+              await topicStore.setSubscriptionStatus(result.subscriptionId, 'broken')
+              console.error(
+                `Subscription ${result.subscriptionId} quarantined after repeated ` +
+                'permanent failures; it will stop receiving posts')
+            } catch (error) {
+              console.error(
+                `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
+            }
+          }
+        }
 
         // Record what was posted so the revdel sweeper can delete these
         // posts if the revision is later hidden on-wiki. A collapsed post
         // publicizes every buffered revision, so record it under each one:
         // hiding ANY constituent revision must take the combined post down.
-        // Combine account and subscription delivery results for recording
         const allDeliveries = [
           ...deliveryResults,
           ...subscriptionResults
