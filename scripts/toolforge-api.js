@@ -251,23 +251,47 @@ function podIsReady(pod) {
  * delete is Running and Ready.
  */
 async function webserviceRestartWait(timeoutSecArg) {
-  const timeoutSec = Number(timeoutSecArg) > 0 ? Number(timeoutSecArg) : 120
-  const before = new Set((await listWebservicePods()).map((p) => p.metadata.uid))
+  const parsed = Number(timeoutSecArg)
+  const timeoutSec = Number.isFinite(parsed) && parsed >= 0 ? parsed : 120
+
+  // If the pre-delete listing fails we cannot build the UID gate, but a
+  // restart without a wait still beats no restart at all: fall back to the
+  // plain delete rather than leaving the webservice on the previous image.
+  let before
+  try {
+    before = new Set((await listWebservicePods()).map((p) => p.metadata.uid))
+  } catch (e) {
+    console.error(`pod listing failed (${e.message}); restarting without the readiness wait`)
+    await webserviceRestart()
+    return
+  }
+
   await webserviceRestart()
+  if (timeoutSec === 0) return // explicit "don't wait"
+
   const deadline = Date.now() + timeoutSec * 1000
+  let lastListError = null
   while (Date.now() < deadline) {
     await sleep(POLL_MS)
     let pods
     try {
       pods = await listWebservicePods()
     } catch (e) {
-      continue // transient API blip mid-rollout; keep polling until the deadline
+      // Transient blips mid-rollout are expected; a persistent error (e.g. an
+      // expired client cert) must not masquerade as a pod that never came up.
+      if (!lastListError) console.error(`pod listing failed while waiting: ${e.message}`)
+      lastListError = e
+      continue
     }
+    lastListError = null
     const fresh = pods.find((p) => !before.has(p.metadata.uid) && podIsReady(p))
     if (fresh) {
       console.log(`new webservice pod ready: ${fresh.metadata.name}`)
       return
     }
+  }
+  if (lastListError) {
+    throw new Error(`pod listing failing at deadline (${lastListError.message}); pod state unknown`)
   }
   throw new Error(`no new Ready webservice pod within ${timeoutSec}s`)
 }

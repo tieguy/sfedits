@@ -61,7 +61,8 @@ case "$WEB_WAIT_TIMEOUT" in
     WEB_WAIT_TIMEOUT=120 ;;
 esac
 # Every request to a Wikimedia-hosted endpoint identifies the operator.
-PROBE_UA="sfedits-autoupdate (${SFEDITS_DEPLOY_REPO:-https://github.com/tieguy/sfedits}; ${SFEDITS_CONTACT:-luis@lu.is})"
+PROBE_UA_REPO="${SFEDITS_DEPLOY_REPO:-https://github.com/tieguy/sfedits}"
+PROBE_UA="sfedits-autoupdate (${PROBE_UA_REPO%.git}; ${SFEDITS_CONTACT:-luis@lu.is})"
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
@@ -184,11 +185,16 @@ resolve_probe_url() {
       try {
         const path = require("path");
         const { loadConfig } = require(path.join(process.argv[1], "..", "lib", "config"));
-        const url = loadConfig({ baseDir: path.join(process.argv[1], "..") })
-          .accounts?.[0]?.watchlist_source?.titles_url;
+        const url = (loadConfig({ baseDir: path.join(process.argv[1], "..") }).accounts || [])
+          .map((a) => a.watchlist_source && a.watchlist_source.titles_url)
+          .find(Boolean);
         if (url) console.log(url);
       } catch (e) { /* fall back below */ }
     ' "$SCRIPT_DIR" 2>/dev/null || true)"
+  fi
+  if [ -z "$from_config" ]; then
+    # stderr: this function's stdout is the URL (command substitution).
+    echo "probe URL: config unreadable here, using the committed fallback" >&2
   fi
   echo "${from_config:-$WATCHLIST_PROBE_FALLBACK}"
 }

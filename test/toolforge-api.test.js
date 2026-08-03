@@ -171,6 +171,54 @@ describe('toolforge-api.js', function () {
       '/api/v1/namespaces/tool-testtool/pods?labelSelector=name%3Dtesttool')
   })
 
+  const podJson = (uid, { ready = true, terminating = false, phase = 'Running' } = {}) => ({
+    metadata: { uid, name: `pod-${uid}`, ...(terminating ? { deletionTimestamp: 'now' } : {}) },
+    status: { phase, conditions: [{ type: 'Ready', status: ready ? 'True' : 'False' }] }
+  })
+
+  it('webservice-restart-wait waits for a pod that did not exist before the delete', async function () {
+    // GET #1 (before-set): old pod, Running+Ready. GET #2: old pod dying but
+    // STILL Ready — the state that fools a URL probe. GET #3: new pod Ready.
+    let gets = 0
+    respond((r) => r.method === 'GET', () => {
+      gets++
+      if (gets === 1) return { json: { items: [podJson('old-uid')] } }
+      if (gets === 2) return { json: { items: [podJson('old-uid', { terminating: true })] } }
+      return { json: { items: [podJson('new-uid')] } }
+    })
+    respond((r) => r.method === 'DELETE', () => ({ json: { items: [{}] } }))
+
+    const result = await run(['webservice-restart-wait', '5'])
+    expect(result.code).to.equal(0)
+    expect(result.stdout).to.include('new webservice pod ready: pod-new-uid')
+    // The before-set must be captured BEFORE the delete.
+    expect(requests[0].method).to.equal('GET')
+    expect(requests[1].method).to.equal('DELETE')
+    // The dying-but-Ready old pod must not have satisfied the wait.
+    expect(gets).to.be.at.least(3)
+  })
+
+  it('webservice-restart-wait times out when only the old pod ever answers', async function () {
+    respond((r) => r.method === 'GET', () => ({ json: { items: [podJson('old-uid')] } }))
+    respond((r) => r.method === 'DELETE', () => ({ json: { items: [{}] } }))
+
+    const result = await run(['webservice-restart-wait', '1'])
+    expect(result.code).to.not.equal(0)
+    expect(result.stderr).to.include('no new Ready webservice pod within 1s')
+  })
+
+  it('webservice-restart-wait falls back to a plain restart when the first listing fails', async function () {
+    let gets = 0
+    respond((r) => r.method === 'GET', () => { gets++; return { status: 500, json: {} } })
+    respond((r) => r.method === 'DELETE', () => ({ json: { items: [{}] } }))
+
+    const result = await run(['webservice-restart-wait', '5'])
+    expect(result.code).to.equal(0)
+    expect(result.stderr).to.include('restarting without the readiness wait')
+    expect(gets).to.equal(1)
+    expect(requests.some((r) => r.method === 'DELETE')).to.equal(true, 'the delete must still happen')
+  })
+
   it('surfaces gateway warning messages on stderr', async function () {
     respond(() => true,
       () => ({ json: { build: { status: 'BUILD_RUNNING' }, messages: { warning: ['quota nearly reached'] } } }))
