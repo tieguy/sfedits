@@ -104,4 +104,105 @@ describe('edit-filters', function() {
       assert.isFalse(needsContentCheck(null))
     })
   })
+
+  describe('isCosmeticOnly', function() {
+    const fs = require('fs')
+    const path = require('path')
+
+    function loadFixture(filename) {
+      const filepath = path.join(__dirname, 'fixtures/diff-html', filename)
+      return fs.readFileSync(filepath, 'utf-8')
+    }
+
+    it('returns true for template-only changes', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = loadFixture('template-only.html')
+      assert.isTrue(isCosmeticOnly(html))
+    })
+
+    it('returns true for category-only changes', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = loadFixture('category-only.html')
+      assert.isTrue(isCosmeticOnly(html))
+    })
+
+    it('returns true for ref-only changes', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = loadFixture('ref-only.html')
+      assert.isTrue(isCosmeticOnly(html))
+    })
+
+    it('returns true for whitespace-only changes', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = loadFixture('whitespace-only.html')
+      assert.isTrue(isCosmeticOnly(html))
+    })
+
+    it('returns false for prose changes', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = loadFixture('prose.html')
+      assert.isFalse(isCosmeticOnly(html))
+    })
+
+    it('returns false for mixed template+prose changes', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = loadFixture('mixed.html')
+      assert.isFalse(isCosmeticOnly(html))
+    })
+
+    it('returns false for empty string', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      assert.isFalse(isCosmeticOnly(''))
+    })
+
+    it('returns false for malformed HTML', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      assert.isFalse(isCosmeticOnly('<div>not a diff table</div>'))
+    })
+
+    it('returns false for HTML with no recognizable diff rows', function() {
+      const { isCosmeticOnly } = require('../lib/edit-filters')
+      const html = '<table class="diff"><tr><td>no diff markers</td></tr></table>'
+      assert.isFalse(isCosmeticOnly(html))
+    })
+  })
+
+  describe('passesContent', function() {
+    const fs = require('fs')
+    const path = require('path')
+
+    function loadFixture(filename) {
+      const filepath = path.join(__dirname, 'fixtures/diff-html', filename)
+      return fs.readFileSync(filepath, 'utf-8')
+    }
+
+    it('always passes when cosmetic_only is false or absent', function() {
+      const { passesContent } = require('../lib/edit-filters')
+      const html = loadFixture('prose.html')
+      assert.isTrue(passesContent(html, { cosmetic_only: false }))
+      assert.isTrue(passesContent(html, {}))
+      assert.isTrue(passesContent(html, null))
+    })
+
+    it('does not parse HTML when cosmetic_only is false', function() {
+      const { passesContent } = require('../lib/edit-filters')
+      // Pass null to prove it doesn't try to parse
+      assert.isTrue(passesContent(null, { cosmetic_only: false }))
+      assert.isTrue(passesContent(null, {}))
+    })
+
+    it('drops cosmetic-only diffs when cosmetic_only: true', function() {
+      const { passesContent } = require('../lib/edit-filters')
+      const templateHtml = loadFixture('template-only.html')
+      const categoryHtml = loadFixture('category-only.html')
+      assert.isFalse(passesContent(templateHtml, { cosmetic_only: true }))
+      assert.isFalse(passesContent(categoryHtml, { cosmetic_only: true }))
+    })
+
+    it('passes prose diffs when cosmetic_only: true', function() {
+      const { passesContent } = require('../lib/edit-filters')
+      const proseHtml = loadFixture('prose.html')
+      assert.isTrue(passesContent(proseHtml, { cosmetic_only: true }))
+    })
+  })
 })
