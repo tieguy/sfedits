@@ -464,7 +464,11 @@ describe('lib/delivery', function() {
       assert.deepEqual(resolved[2].credentials, account.discord)
     })
 
-    it('maps delivery entries with explicit credential_ref', function() {
+    it('accepts an explicit default credential_ref, rejects a non-default one', function() {
+      // Non-default credential_ref is blocked until the posted log records the
+      // credential source: the revdel sweeper deletes via the account's default
+      // stanza, so an alt-credential post could never be swept (a suppressed
+      // revision's post would stay up while Discord's 404 read as "already gone").
       const account = {
         bluesky: { identifier: 'bot.bsky.social', password: 'pass' },
         bluesky_alt: { identifier: 'alt.bsky.social', password: 'pass2' },
@@ -474,11 +478,21 @@ describe('lib/delivery', function() {
         ]
       }
 
-      const resolved = delivery.resolveConfigDeliveries(account)
+      try {
+        delivery.resolveConfigDeliveries(account)
+        assert.fail('should have thrown on non-default credential_ref')
+      } catch (error) {
+        assert.include(error.message, 'credential_ref "bluesky_alt"')
+        assert.include(error.message, 'not supported until the revdel sweeper')
+      }
 
-      assert.equal(resolved.length, 2)
+      // The explicit-but-default form resolves fine
+      const resolved = delivery.resolveConfigDeliveries({
+        bluesky: account.bluesky,
+        deliveries: [{ type: 'bluesky', credential_ref: 'bluesky' }]
+      })
+      assert.equal(resolved.length, 1)
       assert.deepEqual(resolved[0].credentials, account.bluesky)
-      assert.deepEqual(resolved[1].credentials, account.bluesky_alt)
     })
 
     it('throws when credentials stanza is missing', function() {

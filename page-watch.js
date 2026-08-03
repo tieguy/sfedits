@@ -165,55 +165,55 @@ async function resolveConsumers(account, edit, topicIds = []) {
 }
 
 /**
- * Deliver an already-rendered post to every subscription of every matched
- * topic. The render happened once, upstream; this is the cheap part.
+ * Deliver an already-rendered post to the given subscriptions.
+ * The render happened once, upstream; this is the cheap part.
  *
+ * Handles rate-capping, health tracking, and quarantine of broken subscriptions.
  * Exported for testing.
+ *
+ * @param {Array} subscriptions - Flat list of subscription objects
+ * @param {Object} payload - Rendered post payload { text, screenshot, metadata }
+ * @returns {Promise<Array>} Delivery results
  */
-async function deliverToTopics({ topicStore: store, topicIds }, payload) {
-  if (!store || topicIds.length === 0) return []
+async function deliverToTopics(subscriptions, payload) {
+  if (!subscriptions || subscriptions.length === 0) return []
 
-  const results = []
-  for (const topicId of topicIds) {
-    let subscriptions
-    try {
-      subscriptions = await store.subscriptionsForTopic(topicId)
-    } catch (error) {
-      console.error(`Could not load subscriptions for topic ${topicId}:`, error.message)
+  const delivered = await deliverAll(subscriptions, payload,
+    { limiter: subscriptionLimiter })
+
+  for (const result of delivered) {
+    if (result.capped) {
+      console.log(`Subscription ${result.subscriptionId}: rate capped`)
+      continue
+    }
+    if (result.ok) {
+      subscriptionHealth.record(result.subscriptionId, result)
       continue
     }
 
-    const delivered = await deliverAll(subscriptions, payload,
-      { limiter: subscriptionLimiter })
+    console.error(
+      `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
 
-    for (const result of delivered) {
-      if (result.capped) {
-        console.log(`Subscription ${result.subscriptionId}: rate capped`)
-        continue
-      }
-      if (result.ok) {
-        subscriptionHealth.record(result.subscriptionId, result)
-        continue
-      }
-
-      console.error(
-        `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
-
-      if (subscriptionHealth.record(result.subscriptionId, result)) {
-        try {
-          await store.setSubscriptionStatus(result.subscriptionId, 'broken')
+    if (subscriptionHealth.record(result.subscriptionId, result)) {
+      try {
+        if (topicStore) {
+          await topicStore.setSubscriptionStatus(result.subscriptionId, 'broken')
           console.error(
             `Subscription ${result.subscriptionId} quarantined after repeated ` +
             'permanent failures; it will stop receiving posts')
-        } catch (error) {
-          console.error(
-            `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
         }
+      } catch (error) {
+        console.error(
+          `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
       }
     }
-    results.push(...delivered)
   }
-  return results
+  return delivered
+}
+
+/** How a consumer is named in filtered:/filter-pass: log lines. */
+function consumerLabel(consumer) {
+  return consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
 }
 
 /**
@@ -235,26 +235,29 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
     // Resolve all consumers (config deliveries + subscriptions) and run metadata filtering
     const consumers = await resolveConsumers(account, edit, topicIds)
 
-    // METADATA STAGE: filter by stream-level properties before fetch/render
+    // METADATA STAGE: filter by stream-level properties before fetch/render.
+    // Drops log here; survivors log once, at the point they are finally
+    // confirmed (below for noop, after the content stage otherwise), so
+    // `grep -c filter-pass` counts each delivered consumer exactly once.
     const metadataFiltered = []
     for (const consumer of consumers) {
       if (passesMetadata(edit, consumer.editFilters)) {
         metadataFiltered.push(consumer)
-        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-        console.log(`filter-pass: ${edit.page} for ${consumerLabel} (metadata)`)
       } else {
-        const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
         const reason = metadataDropReason(edit, consumer.editFilters)
-        console.log(`filtered: ${edit.page} for ${consumerLabel} (${reason})`)
+        console.log(`filtered: ${edit.page} for ${consumerLabel(consumer)} (${reason})`)
       }
     }
 
-    // Early return: if no consumers remain after metadata filtering, skip fetch/render
-    if (metadataFiltered.length === 0 && argv.noop) {
+    if (argv.noop) {
+      // Noop stops before the diff fetch, so metadata survivors are final here.
+      for (const consumer of metadataFiltered) {
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel(consumer)}`)
+      }
       return null
     }
 
-    if (!argv.noop) {
+    {
       // Early return if no consumers survived metadata filtering
       if (metadataFiltered.length === 0) {
         return null
@@ -274,22 +277,21 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       // CONTENT STAGE: filter by cosmetic-only if any consumer needs it
       let consumersAfterContent = metadataFiltered
       const anyNeedsContentCheck = metadataFiltered.some(c => needsContentCheck(c.editFilters))
-      if (anyNeedsContentCheck) {
-        const isCosmetic = isCosmeticOnly(diffHtml)
-        if (isCosmetic) {
-          consumersAfterContent = []
-          for (const consumer of metadataFiltered) {
-            if (!needsContentCheck(consumer.editFilters)) {
-              consumersAfterContent.push(consumer)
-            } else {
-              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-              console.log(`filtered: ${edit.page} for ${consumerLabel} (cosmetic_only)`)
-            }
+      if (anyNeedsContentCheck && isCosmeticOnly(diffHtml)) {
+        consumersAfterContent = []
+        for (const consumer of metadataFiltered) {
+          if (!needsContentCheck(consumer.editFilters)) {
+            consumersAfterContent.push(consumer)
+          } else {
+            console.log(`filtered: ${edit.page} for ${consumerLabel(consumer)} (cosmetic_only)`)
           }
         }
-        // If content is not cosmetic, all metadataFiltered consumers survive (already logged at metadata stage)
       }
-      // If no content check needed, all metadataFiltered consumers survive (already logged at metadata stage)
+
+      // Survivors are final past this point — the single filter-pass log site.
+      for (const consumer of consumersAfterContent) {
+        console.log(`filter-pass: ${edit.page} for ${consumerLabel(consumer)}`)
+      }
 
       // Early return if no consumers remain after content filtering
       if (consumersAfterContent.length === 0) {
@@ -393,42 +395,12 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           .map(c => c.subscription)
 
         // Fan out to subscriptions, reusing the single render above.
-        // Delivery failures are logged per subscription and never abort the
-        // account-level posts that already succeeded.
-        const subscriptionResults = subscriptionsToDeliver.length > 0
-          ? await deliverAll(subscriptionsToDeliver, {
-            text: enrichedText,
-            screenshot,
-            metadata
-          }, { limiter: subscriptionLimiter })
-          : []
-
-        // Record subscription delivery results with health tracking
-        for (const result of subscriptionResults) {
-          if (result.capped) {
-            console.log(`Subscription ${result.subscriptionId}: rate capped`)
-            continue
-          }
-          if (result.ok) {
-            subscriptionHealth.record(result.subscriptionId, result)
-            continue
-          }
-
-          console.error(
-            `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
-
-          if (subscriptionHealth.record(result.subscriptionId, result)) {
-            try {
-              await topicStore.setSubscriptionStatus(result.subscriptionId, 'broken')
-              console.error(
-                `Subscription ${result.subscriptionId} quarantined after repeated ` +
-                'permanent failures; it will stop receiving posts')
-            } catch (error) {
-              console.error(
-                `Could not quarantine subscription ${result.subscriptionId}:`, error.message)
-            }
-          }
-        }
+        // deliverToTopics handles rate-capping, health tracking, and quarantine.
+        const subscriptionResults = await deliverToTopics(subscriptionsToDeliver, {
+          text: enrichedText,
+          screenshot,
+          metadata
+        })
 
         // Record what was posted so the revdel sweeper can delete these
         // posts if the revision is later hidden on-wiki. A collapsed post

@@ -71,14 +71,9 @@ NODE="$(find_node || true)"
 alert() {
   local msg="$1"
   log "ALERT: $msg"
-  # send-alert.js reads config.json the same way the bot does; if it is
-  # unavailable we still want the non-zero exit for the job's failure email.
-  if [ -z "$NODE" ]; then
-    log "(no node interpreter found; relying on job failure email)"
-    return 0
-  fi
-  "$NODE" "$SCRIPT_DIR/send-alert.js" "sfedits autoupdate: $msg" || \
-    log "(send-alert.js failed; relying on job failure email)"
+  # send-alert.js was removed with PII screening (its recipients lived in the
+  # deleted pii_alerts config); the job-failure email is the alert channel.
+  log "(alert channel is the job failure email)"
 }
 
 mkdir -p "$STATE_DIR"

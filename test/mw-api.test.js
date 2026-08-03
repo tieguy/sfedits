@@ -371,7 +371,7 @@ describe('mw-api', function() {
       _resetSessions()
     })
 
-    it('wraps request() with a timeout that rejects stalled requests', async function() {
+    it('rejects requests stalled past the socket timeout', async function() {
       this.timeout(2000)
       // Intercept the API call but delay its response past the timeout
       nock(HOST)
@@ -383,18 +383,45 @@ describe('mw-api', function() {
       // Use a very short timeout for testing (100ms instead of 30s)
       const session = await actionSession('wm.test', 'test-timeout', { timeoutMs: 100 })
 
-      try {
-        // This request will take 150ms to respond, but timeout is 100ms
-        await session.request({ action: 'query' })
-        assert.fail('request should have timed out')
-      } catch (error) {
-        // Verify the error is a timeout error. May be AbortError or a network error
-        // depending on how undici handles the timeout.
-        assert.isTrue(
-          error.message.includes('timeout') || error.message.includes('TimeoutError'),
-          `Expected timeout error, got: ${error.name}: ${error.message}`
-        )
-      }
+      // Verify the request rejects with a timeout error (undici's network
+      // timeout when the socket connection stalls past headersTimeout).
+      // This uses chai's rejectedWith which avoids try-catch confusion.
+      await assert.isRejected(
+        session.request({ action: 'query' }),
+        /timeout|stalled|hang/i,
+        'request should have timed out due to delayed connection'
+      )
+    })
+
+    it('socket timeout does not interrupt m3api Retry-After waits', async function() {
+      this.timeout(3000)
+      // Verify that a socket timeout (headersTimeout) does not cap the retry
+      // waits that happen between attempts. This is the key design property:
+      // undici's socket timeout bounds how long each individual socket can hang,
+      // but m3api's retry logic (including Retry-After) happens outside the socket.
+      // Setup: 503 with Retry-After: 0.5 (500ms), then success.
+      // Socket timeout: 200ms (smaller than the 500ms wait).
+      // Expected: succeeds after waiting out the 500ms.
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .reply(503, '', { 'retry-after': '0.5' })
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .reply(200, { batchcomplete: true })
+
+      const session = await actionSession('wm.test', 'test-retry-after', { timeoutMs: 200 })
+
+      const started = Date.now()
+      const response = await session.request(
+        { action: 'query' },
+        { maxRetriesSeconds: 10 } // high budget, proves the timeout doesn't cap it
+      )
+      const elapsed = Date.now() - started
+
+      assert.isTrue(response.batchcomplete, 'request should succeed after Retry-After wait')
+      assert.isAtLeast(elapsed, 400, 'should have waited ~500ms for Retry-After')
     })
 
     it('sends the Action API defaults and the operator User-Agent', async function() {
@@ -489,6 +516,29 @@ describe('mw-api', function() {
         component: 'test-rest'
       })
       assert.equal(data.title, 'Foo')
+    })
+
+    it('rejects requests stalled past the socket timeout', async function() {
+      this.timeout(2000)
+      // Verify that the REST path (which uses session.fetch, not session.request)
+      // also respects the socket timeout. Delay the response past the timeout.
+      nock(HOST)
+        .get('/w/rest.php/v1/revision/100/compare/200')
+        .delayConnection(150) // Delay response by 150ms (past the 100ms timeout)
+        .reply(200, { diff: [] })
+
+      // Override the timeout for this session via a short timeoutMs
+      const session = await actionSession('wm.test', 'test-rest-timeout', { timeoutMs: 100 })
+
+      // m3api-rest calls session.fetch, which should respect the dispatcher timeout
+      await assert.isRejected(
+        (async () => {
+          const { getJson } = await import('m3api-rest')
+          return getJson(session, '/v1/revision/100/compare/200')
+        })(),
+        /timeout|stalled|hang/i,
+        'REST request should have timed out due to delayed connection'
+      )
     })
   })
 })

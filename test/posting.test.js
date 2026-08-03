@@ -248,64 +248,6 @@ describe('posting flow', function() {
       nock.cleanAll()
     })
 
-    it('sends over-limit text to delivery module (fitting is tested in delivery.test.js)', async function() {
-      this.timeout(10000)
-
-      // Long enough that template + name + URL blows past 300 graphemes
-      const longTitle = 'A'.repeat(280)
-
-      let capturedDeliveryPayload = null
-      const pageWatch = proxyquire('../page-watch', {
-        './lib/diff-image': {
-          captureDiffImage: async () => ({
-            screenshot: fakeScreenshotPath,
-            altText: 'alt', summary: null, article: null
-          })
-        },
-        './lib/geolocation': {
-          enrichIPsInText: async (text) => text,
-          initializeReader: async () => null
-        },
-        './lib/post-log': { recordPost: () => null, entryDeliveries: require('../lib/post-log').entryDeliveries },
-        './lib/delivery': {
-          post: async (delivery, payload) => {
-            // Capture what page-watch sends to delivery (before fitting)
-            if (delivery.type === 'bluesky') {
-              capturedDeliveryPayload = { delivery, payload }
-            }
-            return { type: 'bluesky', postId: 'at://did:plc:fake/app.bsky.feed.post/1', ref: { uri: 'at://did:plc:fake/app.bsky.feed.post/1', cid: 'fakecid' } }
-          },
-          resolveConfigDeliveries: require('../lib/delivery').resolveConfigDeliveries
-        }
-      })
-
-      nock('https://en.wikipedia.org')
-        .get('/w/index.php')
-        .query({ diff: '123', oldid: '456' })
-        .reply(200, `<script>RLCONF={"wgPageName":"${longTitle}"};</script>`)
-
-      const fakeAccount = {
-        bluesky: { identifier: 'top500.thebay.wiki', password: 'fake' },
-        deliveries: [{ type: 'bluesky' }],
-        template: '{{page}} Wikipedia article edited by {{name}} {{&url}}',
-        pii_blocking: { enabled: false }
-      }
-      const fakeEdit = {
-        page: longTitle,
-        user: 'TestUser',
-        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
-      }
-
-      await pageWatch.sendStatus(fakeAccount, pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template), fakeEdit)
-
-      // Verify page-watch wiring: delivery receives the un-fitted text and full metadata
-      assert.exists(capturedDeliveryPayload, 'Bluesky delivery should have been called')
-      assert.equal(capturedDeliveryPayload.delivery.type, 'bluesky')
-      assert.equal(capturedDeliveryPayload.payload.metadata.page, longTitle, 'metadata.page should be the full original title')
-      assert.isTrue(capturedDeliveryPayload.payload.text.includes(longTitle), 'text should contain the full original title (fitting happens inside delivery)')
-      // The fitting itself is tested in lib/delivery's test, not here
-    })
-
     it('(CRITICAL 1) all account deliveries fail returns null and doesn\'t record', async function() {
       this.timeout(10000)
 
@@ -483,6 +425,89 @@ describe('posting flow', function() {
 
       // Verify screenshot file was cleaned up
       assert.isFalse(fs.existsSync(fakeScreenshotPath), 'Screenshot file should have been deleted')
+    })
+
+    it('truncates over-limit text for Bluesky only, keeping metadata.page in sync', async function() {
+      this.timeout(10000)
+
+      const graphemes = s =>
+        [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(s)].length
+
+      // Long enough that template + name + URL blows past 300 graphemes
+      const longTitle = 'A'.repeat(280)
+
+      let blueskyCreateRecordBody = null
+      const pageWatch = proxyquire('../page-watch', {
+        './lib/diff-image': {
+          captureDiffImage: async () => ({
+            screenshot: fakeScreenshotPath,
+            altText: 'alt', summary: null, article: null
+          })
+        },
+        './lib/geolocation': {
+          enrichIPsInText: async (text) => text,
+          initializeReader: async () => null
+        },
+        './lib/post-log': { recordPost: () => null }
+      })
+
+      nock('https://en.wikipedia.org')
+        .get('/w/index.php')
+        .query({ diff: '123', oldid: '456' })
+        .reply(200, `<script>RLCONF={"wgPageName":"${longTitle}"};</script>`)
+
+      // Mock Bluesky API
+      nock('https://bsky.social')
+        .post('/xrpc/com.atproto.server.createSession')
+        .reply(200, {
+          accessJwt: 'fake-jwt',
+          refreshJwt: 'fake-refresh',
+          did: 'did:plc:fake123',
+          handle: 'test.bsky.social'
+        })
+        .post('/xrpc/com.atproto.repo.uploadBlob')
+        .reply(200, {
+          blob: {
+            $type: 'blob',
+            ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' },
+            mimeType: 'image/png',
+            size: 1234
+          }
+        })
+        .post('/xrpc/com.atproto.repo.createRecord', (body) => {
+          blueskyCreateRecordBody = body
+          return true
+        })
+        .reply(200, {
+          uri: 'at://did:plc:fake123/app.bsky.feed.post/1',
+          cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+        })
+
+      const fakeAccount = {
+        bluesky: { identifier: 'test.bsky.social', password: 'fake', service: 'https://bsky.social' },
+        template: '{{page}} Wikipedia article edited by {{name}} {{&url}}',
+        pii_blocking: { enabled: false }
+      }
+      const fakeEdit = {
+        page: longTitle,
+        user: 'TestUser',
+        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+      }
+
+      const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+      assert.isAbove(graphemes(statusData.text), 300, 'test setup must exceed the limit')
+
+      const result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
+
+      assert.exists(blueskyCreateRecordBody, 'Bluesky post should have been attempted')
+      const recordText = blueskyCreateRecordBody.record.text
+      assert.isAtMost(graphemes(recordText), 300,
+        'Bluesky text must fit the 300-grapheme limit')
+      assert.isTrue(recordText.endsWith(fakeEdit.url),
+        'the diff URL must survive truncation intact')
+      // The title should be truncated with an ellipsis
+      assert.include(recordText, '…',
+        'Title should be truncated with ellipsis')
     })
 
     it('blocks the post when the diff belongs to a different page', async function() {

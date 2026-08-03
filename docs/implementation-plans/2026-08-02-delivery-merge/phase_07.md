@@ -22,6 +22,12 @@
 
 **Steps:** edit; `grep -rn "SFEDITS_CONFIG\|pii\|puppeteer" docs/ README.md` (excluding design-plans/implementation-plans/postmortems) comes back clean; commit tracked files.
 
+> **Gate as-executed (2026-08-02):** "clean" here means no *stale instructions* —
+> `docs/deploy-toolforge.md`'s cutover runbook necessarily names `SFEDITS_CONFIG`
+> (it tells the operator to migrate off it and delete it), and two deliberate
+> negative statements ("no PII sidecar", "no Chromium") remain. Do not treat the
+> literal grep as a regression check.
+
 ### Task 2: Rollout runbook (write into deploy-toolforge.md; DO NOT EXECUTE without explicit operator go)
 
 The push to `fork/integration` is a live deploy within 15 minutes (`autoupdate`), and the new code rejects `SFEDITS_CONFIG`. Order matters:
