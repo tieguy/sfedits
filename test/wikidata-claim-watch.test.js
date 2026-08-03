@@ -236,6 +236,7 @@ describe('wikidata-claim-watch', function() {
 
     afterEach(function() {
       nock.cleanAll()
+      require('../lib/mw-api')._resetSessions()
     })
 
     it('posts a Discord embed for a matching claim edit', async function() {
@@ -251,10 +252,14 @@ describe('wikidata-claim-watch', function() {
         })
 
       let posted = null
+      let uaSeen = null
       nock('https://discord.com')
         .post('/api/webhooks/123/abc', body => { posted = body; return true })
         .query(true)
-        .reply(204)
+        .reply(204, function() {
+          uaSeen = this.req.headers['user-agent']
+          return ''
+        })
 
       const result = await handleWikidataEdit(account, edit, { sets, noop: false })
       assert.isOk(result)
@@ -268,6 +273,8 @@ describe('wikidata-claim-watch', function() {
       // Wikidata branding: named author row with the logo as its icon
       assert.equal(embed.author.name, 'Wikidata')
       assert.match(embed.author.icon_url, /Wikidata-logo/)
+      // Discord is not a Wikimedia host; do not send the Wikimedia operator UA
+      assert.notMatch(String(uaSeen), /sfedits-claim-watch/)
     })
 
     it('does nothing for a non-matching claim edit', async function() {
