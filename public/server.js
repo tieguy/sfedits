@@ -27,6 +27,7 @@ const { fetchSourceTitles } = require('../lib/watchlist-sync')
 const { refreshTargetSets, DEFAULT_PROPERTIES } = require('../lib/wikidata-claim-watch')
 const { createTopicStore } = require('../lib/topic-store')
 const { createBot, estimateRegion, CreateError } = require('../lib/topic-create')
+const { wmFetchJson } = require('../lib/mw-api')
 
 const PORT = process.env.PORT || 8000
 const DATA_DIR = path.join(__dirname, '..', 'data')
@@ -553,13 +554,9 @@ async function searchPlaces(query) {
     formatversion: '2'
   })
 
-  const response = await fetch(`https://www.wikidata.org/w/api.php?${params}`, {
-    headers: { 'User-Agent': 'sfedits-web/1.0 (https://github.com/tieguy/sfedits)' },
-    signal: AbortSignal.timeout(10000)
+  const data = await wmFetchJson(`https://www.wikidata.org/w/api.php?${params}`, {
+    component: 'web', timeoutMs: 10000, tries: 1
   })
-  if (!response.ok) throw new Error(`Wikidata search returned ${response.status}`)
-
-  const data = await response.json()
   return (data.search || []).map(hit => ({
     qid: hit.id,
     label: hit.label || hit.id,
