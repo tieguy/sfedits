@@ -398,11 +398,12 @@ EOF
 ```bash
 grep -rn "USER_AGENT = '" lib/ scripts/ public/
 grep -rni "user-agent" lib/ scripts/ public/ --include='*.js' | grep -v "user-agent.js" | grep -vi "userAgent(" | grep -vi "USER_AGENT_HEADER" | grep -v mw-api.js
+grep -rnE "= *'[A-Za-z0-9._-]+/[0-9]" scripts/ lib/ public/
 ```
 
 Expected: first grep empty (the CLAUDE.md invariant); second grep shows no
 remaining string-literal UA values (eyeball any hits — comments are fine,
-literals are the bug).
+literals are the bug); third grep (broader sweep) will hit scripts/reassess.js:41's `const UA =` (EXPECTED — Phase 4 Task 3 deletes it) and scripts/record-deploy.js:99 / scripts/toolforge-api.js:83 (GitHub API and Toolforge jobs API, not Wikimedia — out-of-scope-acceptable). Re-review should spot only the expected UA literals with a clear explanation in the sweep.
 
 **Step 2:**
 

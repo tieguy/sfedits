@@ -1,26 +1,22 @@
 #!/usr/bin/env node
 
-const fs = require('fs')
 const { wmFetchJson } = require('../lib/mw-api')
 
 async function getCategoryMembers(categoryName, limit = 500) {
+  // Read-only interactive CLI utility; deliberately no maxlag (serial 100ms inter-request sleeps cover rate-limiting)
   const encodedCategory = encodeURIComponent(`Category:${categoryName}`)
   const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&list=categorymembers&cmtitle=${encodedCategory}&cmlimit=${limit}&cmnamespace=0`
 
-  try {
-    const response = await wmFetchJson(url, { component: 'find-articles', timeoutMs: 30000 })
+  const response = await wmFetchJson(url, { component: 'find-articles', timeoutMs: 30000 })
 
-    if (response.error) {
-      console.log(`  ❌ Error: ${response.error.info}`)
-      return []
-    }
-
-    const members = response.query.categorymembers || []
-    const articleTitles = members.map(member => member.title)
-    return articleTitles
-  } catch (error) {
-    throw error
+  if (response.error) {
+    console.log(`  ❌ Error: ${response.error.info}`)
+    return []
   }
+
+  const members = response.query.categorymembers || []
+  const articleTitles = members.map(member => member.title)
+  return articleTitles
 }
 
 async function main() {
