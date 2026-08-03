@@ -18,6 +18,74 @@ describe('osm-boundary', function() {
     nock.cleanAll()
   })
 
+  it('stitches ways that extend the ring at its START, forward orientation (LUI-102)', async function() {
+    // Way B's END meets the ring's start, so B flows forward into the ring
+    // and must be prepended UNREVERSED. The old code reversed it, duplicating
+    // the shared node at ring[0] and burying B's far end mid-ring — on real
+    // relations (Yosemite, 1643367) that consumed all 40 ways into one chain
+    // that could never close.
+    nock(OVERPASS).post('/api/interpreter').reply(200, {
+      elements: [{
+        type: 'relation', id: 1,
+        members: [
+          // A: p1 -> p2 (the ring seed; its START is p1)
+          { type: 'way', role: 'outer', geometry: [{ lat: 1, lon: 0 }, { lat: 0, lon: 1 }] },
+          // B: p0 -> p1 (wayEnd === ringStart: forward prepend)
+          { type: 'way', role: 'outer', geometry: [{ lat: 0, lon: 0 }, { lat: 1, lon: 0 }] },
+          // C: p2 -> p0 (closes)
+          { type: 'way', role: 'outer', geometry: [{ lat: 0, lon: 1 }, { lat: 0, lon: 0 }] }
+        ]
+      }]
+    })
+
+    const polygon = await fetchBoundary('1')
+    const ring = polygon.geometry.coordinates[0]
+    assert.deepEqual(ring[0], ring[ring.length - 1], 'ring closes')
+    assert.equal(ring.length, 4, 'triangle: 3 corners + closing point, no duplicated nodes')
+  })
+
+  it('stitches ways that extend the ring at its START, reversed orientation (LUI-102)', async function() {
+    // Way B's START meets the ring's start, so B must be REVERSED before
+    // prepending. The old code prepended it forward (same duplication bug,
+    // opposite orientation).
+    nock(OVERPASS).post('/api/interpreter').reply(200, {
+      elements: [{
+        type: 'relation', id: 2,
+        members: [
+          // A: p1 -> p2
+          { type: 'way', role: 'outer', geometry: [{ lat: 1, lon: 0 }, { lat: 0, lon: 1 }] },
+          // B: p1 -> p0 (wayStart === ringStart: reversed prepend)
+          { type: 'way', role: 'outer', geometry: [{ lat: 1, lon: 0 }, { lat: 0, lon: 0 }] },
+          // C: p0 -> p2 (closes, reversed append)
+          { type: 'way', role: 'outer', geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] }
+        ]
+      }]
+    })
+
+    const polygon = await fetchBoundary('2')
+    const ring = polygon.geometry.coordinates[0]
+    assert.deepEqual(ring[0], ring[ring.length - 1], 'ring closes')
+    assert.equal(ring.length, 4, 'triangle: 3 corners + closing point, no duplicated nodes')
+  })
+
+  it('stitches the real Yosemite relation, which mixes all four orientations (LUI-102)', async function() {
+    // Captured from Overpass (relation 1643367) with interiors thinned;
+    // the 40-way endpoint topology is exact. This is the relation the bug
+    // was reported against: every endpoint pairs cleanly (degree 2
+    // everywhere), so the ONLY reason it failed to close was the swapped
+    // prepend orientations.
+    const fixture = require('./fixtures/osm/yosemite-outer-ways.json')
+    nock(OVERPASS).post('/api/interpreter').reply(200, {
+      elements: [{ type: 'relation', id: 1643367, members: fixture.ways }]
+    })
+
+    const polygon = await fetchBoundary('1643367')
+    assert.equal(polygon.geometry.type, 'Polygon')
+    const ring = polygon.geometry.coordinates[0]
+    assert.deepEqual(ring[0], ring[ring.length - 1], 'all 40 ways close into one ring')
+    assert.isAbove(ring.length, 40, 'ring carries the stitched geometry')
+  })
+
   it('stitches multiple outer ways into a single closed ring', async function() {
     // Real SF boundary structure: multiple ways that chain together
     nock(OVERPASS).post('/api/interpreter').reply(200, {
