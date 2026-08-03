@@ -34,7 +34,8 @@ describe('mw-oauth', function() {
         body.client_id === 'cid' &&
         body.client_secret === 'secret' &&
         body.redirect_uri === 'http://localhost:3000/oauth/callback'
-      ).reply(200, { access_token: 'tok', token_type: 'Bearer', expires_in: 14400 })
+      ).matchHeader('user-agent', require('../lib/user-agent').userAgent('mw-oauth'))
+      .reply(200, { access_token: 'tok', token_type: 'Bearer', expires_in: 14400 })
 
       const token = await exchangeCode({
         clientId: 'cid', clientSecret: 'secret', code: 'abc',
@@ -55,7 +56,10 @@ describe('mw-oauth', function() {
 
   describe('fetchProfile', function() {
     it('GETs the profile with a Bearer token and returns the username', async function() {
-      nock(META, { reqheaders: { authorization: 'Bearer tok' } })
+      nock(META, { reqheaders: {
+        authorization: 'Bearer tok',
+        'user-agent': require('../lib/user-agent').userAgent('mw-oauth')
+      } })
         .get('/w/rest.php/oauth2/resource/profile')
         .reply(200, { username: 'Tieguy', sub: '123' })
 
