@@ -668,6 +668,31 @@ describe('mw-api', function() {
       assert.isOk(await mod.actionSession('wm.test', 'test'), 'second call must construct a fresh session')
     })
 
+    it('retries bare 429 (no Retry-After) after a wait', async function() {
+      this.timeout(5000)
+      // Bare 429 (no Retry-After header), then success
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .reply(429, '')
+      nock(HOST)
+        .get('/w/api.php')
+        .query(true)
+        .reply(200, { batchcomplete: true })
+
+      _resetSessions()
+      const session = await actionSession('wm.test', 'test-bare-429', { bare429WaitMs: 50 })
+      const started = Date.now()
+      const response = await session.request(
+        { action: 'query' },
+        { maxRetriesSeconds: 10 }
+      )
+      const elapsed = Date.now() - started
+
+      assert.isTrue(response.batchcomplete, 'request should succeed after bare 429 wait')
+      assert.isAtLeast(elapsed, 40, 'should have waited before retrying')
+    })
+
   })
 
   describe('restGetJson', function() {

@@ -91,7 +91,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 // every stage in this script parses v1 shapes, and this port changes
 // transport, not parsing. maxRetriesSeconds 600 matches the old budget of
 // waiting out sustained 429/maxlag (60 waits x 10s) — m3api owns those
-// waits now, Retry-After included.
+// waits now, with Retry-After honoring and bare-429 recovery (10s wait).
 async function api(base, params) {
   const session = await actionSession(base, 'reassess')
   return session.request(
@@ -767,7 +767,7 @@ async function fetchPageviews(title, { now = new Date() } = {}) {
     component: 'reassess', tries: 2, backoffMs: 1000, throwOnHttpError: false
   })
   if (!res.ok) return null  // article genuinely has no pageview data
-  const data = await res.json()
+  const data = await res.json()  // malformed 200 body throws (deliberate: checkpoint machinery reruns rather than recording a gap)
   return (data.items || []).reduce((sum, item) => sum + item.views, 0)
 }
 
