@@ -12,6 +12,7 @@ const { buildFacets } = require('./lib/bluesky-utils')
 const bluesky = require('./lib/bluesky-platform')
 const mastodon = require('./lib/mastodon-platform')
 const discord = require('./lib/discord-platform')
+const { post: deliveryPost, resolveConfigDeliveries } = require('./lib/delivery')
 const { startWatchlistSync, isWatched } = require('./lib/watchlist-sync')
 const { createTopicStore } = require('./lib/topic-store')
 const { createTopicIndex } = require('./lib/topic-index')
@@ -27,7 +28,7 @@ let subscriptionLimiter = null
 const subscriptionHealth = createHealthTracker()
 const { startClaimWatch, handleWikidataEdit } = require('./lib/wikidata-claim-watch')
 const { fetchDiffHtml, verifyDiffPage } = require('./lib/diff-page')
-const { recordPost } = require('./lib/post-log')
+const { recordPost, entryDeliveries } = require('./lib/post-log')
 const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser')
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
@@ -203,74 +204,80 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           article: capture.article
         }
 
-        // Post to each platform independently so one failing doesn't stop
-        // the others, and so thread refs survive partial failures.
+        // Resolve deliveries from account config, with fallback to legacy behavior
+        let deliveries = resolveConfigDeliveries(account)
+        if (deliveries.length === 0) {
+          // Warn and fall back to legacy per-stanza behavior
+          console.warn('[sendStatus] account.deliveries is absent or empty - falling back to legacy per-stanza behavior')
+          // Build legacy deliveries array from account stanzas for compatibility
+          deliveries = []
+          if (account.bluesky) {
+            deliveries.push({ type: 'bluesky', credentials: account.bluesky })
+          }
+          if (account.mastodon) {
+            deliveries.push({ type: 'mastodon', credentials: account.mastodon })
+          }
+          if (account.discord) {
+            deliveries.push({ type: 'discord', credentials: account.discord })
+          }
+        }
 
-        // Post to Bluesky
-        let blueskyRef = null
-        if (account.bluesky) {
+        // Build the refs object for threading and track all delivery results
+        const refs = { bluesky: null, mastodon: null }
+        const deliveryResults = []
+
+        // Post to each delivery target independently so one failing doesn't
+        // stop the others, and so thread refs survive partial failures.
+        for (const delivery of deliveries) {
           try {
-            // Bluesky replies need both root and parent refs; if the thread
-            // root never made it to Bluesky, anchor the thread at the parent.
+            // Prepare platform-specific replyTo if threading is needed
             let replyTo = null
-            if (thread && thread.parent && thread.parent.bluesky) {
-              replyTo = {
-                root: (thread.root && thread.root.bluesky) || thread.parent.bluesky,
-                parent: thread.parent.bluesky
+            if (thread && thread.parent) {
+              if (delivery.type === 'bluesky' && thread.parent.bluesky) {
+                // Bluesky replies need both root and parent refs
+                replyTo = {
+                  root: (thread.root && thread.root.bluesky) || thread.parent.bluesky,
+                  parent: thread.parent.bluesky
+                }
+              } else if (delivery.type === 'mastodon' && thread.parent.mastodon) {
+                // Mastodon reply is just the status id
+                replyTo = thread.parent.mastodon
               }
+              // Discord webhooks don't support threading
             }
-            const result = await bluesky.post({
-              account: account.bluesky,
+
+            // Post to this delivery target
+            const result = await deliveryPost(delivery, {
               text: enrichedText,
               screenshot,
               metadata,
               replyTo
             })
-            if (result?.uri) {
-              blueskyRef = { uri: result.uri, cid: result.cid }
+
+            // Handle validation rejection (null result)
+            if (!result) {
+              continue
             }
-          } catch (error) {
-            console.error('Bluesky post failed:', error.message)
-          }
-        }
 
-        // Post to Mastodon
-        let mastodonId = null
-        if (account.mastodon) {
-          try {
-            const result = await mastodon.post({
-              account: account.mastodon,
-              text: enrichedText,
-              screenshot,
-              metadata,
-              replyTo: (thread && thread.parent && thread.parent.mastodon) || null
-            })
-            mastodonId = result?.data?.id || null
-          } catch (error) {
-            console.error('Mastodon post failed:', error.message)
-          }
-        }
+            deliveryResults.push(result)
 
-        // Post to Discord (webhooks can't reply, so no threading here)
-        let discordMessageId = null
-        if (account.discord) {
-          try {
-            const result = await discord.post({
-              account: account.discord,
-              text: enrichedText,
-              screenshot,
-              metadata
-            })
-            discordMessageId = result?.id || null
+            // Update refs object for threading follow-ups
+            if (result.type === 'bluesky') {
+              refs.bluesky = result.ref
+            } else if (result.type === 'mastodon') {
+              refs.mastodon = result.ref
+            }
+
+            console.log(`[sendStatus] Posted to ${result.type} (${result.postId})`)
           } catch (error) {
-            console.error('Discord post failed:', error.message)
+            console.error(`${delivery.type} post failed:`, error.message)
           }
         }
 
         // Fan out to topic subscriptions, reusing the single render above.
         // Delivery failures are logged per subscription and never abort the
         // account-level posts that already succeeded.
-        await deliverToTopics({ topicStore, topicIds }, {
+        const subscriptionResults = await deliverToTopics({ topicStore, topicIds }, {
           text: enrichedText,
           screenshot,
           metadata
@@ -280,14 +287,21 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
         // posts if the revision is later hidden on-wiki. A collapsed post
         // publicizes every buffered revision, so record it under each one:
         // hiding ANY constituent revision must take the combined post down.
-        if (blueskyRef || mastodonId || discordMessageId) {
-          const blueskyUri = blueskyRef ? blueskyRef.uri : null
+        if (deliveryResults.length > 0 || subscriptionResults.length > 0) {
+          // Combine account and subscription delivery results for recording
+          const allDeliveries = [
+            ...deliveryResults,
+            ...subscriptionResults
+              .filter(r => r.ok)
+              .map(r => ({ type: r.type, postId: r.postId, subscriptionId: r.subscriptionId }))
+          ]
+
           const recordUrls = edit.collapsedUrls || [edit.url]
           for (const diffUrl of recordUrls) {
-            recordPost({ diffUrl, page: edit.page, blueskyUri, mastodonId, discordMessageId })
+            recordPost({ diffUrl, page: edit.page, deliveries: allDeliveries })
           }
           writeHeartbeat('post')
-          return { bluesky: blueskyRef, mastodon: mastodonId }
+          return refs
         }
         return null
       } finally {
@@ -428,7 +442,7 @@ async function main() {
       // Periodically check posted revisions and delete posts whose
       // revision has been hidden/suppressed on-wiki
       if (!argv.noop && config.accounts.length > 0) {
-        startSweeper(config.accounts[0])
+        startSweeper(config.accounts[0], undefined, topicStore)
       }
 
       const wikipedia = new EditStream()

@@ -18,6 +18,9 @@
         "refresh_hours": 24
       },
       "discord": {},
+      "deliveries": [
+        { "type": "discord" }
+      ],
       "wikidata_claims": {
         "properties": ["P19", "P20", "P131", "P159", "P276", "P937", "P39"],
         "refresh_hours": 24,
