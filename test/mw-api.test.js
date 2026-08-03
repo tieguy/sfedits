@@ -1,6 +1,5 @@
 const { assert } = require('chai')
 const nock = require('nock')
-const { EventEmitter } = require('events')
 const { wmFetch, wmFetchJson, actionSession, restGetJson, _resetSessions } = require('../lib/mw-api')
 
 const HOST = 'https://wm.test'
@@ -194,12 +193,13 @@ describe('mw-api', function() {
 
     it('regression: per-attempt timeout does not span waits between retries', async function() {
       this.timeout(5000)
-      // Five 429s with retry-after:1 (1 second each) = ~5 seconds total
-      // With timeoutMs: 500 (0.5s per attempt), we'd fail if timeout spanned waits
+      // Three 429s with retry-after:0.2 (0.2 seconds each) = ~600ms total
+      // With timeoutMs: 150 (150ms per attempt), we'd fail if timeout spanned waits
       // But since each attempt gets a fresh timeout, we succeed because each
-      // individual wait is under 500ms (well, the wait itself is ~1s but the
-      // attempt to fetch is instant, so per-attempt timeout doesn't fire)
-      nock(HOST).get('/thing').times(5).reply(429, '', { 'retry-after': '0.1' })
+      // individual wait + fetch is under 150ms per attempt (the wait itself is 200ms
+      // after AbortSignal.timeout but the per-attempt timeout doesn't fire because
+      // waits happen outside the fetch itself)
+      nock(HOST).get('/thing').times(3).reply(429, '', { 'retry-after': '0.2' })
       nock(HOST).get('/thing').reply(200, 'ok')
 
       const res = await wmFetch(`${HOST}/thing`, {
@@ -210,7 +210,7 @@ describe('mw-api', function() {
         maxRateLimitWaits: 60,
         maxRetryAfterMs: 5 * 60 * 1000,
         maxTotalWaitMs: 10 * 60 * 1000,
-        timeoutMs: 500 // Short timeout per attempt
+        timeoutMs: 150 // Short timeout per attempt
       })
       assert.equal(res.status, 200)
     })
@@ -417,44 +417,19 @@ describe('mw-api', function() {
       }
     })
 
-    it('cleans up cache on rejection so next call can retry', async function() {
-      // Test that when a session promise rejects, the cache entry is deleted
-      // so the next call can retry. We verify this by:
-      // 1. Creating a session and confirming it's cached
-      // 2. Resetting to simulate rejection cleanup
-      // 3. Creating a new session with same host returns a different promise
-      const { userAgent } = require('../lib/user-agent')
-      nock(HOST)
-        .matchHeader('user-agent', value => value.includes(userAgent('test-cleanup')))
-        .get('/w/api.php')
-        .query(true)
-        .reply(200, { batchcomplete: true })
-
-      // Get first session
-      const session1Promise = actionSession('wm.test', 'test-cleanup')
-      const session1 = await session1Promise
-
-      // Mock the cache cleanup that would happen on rejection:
-      // Reset the sessions cache to simulate what the .catch handler does
-      _resetSessions()
-
-      // Set up nock for a second call
-      nock(HOST)
-        .matchHeader('user-agent', value => value.includes(userAgent('test-cleanup-2')))
-        .get('/w/api.php')
-        .query(true)
-        .reply(200, { batchcomplete: true })
-
-      // After cache cleanup, same host should create a NEW session promise
-      const session2Promise = actionSession('wm.test', 'test-cleanup-2')
-
-      // Promises should be different because cache was cleared
-      assert.notStrictEqual(session1Promise, session2Promise, 'cache cleanup should free the host key')
-
-      // Both should work correctly
-      const session2 = await session2Promise
-      const response = await session2.request({ action: 'query' })
-      assert.isTrue(response.batchcomplete)
+    it('deletes the cache entry when session construction rejects', async function () {
+      let failNext = true
+      const real = require('../lib/user-agent')
+      const proxyquire = require('proxyquire')
+      const mod = proxyquire('../lib/mw-api', {
+        './user-agent': { userAgent: (c) => {
+          if (failNext) { failNext = false; throw new Error('boom') }
+          return real.userAgent(c)
+        } }
+      })
+      await mod.actionSession('wm.test', 'test').then(
+        () => assert.fail('should reject'), (e) => assert.match(e.message, /boom/))
+      assert.isOk(await mod.actionSession('wm.test', 'test'), 'second call must construct a fresh session')
     })
 
   })
