@@ -4,6 +4,15 @@ const { wmFetch, wmFetchJson, actionSession, restGetJson, _resetSessions } = req
 
 const HOST = 'https://wm.test'
 
+// undici wraps dispatcher errors as `TypeError: fetch failed` with the real
+// code on the cause chain — walk it to find a headers-timeout anywhere.
+const isHeadersTimeout = (error) => {
+  for (let e = error; e; e = e.cause) {
+    if (e.code === 'UND_ERR_HEADERS_TIMEOUT') return true
+  }
+  return false
+}
+
 describe('mw-api', function() {
   afterEach(function() {
     nock.cleanAll()
@@ -410,8 +419,8 @@ describe('mw-api', function() {
         } catch (error) {
           // Expect either UND_ERR_HEADERS_TIMEOUT or a cause chain containing it
           assert.isTrue(
-            error.code === 'UND_ERR_HEADERS_TIMEOUT' || error.message?.includes('ERR_HTTP_REQUEST_TIMEOUT'),
-            `Expected timeout error, got: ${error.code || error.name} - ${error.message}`
+            isHeadersTimeout(error),
+            `Expected headers-timeout on the cause chain, got: ${error.name} - ${error.message}`
           )
         }
       } finally {
@@ -619,8 +628,8 @@ describe('mw-api', function() {
           assert.fail('should have rejected with timeout')
         } catch (error) {
           assert.isTrue(
-            error.code === 'UND_ERR_HEADERS_TIMEOUT' || error.message?.includes('ERR_HTTP_REQUEST_TIMEOUT'),
-            `Expected timeout error, got: ${error.code || error.name} - ${error.message}`
+            isHeadersTimeout(error),
+            `Expected headers-timeout on the cause chain, got: ${error.name} - ${error.message}`
           )
         }
       } finally {
