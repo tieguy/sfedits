@@ -237,4 +237,69 @@ describe('lib/config', function() {
       /config\.json is not valid JSON/
     )
   })
+
+  it('overlay introducing a nested object subtree absent from base merges cleanly', function() {
+    const base = {
+      accounts: [{
+        name: 'base-account'
+      }]
+    }
+    const overlay = {
+      accounts: [{
+        name: 'base-account',
+        new_section: {
+          enabled: true,
+          setting: 'value'
+        }
+      }]
+    }
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify(base))
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(overlay))
+
+    const config = loadConfig({ baseDir: dir, env: {} })
+    assert.equal(config.accounts[0].new_section.enabled, true)
+    assert.equal(config.accounts[0].new_section.setting, 'value')
+  })
+
+  it('overlay object at a path where base has a scalar replaces it', function() {
+    const base = {
+      accounts: [{
+        watchlist: 'simple-string'
+      }]
+    }
+    const overlay = {
+      accounts: [{
+        watchlist: {
+          source: 'api',
+          enabled: true
+        }
+      }]
+    }
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify(base))
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(overlay))
+
+    const config = loadConfig({ baseDir: dir, env: {} })
+    assert.equal(config.accounts[0].watchlist.source, 'api')
+    assert.equal(config.accounts[0].watchlist.enabled, true)
+  })
+
+  it('regression: overlay with pii_blocking object absent from base does not crash', function() {
+    const base = {
+      accounts: [{
+        name: 'main'
+      }]
+    }
+    const overlay = {
+      accounts: [{
+        pii_blocking: {
+          enabled: false
+        }
+      }]
+    }
+    fs.writeFileSync(path.join(dir, 'config.base.json'), JSON.stringify(base))
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(overlay))
+
+    const config = loadConfig({ baseDir: dir, env: {} })
+    assert.equal(config.accounts[0].pii_blocking.enabled, false)
+  })
 })
