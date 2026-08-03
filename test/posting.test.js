@@ -243,10 +243,23 @@ describe('posting flow', function() {
       nock.cleanAll()
     })
 
-    it('(CRITICAL 2+3) sendStatus with all deliveries failing returns null and doesn\'t record', async function() {
+    it('(CRITICAL 1) all account deliveries fail returns null and doesn\'t record', async function() {
       this.timeout(10000)
 
       let recordPostCalled = false
+      let heartbeatWritten = false
+
+      // Track fs.writeFileSync calls for heartbeat
+      const fsStub = {
+        writeFileSync: function(path, data) {
+          if (path.includes('heartbeat-post')) {
+            heartbeatWritten = true
+          }
+          // Don't actually write the heartbeat in test
+        },
+        existsSync: require('fs').existsSync,
+        unlinkSync: require('fs').unlinkSync
+      }
 
       const pageWatch = proxyquire('../page-watch', {
         './lib/diff-image': {
@@ -256,9 +269,17 @@ describe('posting flow', function() {
           enrichIPsInText: async (text) => text,
           initializeReader: async () => null
         },
+        './lib/delivery': {
+          post: async () => {
+            throw new Error('Delivery failed')
+          },
+          resolveConfigDeliveries: require('../lib/delivery').resolveConfigDeliveries
+        },
         './lib/post-log': {
-          recordPost: () => { recordPostCalled = true; return null }
-        }
+          recordPost: () => { recordPostCalled = true; return null },
+          entryDeliveries: require('../lib/post-log').entryDeliveries
+        },
+        fs: fsStub
       })
 
       // Mock Wikipedia diff page
@@ -267,19 +288,10 @@ describe('posting flow', function() {
         .query({ diff: '123', oldid: '456' })
         .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
 
-      // All platform calls will fail or be rejected
-      nock('https://bsky.social')
-        .post('/xrpc/com.atproto.server.createSession')
-        .reply(500)
-
-      nock('https://mastodon.example.com')
-        .post('/api/v1/media')
-        .reply(500)
-
       const fakeAccount = {
         bluesky: { identifier: 'test.bsky.social', password: 'pass' },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
-        discord: { webhook_url: 'http://example.com/webhook' },  // Invalid: not https
+        discord: { webhook_url: 'https://discord.com/api/webhooks/account-hook' },
         deliveries: [
           { type: 'bluesky' },
           { type: 'mastodon' },
@@ -289,19 +301,26 @@ describe('posting flow', function() {
       }
 
       const fakeEdit = {
-        page: 'Test',
+        page: 'Test Article',
         user: 'User',
-        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+        url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456',
+        wikipedia: 'en'
       }
 
       const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
+
+      // Call with empty topicIds (default)
+      // With all account deliveries failing, allDeliveries will be empty
       const result = await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
 
       // Total failure must return null
       assert.isNull(result, 'sendStatus should return null when all deliveries fail')
 
       // recordPost should NOT have been called
-      assert.isFalse(recordPostCalled, 'recordPost should not be called on total failure')
+      assert.isFalse(recordPostCalled, 'recordPost should not be called when all deliveries fail')
+
+      // Heartbeat should NOT have been written
+      assert.isFalse(heartbeatWritten, 'heartbeat-post should not be written when all deliveries fail')
     })
 
     it('posts to Bluesky and Mastodon without errors', async function() {

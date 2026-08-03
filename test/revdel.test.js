@@ -279,23 +279,25 @@ describe('revdel-check', function() {
           ]
         }
 
-        let loggedError = null
-        const originalConsoleError = console.error
-        console.error = function(...args) {
-          loggedError = args.join(' ')
+        let loggedWarning = null
+        const originalConsoleWarn = console.warn
+        console.warn = function(...args) {
+          loggedWarning = args.join(' ')
         }
 
         const account = {}
-        // topicStore is null (IMPORTANT 6)
+        // topicStore is null - should NOT mark delivery deleted, just retry later
 
         const updated = await deletePosts(entry, account, null)
 
-        console.error = originalConsoleError
+        console.warn = originalConsoleWarn
 
-        // Should mark as deleted without throwing (IMPORTANT 6 fix)
-        assert.isTrue(updated.deliveries[0].deleted, 'Should mark delivery deleted when topicStore absent')
-        assert.ok(loggedError, 'Should log a warning')
-        assert.include(loggedError.toLowerCase(), 'not available')
+        // Delivery should stay deleted:false (not marked deleted, will retry)
+        assert.isFalse(updated.deliveries[0].deleted, 'Delivery should NOT be marked deleted when topicStore absent')
+        // Entry should stay active (nothing was successfully deleted yet)
+        assert.equal(updated.status, 'active', 'Entry should stay active when topicStore absent')
+        assert.ok(loggedWarning, 'Should log a warning')
+        assert.include(loggedWarning.toLowerCase(), 'not available')
       })
 
       it('(Task 4j) missing subscription marks delivery deleted + logs', async function() {
@@ -357,6 +359,69 @@ describe('revdel-check', function() {
 
         // Discord should be marked deleted
         assert.isTrue(updated.discordDeleted)
+      })
+
+      it('(CRITICAL 3) zero-delivery entry marked as deleted with oddity log', async function() {
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 999,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          deliveries: []  // No deliveries - vacuously complete
+        }
+
+        let loggedMessage = null
+        const originalConsoleLog = console.log
+        console.log = function(...args) {
+          const msg = args.join(' ')
+          if (msg.includes('zero-delivery')) {
+            loggedMessage = msg
+          }
+        }
+
+        const account = {}
+
+        const updated = await deletePosts(entry, account)
+
+        console.log = originalConsoleLog
+
+        // Entry should be marked deleted (vacuously - nothing to take down)
+        assert.equal(updated.status, 'deleted', 'Zero-delivery entry should be marked deleted')
+        assert.ok(updated.deletedAt, 'deletedAt timestamp should be set')
+        assert.ok(loggedMessage, 'Should log oddity message about zero-delivery entry')
+      })
+
+      it('(IMPORTANT 5) legacy entry with blueskyUri but no bluesky stanza stays active', async function() {
+        const entry = {
+          host: 'en.wikipedia.org',
+          revId: 128,
+          page: 'Test',
+          status: 'active',
+          reason: 'hidden',
+          blueskyUri: 'at://legacy-uri',
+          blueskyDeleted: false,
+          discordMessageId: 'msg-legacy-456',
+          discordDeleted: false
+        }
+
+        // Only Discord webhook available (no bluesky stanza)
+        nock('https://discord.com')
+          .delete('/api/webhooks/222/token/messages/msg-legacy-456')
+          .reply(204)
+
+        const account = {
+          discord: { webhook_url: 'https://discord.com/api/webhooks/222/token' }
+          // NOTE: no bluesky stanza, even though entry has blueskyUri
+        }
+
+        const updated = await deletePosts(entry, account)
+
+        // Discord should be deleted (successfully)
+        assert.isTrue(updated.discordDeleted, 'Discord should be marked deleted')
+        // But entry should stay ACTIVE because bluesky stanza missing - can't delete bluesky post
+        // This is the legacy partial-failure contract
+        assert.equal(updated.status, 'active', 'Entry should stay active: partial failure (discord deleted, bluesky not)')
       })
     })
   })

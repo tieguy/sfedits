@@ -229,7 +229,10 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           try {
             // CRITICAL 4: Delivery-level template override
             let deliveryText = enrichedText
-            if (delivery.template) {
+            // Skip override for collapsed posts: delivery overrides often omit {{count}},
+            // which would lose the burst summary (e.g., "edited 5 times" becomes "edited 1 time")
+            const isCollapsedBurst = (edit.collapsedCount || 1) > 1
+            if (delivery.template && !isCollapsedBurst) {
               const overrideStatus = getStatus(edit, edit.user, delivery.template)
               deliveryText = await enrichIPsInText(overrideStatus.text)
             }
@@ -292,30 +295,27 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
         // posts if the revision is later hidden on-wiki. A collapsed post
         // publicizes every buffered revision, so record it under each one:
         // hiding ANY constituent revision must take the combined post down.
-        if (deliveryResults.length > 0 || subscriptionResults.length > 0) {
-          // Combine account and subscription delivery results for recording
-          const allDeliveries = [
-            ...deliveryResults,
-            ...subscriptionResults
-              .filter(r => r.ok)
-              .map(r => ({ type: r.type, postId: r.postId, subscriptionId: r.subscriptionId }))
-          ]
+        // Combine account and subscription delivery results for recording
+        const allDeliveries = [
+          ...deliveryResults,
+          ...subscriptionResults
+            .filter(r => r.ok)
+            .map(r => ({ type: r.type, postId: r.postId, subscriptionId: r.subscriptionId }))
+        ]
 
-          // CRITICAL 2+3: Total failure case (no successful deliveries)
-          // If allDeliveries is empty, no post succeeded - don't write heartbeat or entry
-          if (allDeliveries.length === 0) {
-            console.warn('[sendStatus] All deliveries failed - no post recorded, no heartbeat written')
-            return null
-          }
-
-          const recordUrls = edit.collapsedUrls || [edit.url]
-          for (const diffUrl of recordUrls) {
-            recordPost({ diffUrl, page: edit.page, deliveries: allDeliveries })
-          }
-          writeHeartbeat('post')
-          return refs
+        // CRITICAL 2+3: Total failure case (no successful deliveries)
+        // If allDeliveries is empty, no post succeeded - don't write heartbeat or entry
+        if (allDeliveries.length === 0) {
+          console.warn('[sendStatus] All deliveries failed - no post recorded, no heartbeat written')
+          return null
         }
-        return null
+
+        const recordUrls = edit.collapsedUrls || [edit.url]
+        for (const diffUrl of recordUrls) {
+          recordPost({ diffUrl, page: edit.page, deliveries: allDeliveries })
+        }
+        writeHeartbeat('post')
+        return refs
       } finally {
         // Always clean up screenshot, even if posting fails
         if (screenshot && fs.existsSync(screenshot)) {
