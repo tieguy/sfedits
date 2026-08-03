@@ -264,6 +264,28 @@ describe('mw-api', function() {
         assert.include(error.message, 'component', 'should mention component requirement')
       }
     })
+
+    it('returns a non-ok response when throwOnHttpError is false', async function() {
+      nock(HOST).get('/soft').reply(500, 'wdqs stack trace')
+
+      const res = await wmFetch(`${HOST}/soft`, {
+        component: 'test',
+        tries: 1, throwOnHttpError: false
+      })
+      assert.equal(res.status, 500)
+      assert.equal(await res.text(), 'wdqs stack trace')
+    })
+
+    it('still waits out 429s when throwOnHttpError is false', async function() {
+      nock(HOST).get('/soft').times(3).reply(429)
+      nock(HOST).get('/soft').reply(200, 'ok')
+
+      const res = await wmFetch(`${HOST}/soft`, {
+        component: 'test',
+        tries: 1, throwOnHttpError: false, rateLimitWaitMs: 5, maxRateLimitWaits: 60
+      })
+      assert.equal(res.status, 200)
+    })
   })
 
   describe('wmFetch compliance headers', function() {
