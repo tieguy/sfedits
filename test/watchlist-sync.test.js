@@ -48,6 +48,7 @@ describe('watchlist-sync', function() {
   afterEach(function() {
     fs.rmSync(dataDir, { recursive: true, force: true })
     nock.cleanAll()
+    require('../lib/mw-api')._resetSessions()
   })
 
   describe('fetchProjectArticles', function() {

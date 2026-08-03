@@ -608,6 +608,14 @@ describe('mw-api', function() {
       assert.notStrictEqual(a1, b, 'same host + different timeoutMs should be distinct sessions')
     })
 
+    it('normalizes host: bare host and full URL share the same session', async function() {
+      // Per m3api's rule: 'wm.test' becomes 'https://wm.test/w/api.php'
+      // So both forms should resolve to the same cached session
+      const a = await actionSession('wm.test', 'comp-a')
+      const b = await actionSession('https://wm.test/w/api.php', 'comp-b')
+      assert.strictEqual(a, b, 'bare host and full URL should share the same session')
+    })
+
     it('keeps sessions for different hosts distinct', async function() {
       const a = await actionSession('wm.test', 'c')
       const b = await actionSession('other.test', 'c')
