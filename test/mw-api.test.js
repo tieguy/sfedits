@@ -1,6 +1,6 @@
 const { assert } = require('chai')
 const nock = require('nock')
-const { wmFetch, wmFetchJson } = require('../lib/mw-api')
+const { wmFetch, wmFetchJson, actionSession, restGetJson, _resetSessions } = require('../lib/mw-api')
 
 const HOST = 'https://wm.test'
 
@@ -134,5 +134,38 @@ describe('mw-api', function() {
         assert.equal(error.message, 'HTTP 403')
       }
     })
+  })
+
+  describe('actionSession', function() {
+    afterEach(function() {
+      _resetSessions()
+    })
+
+    it('sends the Action API defaults and the operator User-Agent', async function() {
+      const { userAgent } = require('../lib/user-agent')
+      nock(HOST)
+        .matchHeader('user-agent', value => value.includes(userAgent('test-session')))
+        .get('/w/api.php')
+        .query(q => q.formatversion === '2' && q.maxlag === '5' && q.errorformat === 'plaintext')
+        .reply(200, { batchcomplete: true })
+
+      const session = await actionSession('wm.test', 'test-session')
+      const response = await session.request({ action: 'query' })
+      assert.isTrue(response.batchcomplete)
+      assert.isTrue(nock.isDone())
+    })
+
+    it('caches one session per host (first caller wins)', async function() {
+      const a = await actionSession('wm.test', 'first-component')
+      const b = await actionSession('wm.test', 'second-component')
+      assert.strictEqual(a, b)
+    })
+
+    it('keeps sessions for different hosts distinct', async function() {
+      const a = await actionSession('wm.test', 'c')
+      const b = await actionSession('other.test', 'c')
+      assert.notStrictEqual(a, b)
+    })
+
   })
 })
