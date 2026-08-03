@@ -20,7 +20,8 @@
     "mustache": "2.3.0",
     "satori": "^0.26.0",
     "tough-cookie": "^5.1.2",
-    "undici": "^7.0.0"
+    "undici": "^7.0.0",
+    "wtf_wikipedia": "^10.4.2"
   },
   "devDependencies": {
     "chai": "latest",
