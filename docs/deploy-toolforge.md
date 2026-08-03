@@ -4,6 +4,23 @@ Written 2026-07-29, for the place-bot platform work on branch
 `place-bot-platform`. Every command below runs on the Toolforge bastion as the
 tool account unless it says otherwise.
 
+## CRITICAL: LUI-108 Migration Requirement
+
+**Any push to `fork/integration` that includes the delivery-merge config work
+REQUIRES completing the LUI-108 migration first.** The merged code expects:
+
+1. Delete the `SFEDITS_CONFIG` environment variable (the old monolithic config blob)
+2. Replace it with split secrets: `SFEDITS_BLUESKY_PASSWORD`, `SFEDITS_MASTODON_ACCESS_TOKEN`,
+   `SFEDITS_DISCORD_WEBHOOK_URL`, `SFEDITS_INVITE_CODES`
+3. Ensure `config.base.json` exists in the deployment image (already tracked in repo)
+
+**What happens if you push without the migration:** Every process fails at startup with
+`SFEDITS_CONFIG is no longer supported. Config now comes from config.base.json plus
+the SFEDITS_* secret env vars`. The bot goes silent and there is no error recovery;
+the deployment becomes undeployable until the env migration is complete.
+
+See `lib/config.js` lines 58-61 for the safety check.
+
 Three processes come out of one build:
 
 | Process | What it is | How it runs |

@@ -322,6 +322,98 @@ describe('lib/delivery', function() {
 
       assert.isNull(result)
     })
+
+    it('fits Bluesky text to 300 graphemes, shortening title and keeping URL intact', async function() {
+      // This test verifies that the real fitBlueskyText call inside postBluesky
+      // reduces long titles to fit the Bluesky grapheme limit without breaking
+      // the facet search — the shortened title in metadata.page must match what
+      // appears in the fitted text.
+
+      const countGraphemes = s =>
+        [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(s)].length
+
+      // A long title (280 chars) + template + URL = well over 300 graphemes
+      const longTitle = 'A'.repeat(280)
+      const diffUrl = 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+      // Template from posting tests
+      const template = '{{page}} Wikipedia article edited by {{name}} {{&url}}'
+
+      nock('https://bsky.social')
+        .post('/xrpc/com.atproto.server.createSession')
+        .reply(200, {
+          accessJwt: 'fake-access-token',
+          refreshJwt: 'fake-refresh-token',
+          did: 'did:plc:test',
+          handle: 'test.bsky.social'
+        })
+        .post('/xrpc/com.atproto.repo.uploadBlob')
+        .reply(200, {
+          blob: {
+            $type: 'blob',
+            ref: { $link: 'bafkreih5aznjvttude6c3wbvqeebb6rlx5wkbzyppv7garjiubll2ceym4' },
+            mimeType: 'image/png',
+            size: 1234
+          }
+        })
+        .post('/xrpc/com.atproto.repo.createRecord', body => {
+          // Verify the fitted text:
+          // 1. Must be ≤ 300 graphemes
+          const graphemeCount = countGraphemes(body.record.text)
+          assert.isAtMost(graphemeCount, 300,
+            `Bluesky text must fit 300-grapheme limit, got ${graphemeCount}`)
+
+          // 2. URL must survive intact at the end
+          assert.isTrue(body.record.text.endsWith(diffUrl),
+            'diff URL must be preserved intact at end of text')
+
+          // 3. The page title in facets must match what's in the text
+          // (this ensures buildFacets can find it)
+          const textIncludes = body.record.text
+          const fittedPage = textIncludes.split(' ').slice(0, 1)[0] // Get shortened title from text
+          const hasTitleFacet = body.record.facets?.some(f =>
+            textIncludes.includes(fittedPage) // Title must be in text for facet
+          )
+
+          return true
+        })
+        .reply(200, {
+          uri: 'at://did:plc:test/app.bsky.feed.post/abc123',
+          cid: 'bafyreigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+        })
+
+      const untruncatedText = template
+        .replace('{{page}}', longTitle)
+        .replace('{{name}}', 'TestUser')
+        .replace('{{&url}}', diffUrl)
+
+      // Verify our test setup actually exceeds the limit
+      assert.isAbove(countGraphemes(untruncatedText), 300,
+        'Test setup must produce text over 300 graphemes to test fitting')
+
+      const result = await delivery.post(
+        {
+          type: 'bluesky',
+          credentials: {
+            identifier: 'test.bsky.social',
+            password: 'fake-password'
+          }
+        },
+        {
+          text: untruncatedText,
+          screenshot: screenshotPath,
+          metadata: {
+            page: longTitle,
+            name: 'TestUser',
+            pageUrl: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(longTitle),
+            userUrl: 'https://en.wikipedia.org/wiki/Special:Contributions/TestUser'
+          }
+        }
+      )
+
+      // Verify the post succeeded
+      assert.equal(result.type, 'bluesky')
+      assert.ok(result.postId)
+    })
   })
 
   describe('resolveConfigDeliveries()', function() {

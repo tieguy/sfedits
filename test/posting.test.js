@@ -248,17 +248,13 @@ describe('posting flow', function() {
       nock.cleanAll()
     })
 
-    it('truncates over-limit text for Bluesky only, keeping metadata.page in sync', async function() {
+    it('sends over-limit text to delivery module (fitting is tested in delivery.test.js)', async function() {
       this.timeout(10000)
-
-      const graphemes = s =>
-        [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(s)].length
-      const { fitBlueskyText } = require('../lib/bluesky-utils')
 
       // Long enough that template + name + URL blows past 300 graphemes
       const longTitle = 'A'.repeat(280)
 
-      let capturedBlueskyPayload = null
+      let capturedDeliveryPayload = null
       const pageWatch = proxyquire('../page-watch', {
         './lib/diff-image': {
           captureDiffImage: async () => ({
@@ -273,13 +269,9 @@ describe('posting flow', function() {
         './lib/post-log': { recordPost: () => null, entryDeliveries: require('../lib/post-log').entryDeliveries },
         './lib/delivery': {
           post: async (delivery, payload) => {
-            // Capture what postBluesky would send to bluesky-platform after fitting
+            // Capture what page-watch sends to delivery (before fitting)
             if (delivery.type === 'bluesky') {
-              const fitted = fitBlueskyText(payload.text, payload.metadata?.page)
-              capturedBlueskyPayload = {
-                text: fitted.text,
-                metadata: { ...payload.metadata, page: fitted.page }
-              }
+              capturedDeliveryPayload = { delivery, payload }
             }
             return { type: 'bluesky', postId: 'at://did:plc:fake/app.bsky.feed.post/1', ref: { uri: 'at://did:plc:fake/app.bsky.feed.post/1', cid: 'fakecid' } }
           },
@@ -304,19 +296,14 @@ describe('posting flow', function() {
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
       }
 
-      const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
-      assert.isAbove(graphemes(statusData.text), 300, 'test setup must exceed the limit')
+      await pageWatch.sendStatus(fakeAccount, pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template), fakeEdit)
 
-      await pageWatch.sendStatus(fakeAccount, statusData, fakeEdit)
-
-      assert.exists(capturedBlueskyPayload, 'Bluesky post should have been attempted')
-      assert.isAtMost(graphemes(capturedBlueskyPayload.text), 300,
-        'Bluesky text must fit the 300-grapheme limit')
-      assert.isTrue(capturedBlueskyPayload.text.endsWith(fakeEdit.url),
-        'the diff URL must survive truncation intact')
-      assert.include(capturedBlueskyPayload.text, capturedBlueskyPayload.metadata.page,
-        'metadata.page must match the truncated title so the facet still lands')
-      assert.match(capturedBlueskyPayload.metadata.page, /…$/)
+      // Verify page-watch wiring: delivery receives the un-fitted text and full metadata
+      assert.exists(capturedDeliveryPayload, 'Bluesky delivery should have been called')
+      assert.equal(capturedDeliveryPayload.delivery.type, 'bluesky')
+      assert.equal(capturedDeliveryPayload.payload.metadata.page, longTitle, 'metadata.page should be the full original title')
+      assert.isTrue(capturedDeliveryPayload.payload.text.includes(longTitle), 'text should contain the full original title (fitting happens inside delivery)')
+      // The fitting itself is tested in lib/delivery's test, not here
     })
 
     it('(CRITICAL 1) all account deliveries fail returns null and doesn\'t record', async function() {

@@ -281,27 +281,15 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
           for (const consumer of metadataFiltered) {
             if (!needsContentCheck(consumer.editFilters)) {
               consumersAfterContent.push(consumer)
-              const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-              console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
             } else {
               const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
               console.log(`filtered: ${edit.page} for ${consumerLabel} (cosmetic_only)`)
             }
           }
-        } else {
-          // Not cosmetic: all survivors pass content stage
-          for (const consumer of metadataFiltered) {
-            const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-            console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
-          }
         }
-      } else {
-        // No consumers need content check: all pass trivially
-        for (const consumer of metadataFiltered) {
-          const consumerLabel = consumer.type === 'subscription' ? `sub:${consumer.id}` : consumer.subType
-          console.log(`filter-pass: ${edit.page} for ${consumerLabel}`)
-        }
+        // If content is not cosmetic, all metadataFiltered consumers survive (already logged at metadata stage)
       }
+      // If no content check needed, all metadataFiltered consumers survive (already logged at metadata stage)
 
       // Early return if no consumers remain after content filtering
       if (consumersAfterContent.length === 0) {

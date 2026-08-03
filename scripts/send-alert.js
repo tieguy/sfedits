@@ -5,9 +5,10 @@
  *
  * Usage: node send-alert.js "your alert message"
  *
- * Reads credentials the same way the bot does (lib/config.js): an explicit
- * CONFIG_PATH wins, then the SFEDITS_CONFIG environment variable — the only
- * source that exists inside Toolforge job containers — then ./config.json.
+ * Reads credentials the same way the bot does (lib/config.js):
+ * 1. config.base.json + SFEDITS_* secret env vars (if config.base.json exists)
+ * 2. SFEDITS_CONFIG env var (fallback when config.base.json is absent)
+ * 3. ./config.json (local override, merged with base)
  */
 
 var https = require('https')
@@ -22,7 +23,7 @@ if (!message) {
 
 var rawConfig
 try {
-  rawConfig = loadConfig({ path: process.env.CONFIG_PATH || null })
+  rawConfig = loadConfig()
 } catch (err) {
   console.error('Failed to read config:', err.message)
   process.exit(1)
