@@ -226,12 +226,23 @@ describe('posting flow', function() {
   })
 
   describe('sendStatus() integration test', function() {
+    // One temp dir per suite (LUI-119): per-process so concurrent runs in one
+    // worktree can't delete each other's fixtures, removed wholesale in after().
+    let tmpDir
     let fakeScreenshotPath
+    let fakeScreenshotPath2 = null
+
+    before(function() {
+      tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-'))
+    })
+
+    after(function() {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    })
 
     beforeEach(function() {
       // Create a fake screenshot file for the test
-      // Per-process temp path (LUI-119): no fixed __dirname fixture files.
-      fakeScreenshotPath = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'fake-screenshot.png')
+      fakeScreenshotPath = path.join(tmpDir, 'fake-screenshot.png')
       fs.writeFileSync(fakeScreenshotPath, 'fake image data')
     })
 
@@ -240,11 +251,11 @@ describe('posting flow', function() {
       if (fs.existsSync(fakeScreenshotPath)) {
         fs.unlinkSync(fakeScreenshotPath)
       }
-      // Also clean up any fakeScreenshotPath2 files from test 3t
-      const fakeScreenshotPath2 = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'fake-screenshot2.png')
-      if (fs.existsSync(fakeScreenshotPath2)) {
+      // And test 3t's second screenshot, when that test ran
+      if (fakeScreenshotPath2 && fs.existsSync(fakeScreenshotPath2)) {
         fs.unlinkSync(fakeScreenshotPath2)
       }
+      fakeScreenshotPath2 = null
 
       nock.cleanAll()
     })
@@ -1038,8 +1049,9 @@ describe('posting flow', function() {
     it('(Task 3t) template override: non-collapsed applies override, collapsed skips it', async function() {
       this.timeout(10000)
 
-      // Create second screenshot file for the second test case
-      const fakeScreenshotPath2 = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'fake-screenshot2.png')
+      // Second screenshot for the second test case, in the suite's tmpDir
+      // (assigned to the describe-scoped variable so afterEach can clean up)
+      fakeScreenshotPath2 = path.join(tmpDir, 'fake-screenshot2.png')
       fs.writeFileSync(fakeScreenshotPath2, 'fake image data 2')
 
       let screenshotIndex = 0

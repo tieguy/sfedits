@@ -187,8 +187,11 @@ toolforge build show                 # watch until it reports success
 The buildpack reads `Procfile` for `web` and `bot`, and `engines.node` from
 `package.json` (now `>=22` — http-cookie-agent@8's own engines floor;
 `.node-version` pins 22). Diff rendering uses only satori and resvg (no Chromium
-fetched). The `Dockerfile` in the repo is **not** used by the build service — it
-is for local container runs only.
+fetched). The build service uses buildpacks only — the old `Dockerfile` (never
+read by it) was removed with the rest of the droplet deployment on 2026-08-03.
+`scripts/healthcheck.sh` stays: `toolforge-jobs.yaml` reserves a (disabled)
+healthcheck job for it, though its `docker ps` check is droplet residue that
+needs replacing before that job is enabled.
 
 ## 5. Migrate the database
 

@@ -1,5 +1,5 @@
 {
- "source": "OSM relation 1643367 (Yosemite National Park), Overpass out geom, captured 2026-08-03, interiors thinned to 3 points per way (endpoints exact — the stitch topology is what matters)",
+ "source": "OSM relation 1643367 (Yosemite National Park), Overpass out geom, captured 2026-08-03. Interiors thinned to at most one midpoint per way (endpoints exact - the stitch topology is what matters); 10 of the 40 ways had no interior points to begin with.",
  "ways": [
   {
    "type": "way",

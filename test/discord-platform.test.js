@@ -4,7 +4,7 @@
  * Tests webhook posting and Discord markdown text formatting.
  */
 
-const { describe, it, beforeEach, afterEach } = require('mocha')
+const { describe, it, before, beforeEach, after, afterEach } = require('mocha')
 const { assert } = require('chai')
 const nock = require('nock')
 const fs = require('fs')
@@ -17,11 +17,21 @@ const { buildDiscordText } = discordPlatform
 describe('discord-platform', function() {
   this.timeout(5000)
 
+  // One temp dir per suite (LUI-119): per-process so concurrent runs in
+  // one worktree can't delete each other's fixtures.
+  let tmpDir
   let testScreenshot
 
+  before(function() {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-'))
+  })
+
+  after(function() {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
   beforeEach(function() {
-    // Per-process temp path (LUI-119): no fixed __dirname fixture files.
-    testScreenshot = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'screenshot.png')
+    testScreenshot = path.join(tmpDir, 'screenshot.png')
     fs.writeFileSync(testScreenshot, 'fake image data')
   })
 

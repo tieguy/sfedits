@@ -6,7 +6,7 @@
  * ~100 lines of duplicated code across page-watch.js and admin/server.js.
  */
 
-const { describe, it, beforeEach, afterEach } = require('mocha')
+const { describe, it, before, beforeEach, after, afterEach } = require('mocha')
 const { assert } = require('chai')
 const nock = require('nock')
 const fs = require('fs')
@@ -19,13 +19,21 @@ describe('Platform Modules', function() {
 
   let blueskyPlatform
   let mastodonPlatform
+  // One temp dir per suite (LUI-119): per-process so concurrent runs in
+  // one worktree can't delete each other's fixtures.
+  let tmpDir
   let testScreenshot
 
+  before(function() {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-'))
+  })
+
+  after(function() {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
   beforeEach(function() {
-    // Create a fake screenshot file for testing
-    // Per-process temp path: fixed __dirname paths made two concurrent
-    // runs in one worktree delete each other's fixtures (LUI-119).
-    testScreenshot = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'sfedits-test-')), 'screenshot.png')
+    testScreenshot = path.join(tmpDir, 'screenshot.png')
     fs.writeFileSync(testScreenshot, 'fake image data')
 
     // Load modules fresh for each test

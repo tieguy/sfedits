@@ -83,7 +83,34 @@ describe('osm-boundary', function() {
     assert.equal(polygon.geometry.type, 'Polygon')
     const ring = polygon.geometry.coordinates[0]
     assert.deepEqual(ring[0], ring[ring.length - 1], 'all 40 ways close into one ring')
-    assert.isAbove(ring.length, 40, 'ring carries the stitched geometry')
+    // 110 fixture points - 40 shared junction duplicates + 1 closing point.
+    // Exact count catches a reintroduced duplicate node, not just non-closure.
+    assert.equal(ring.length, 71, 'every junction node appears exactly once')
+  })
+
+  it('stitches inner-ring holes through the same prepend orientations (LUI-102)', async function() {
+    // Holes share stitchRings with outer rings, so the orientation fix must
+    // hold there too: the inner triangle's way B forces the forward prepend.
+    nock(OVERPASS).post('/api/interpreter').reply(200, {
+      elements: [{
+        type: 'relation', id: 3,
+        members: [
+          { type: 'way', role: 'outer', geometry: [
+            { lat: -10, lon: -10 }, { lat: -10, lon: 10 }, { lat: 10, lon: 10 },
+            { lat: 10, lon: -10 }, { lat: -10, lon: -10 }] },
+          // Inner triangle, split into three ways ordered to force a prepend
+          { type: 'way', role: 'inner', geometry: [{ lat: 1, lon: 0 }, { lat: 0, lon: 1 }] },
+          { type: 'way', role: 'inner', geometry: [{ lat: 0, lon: 0 }, { lat: 1, lon: 0 }] },
+          { type: 'way', role: 'inner', geometry: [{ lat: 0, lon: 1 }, { lat: 0, lon: 0 }] }
+        ]
+      }]
+    })
+
+    const polygon = await fetchBoundary('3')
+    assert.equal(polygon.geometry.coordinates.length, 2, 'outer ring + one hole')
+    const hole = polygon.geometry.coordinates[1]
+    assert.deepEqual(hole[0], hole[hole.length - 1], 'hole closes')
+    assert.equal(hole.length, 4, 'triangle hole: 3 corners + closing point')
   })
 
   it('stitches multiple outer ways into a single closed ring', async function() {
