@@ -1,6 +1,6 @@
 # Importance ranking: methodology, experiments, and conclusions
 
-Last verified: 2026-08-12
+Last verified: 2026-08-13
 
 This document records how the SFBA importance-ranking metric was evaluated and
 rebuilt, what was measured, what was rejected and why. It exists so that the
@@ -728,6 +728,45 @@ globally famous, this one demotes the locally central. Either sign, the ratio on
 moves articles along the fame axis. Improving label agreement by that mechanism is
 the §3.1 illegitimate use, so the +0.008 counts against adoption, not for it.
 
+### 6.11 Sitelink count — MEASURED, NOT ADOPTED
+
+The WP 1.0 SelectionBot's heaviest-weighted signal (§12): the number of Wikipedia
+language editions with an article on the item. Tested 2026-08-13 — one SQL pass
+over `wb_items_per_site` on the wikidatawiki replica, 11,731 rated items with
+QIDs matched.
+
+| Measure | Value |
+|---|---|
+| standalone r vs human tier (log) | **0.348** — real signal, not noise |
+| incremental R² over log-canonical | **+0.012** — largest of any tested addition |
+| fitted coefficient | +0.175 (positive) |
+| collinearity with log-canonical | r = 0.478 |
+
+Unlike `prop_proj_inlinks` this is not noise-plus-fame — but the per-article churn
+is mixed in a way the aggregate hides, and the wrong direction dominates at the
+top. Blended at fitted weights, out of the top 100: **Board of Supervisors
+(#23→#67), Mayor of San Francisco (#81→#155), Muni, AC Transit, SF Examiner
+(Top-rated), Mission District**. In: **YouTube at #26**, Netflix, Yahoo. Civic
+infrastructure cannot have 200 language editions; consumer-tech brands cannot not.
+
+The tempting rescue — "it fixes the underrated-biographies class (§6.8)" — was
+suggested by individual movers (Steve Jobs #203→#81, Kamala Harris #166→#78,
+Ginsberg, Feinstein) and then tested: the incremental gain is *smaller* within
+biographies (+0.007, n=3,571) than outside them (+0.012, n=8,160). Sitelinks are
+a general global-notability axis, not a bio-specific correction.
+
+**Decision: not adopted as a blend component** — the churn moves the watchlist
+away from the region's civic core, which is the §6.7/§6.10 failure with better
+statistics. Two honest complications, recorded per §1's measured/decided split:
+
+1. The task force's own Top criterion includes "widely famous worldwide" (§2.1),
+   so global fame is *partially constitutive* of Top by the written criteria. A
+   future Top/High boundary discussion could legitimately consult sitelinks even
+   though the ranking should not blend them.
+2. Some churn is genuinely corrective (junk lists drop hard: List of watercourses
+   #76→#257; several plausibly-underrated bios rise). If class calibration (§6.8)
+   is ever validated, sitelinks-within-class is the first candidate to re-test.
+
 ---
 
 ## 7. The selection effect, and the correction
@@ -978,6 +1017,7 @@ Analysis artifacts preserved in `data/reassess/analysis/` (gitignored, like all 
 | `leadlinks.json` | lead-section inlink counts | wikitext crawl, pre-first-heading |
 | `resid.json`, `lift.json` | class residuals and lift | derived |
 | `denoms-all.json` | total mainspace inlinks for all rated titles (§6.10 denominator) | one batched SQL pass over enwiki Wiki Replicas `pagelinks`⋈`linktarget`, 2026-08-12 |
+| `sitelinks.json` | sitelink count per rated QID (§6.11) | one SQL pass over wikidatawiki replica `wb_items_per_site`, 2026-08-13 |
 
 In `data/reassess/` proper: `links-prose.json` (cohort-internal prose links) and
 `links-prose-all.json` (all 274,179 prose link targets — the unfiltered version,
@@ -1043,11 +1083,10 @@ are the academic precedent most likely to be cited at us.
 `50·log₁₀(views) + 100·log₁₀(inlinks) + 250·log₁₀(interwiki)`, redirects folded
 in, truncated-mean views. Three ideas of note: log-scaling (we now use it — the
 r=0.520/0.527 baseline is on log-canonical), redirect folding (independently
-arrived at, §4), and **interwiki/sitelink count at the heaviest weight — the one
-signal from this whole search we have not measured**. Distinct from the rejected
-class taxonomy (§6.9): sitelinks count independent language communities choosing
-to cover the topic. Candidate for a future stage; expected to be another fame
-proxy, but that's a prediction, not a measurement.
+arrived at, §4), and **interwiki/sitelink count at the heaviest weight**. Distinct
+from the rejected class taxonomy (§6.9): sitelinks count independent language
+communities choosing to cover the topic. Measured 2026-08-13 and not adopted —
+real signal, wrong churn; see §6.11.
 
 **CycleRank** (Consonni et al. 2020) — relevance-to-one-reference-node via short
 cycles; requires articles to link *back* toward the reference. Not applicable:
