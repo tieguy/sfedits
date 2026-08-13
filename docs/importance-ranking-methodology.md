@@ -1,6 +1,6 @@
 # Importance ranking: methodology, experiments, and conclusions
 
-Last verified: 2026-07-30
+Last verified: 2026-08-12
 
 This document records how the SFBA importance-ranking metric was evaluated and
 rebuilt, what was measured, what was rejected and why. It exists so that the
@@ -691,6 +691,43 @@ mechanically (4,364 humans, 981 companies, 933 sports seasons, 403 nonprofits,
 ~20 named classes, no `P279*` subclass traversal. Proper traversal would score
 higher; unmeasured.
 
+### 6.10 `prop_proj_inlinks` — local share of total inlinks — REJECTED
+
+The strongest importable feature from Warncke-Wang's WMF importance classifier
+(§12): the proportion of an article's inlinks that come from within the project
+cohort. Tested 2026-08-12 with canonical prose inlinks as numerator and total
+mainspace inlinks (Wiki Replicas `pagelinks`, one SQL pass, 11,743 of 11,803 rated
+titles matched) as denominator; 116 rows dropped where crawl-vs-live title drift
+made the ratio exceed 1.
+
+| Measure | Value |
+|---|---|
+| standalone r vs human tier | **0.024** (noise; canonical inlinks: 0.526) |
+| incremental R² over log-canonical | **+0.008** |
+| fitted coefficient | **−0.242** — negative |
+
+The negative coefficient is the finding. Once local inlinks are in the model, the
+ratio's only new information is its *denominator*: at fixed local count, high share
+⇔ small total ⇔ globally obscure. The feature is an inverted fame signal, and the
+regression flips it to agree with the labels' fame bias (`log(total)` standalone
+correlates 0.365). In Warncke-Wang's model the same feature was how *locality*
+entered, because his other features were global percentiles; with locality as the
+baseline, it can only smuggle fame back in.
+
+Top-N churn confirms the mechanism — small (4/50, 6/100) but uniformly wrong:
+
+- **out of the top 100:** East Bay (Top), SF Municipal Railway (Top), Mission
+  District, Golden Gate Park, Financial District, Market Street, and **Napa Valley
+  AVA — Top-rated, share 0.90, #65 → #173**. The most regionally-constituted
+  articles are exactly the ones with no fame denominator to reward.
+- **in:** YouTube (share 0.003), Android, **Netflix** — the §3.1 example of a
+  fame-corrupted label — Yahoo.
+
+Same family as §6.7 (`significanceTH`), mirrored: that variant demoted the
+globally famous, this one demotes the locally central. Either sign, the ratio only
+moves articles along the fame axis. Improving label agreement by that mechanism is
+the §3.1 illegitimate use, so the +0.008 counts against adoption, not for it.
+
 ---
 
 ## 7. The selection effect, and the correction
@@ -940,6 +977,7 @@ Analysis artifacts preserved in `data/reassess/analysis/` (gitignored, like all 
 | `pvall.json` | annual pageviews (7,600, partial) | REST pageviews API |
 | `leadlinks.json` | lead-section inlink counts | wikitext crawl, pre-first-heading |
 | `resid.json`, `lift.json` | class residuals and lift | derived |
+| `denoms-all.json` | total mainspace inlinks for all rated titles (§6.10 denominator) | one batched SQL pass over enwiki Wiki Replicas `pagelinks`⋈`linktarget`, 2026-08-12 |
 
 In `data/reassess/` proper: `links-prose.json` (cohort-internal prose links) and
 `links-prose-all.json` (all 274,179 prose link targets — the unfiltered version,
@@ -976,3 +1014,59 @@ the code should live:
 - the **full-pool ranking** across all 29,935 articles
 - **class calibration** (see §6.8 — not validated)
 - the **link-gap worklist** (§9.3)
+
+---
+
+## 12. Related work (literature search, 2026-08-12)
+
+Searched so the on-wiki proposal discussion doesn't surprise us, and so nothing
+here gets rebuilt from a paper that already failed our measurements. Claims below
+were verified against primary sources (papers and live wiki pages), not search
+summaries.
+
+**Closest peer — Warncke-Wang et al., WMF "Automated classification of article
+importance" (2017).** [Meta page](https://meta.wikimedia.org/wiki/Research:Automated_classification_of_article_importance),
+MIT-licensed code at [nettrom/importance](https://github.com/nettrom/importance).
+A GBM predicting WikiProject importance labels, including per-project, from five
+features: view-rank percentile, inlink-rank percentile, `prop_proj_inlinks`,
+clickstream share from articles, active-inlink share. Direct adoption was evaluated
+and declined: the code is abandoned (last commit 2017-08, imports removed sklearn
+APIs, pipeline assumes 2017 WMF infra), it uses *raw* inlinks (no prose filter),
+and — decisively — it optimizes agreement with the labels, which is §3.1's
+illegitimate use. Its one importable feature was measured and rejected (§6.10).
+Its companion pages ([Measuring article importance](https://meta.wikimedia.org/wiki/Research:Measuring_article_importance),
+[Studies of Importance](https://meta.wikimedia.org/wiki/Research:Studies_of_Importance))
+are the academic precedent most likely to be cited at us.
+
+**WP 1.0 SelectionBot** ([Article selection](https://en.wikipedia.org/wiki/Wikipedia:Version_1.0_Editorial_Team/Article_selection))
+— the longest-deployed automated importance score:
+`50·log₁₀(views) + 100·log₁₀(inlinks) + 250·log₁₀(interwiki)`, redirects folded
+in, truncated-mean views. Three ideas of note: log-scaling (we now use it — the
+r=0.520/0.527 baseline is on log-canonical), redirect folding (independently
+arrived at, §4), and **interwiki/sitelink count at the heaviest weight — the one
+signal from this whole search we have not measured**. Distinct from the rejected
+class taxonomy (§6.9): sitelinks count independent language communities choosing
+to cover the topic. Candidate for a future stage; expected to be another fame
+proxy, but that's a prediction, not a measurement.
+
+**CycleRank** (Consonni et al. 2020) — relevance-to-one-reference-node via short
+cycles; requires articles to link *back* toward the reference. Not applicable:
+our universe construction already does the topical-relevance job with Wikidata
+evidence, and the bidirectional requirement would zero out exactly the classes
+§6.8 shows are underlinked outward (45% of bios score zero on lead). Useful only
+as a citable demonstration that plain PageRank's top-10 is fame (United States,
+WWII) regardless of topic.
+
+**Independent confirmations, useful as citations:** WikiLinkGraphs (Consonni et
+al. 2019) measured that a majority of raw wikilinks are template-generated —
+external corroboration of our 77% navbox figure (§4). An entity-linking study
+(arXiv:1712.00044) found plain degree centrality beating PageRank/betweenness on
+subgraphs — "inlink count is not naive" has published support. Kiwix abandoned
+manual selection for a PageRank-like tool (noted on the WMF importance page) —
+precedent for replacing hand ratings with a measured score.
+
+**Not pursued:** Wulczyn et al. 2016 (missing-article recommendation — different
+problem), clickstream navigation signals (now a
+[public dump](https://dumps.wikimedia.org/other/clickstream/) if ever wanted),
+position-weighted links (Thalhammer & Rettinger 2016 — the graded cousin of the
+lead-only variant §6.4 already rejected).
