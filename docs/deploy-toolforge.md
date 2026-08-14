@@ -371,7 +371,8 @@ Look for these lines in the bot log:
 - `✓ Watchlist sync: N articles from "…"` (proves config was loaded)
 - `filtered:` / `filter-pass:` lines (proves edit filters are working)
 
-Observe one real Discord post (the deployed account is Discord-only).
+Observe one real Discord post AND one real Mastodon post
+(@SFedits@sfba.social) — the deployed account delivers to both.
 
 **Caution (LUI-109):** Watch for `✓ Watchlist sync: 0 articles` or a failed sync — it means the bot came up while the webservice (which serves its watchlist) was unreachable, and the bot will watch nothing for `refresh_hours` (24h). As of LUI-115, `autoupdate` restarts the webservice **before** the bot and waits twice, each bounded by `SFEDITS_WEB_WAIT_TIMEOUT` (default 120s, so worst case ~2×): first for a genuinely **new** webservice pod to report Ready (pod-UID tracking via the k8s API — a URL probe alone can be answered by the old, dying pod), then for the watchlist URL itself to answer. So this should no longer happen on automated deploys — but the probe timing out is alerted, not fatal, so still check the sync line. Manual remedy if it does occur: restart the webservice **first** (`toolforge webservice buildservice restart`), then the bot (`toolforge jobs restart bot`), then re-check the sync line.
 
