@@ -356,6 +356,12 @@ successfully.
 toolforge envvars delete SFEDITS_CONFIG
 ```
 
+**Warning:** `envvars delete` asks for confirmation and then **prints the full
+deleted value to the terminal** ("here is its last value"). That value contains
+the webhook URL and access token — treat the terminal scrollback (and anything
+logging it) as having seen those secrets, and rotate them if the session was
+shared or recorded.
+
 **4. Verify the deploy:**
 
 ```bash
