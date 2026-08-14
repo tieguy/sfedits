@@ -365,8 +365,9 @@ shared or recorded.
 **4. Verify the deploy:**
 
 ```bash
-# Check that /changelog shows the new SHA
-curl -s https://san-francisco-edit-stream.toolforge.org/changelog | jq '.deploys[0]'
+# Check that the changelog shows the new SHA (/changelog is the HTML view;
+# the deploys array is append-ordered, so the newest deploy is LAST)
+curl -s https://san-francisco-edit-stream.toolforge.org/changelog.json | jq '.deploys[-1]'
 
 # Check web and bot logs
 toolforge webservice buildservice logs      # should show recent restarts
