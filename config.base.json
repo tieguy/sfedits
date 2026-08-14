@@ -22,9 +22,13 @@
         "instance": "https://sfba.social",
         "visibility": "unlisted"
       },
+      "bluesky": {
+        "identifier": "top500.thebay.wiki"
+      },
       "deliveries": [
         { "type": "discord", "edit_filters": { "bots": false, "minor": false } },
-        { "type": "mastodon", "edit_filters": { "bots": false, "minor": false } }
+        { "type": "mastodon", "edit_filters": { "bots": false, "minor": false } },
+        { "type": "bluesky", "edit_filters": { "bots": false, "minor": false } }
       ],
       "wikidata_claims": {
         "properties": ["P19", "P20", "P131", "P159", "P276", "P937", "P39"],
