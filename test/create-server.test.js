@@ -123,6 +123,8 @@ describe('create web flow', function() {
             }]
           }
         })
+        // ...and the P159/P276/P39 membership queries come back empty.
+        nock(WDQS).post('/sparql').times(3).reply(200, { results: { bindings: [] } })
 
         const res = await postForm(base, '/api/create', {
           invite_code: 'alpha',

@@ -258,6 +258,15 @@ describe('reassess', function() {
       assert.equal(out.filter(x => x.title === 'Oakland, California').length, 1)
       assert.isTrue(out.find(x => x.title === 'Oakland, California').tagged)
     })
+
+    it('shares the is-here property set with lib/region, not a copy', function() {
+      // The universe rule and the place-bot membership rule are one decision.
+      // strictEqual proves both consumers hold the SAME array, so they cannot
+      // drift apart the way two hand-maintained copies would.
+      const { IS_HERE_PROPERTIES: fromScript } = require('../scripts/reassess')
+      const { IS_HERE_PROPERTIES: fromLib } = require('../lib/region')
+      assert.strictEqual(fromScript, fromLib)
+    })
   })
 
   describe('assignTiers', function() {

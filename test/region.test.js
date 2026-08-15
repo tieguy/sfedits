@@ -2,7 +2,10 @@ const { assert } = require('chai')
 const { describe, it, afterEach } = require('mocha')
 const nock = require('nock')
 
-const { resolveRegion, articlesByAdmin, parsePoint, ADMIN_CLASSES, assertQid, assertLang } = require('../lib/region')
+const {
+  resolveRegion, articlesByAdmin, parsePoint, ADMIN_CLASSES, assertQid, assertLang,
+  memberPattern, IS_HERE_PROPERTIES
+} = require('../lib/region')
 
 const WDQS = 'https://query.wikidata.org'
 
@@ -353,7 +356,114 @@ describe('region', function() {
     })
   })
 
+  describe('memberPattern', function() {
+    it('builds the located-in closure pattern for P131', function() {
+      const pattern = memberPattern('P131', 'Q717')
+      assert.match(pattern, /\?item wdt:P131\* wd:Q717/)
+    })
+
+    it('builds the pointer-property pattern for a property like P159', function() {
+      const pattern = memberPattern('P159', 'Q717')
+      assert.match(pattern, /\?item wdt:P159 \?place/)
+      assert.match(pattern, /\?place wdt:P131\* wd:Q717/)
+    })
+
+    it('builds the office-jurisdiction union for P39', function() {
+      const pattern = memberPattern('P39', 'Q717')
+      assert.match(pattern, /\?item wdt:P39 \?pos/)
+      assert.match(pattern, /\?pos wdt:P1001 wd:Q717/)
+      assert.match(pattern, /UNION/)
+      assert.match(pattern, /\?j wdt:P131\+ wd:Q717 . \?pos wdt:P1001 \?j/)
+    })
+
+    it('validates the anchor QID', function() {
+      assert.throws(() => memberPattern('P131', 'Q0abc'), /QID/)
+    })
+
+    it('rejects a malformed property id', function() {
+      assert.throws(() => memberPattern('P131 } UNION { ?x ?y ?z', 'Q717'), /[Pp]roperty/)
+    })
+
+    it('exports the vetted is-here property set', function() {
+      assert.deepEqual(IS_HERE_PROPERTIES, ['P131', 'P159', 'P276', 'P39'])
+    })
+  })
+
   describe('articlesByAdmin', function() {
+    it('defaults to one anchored query per is-here property, deduplicated', async function() {
+      // The membership rule is the reassess universe rule: located in the
+      // region (P131*), headquartered (P159) or located (P276) there, or
+      // holding an office whose jurisdiction is there (P39). One serial query
+      // per property - Wikimedia etiquette forbids fan-out, and anchored
+      // single-property queries are the shape WDQS handles without timeouts.
+      const sent = []
+      const capture = body => { sent.push(body.query); return true }
+      nock(WDQS)
+        .post('/sparql', capture).reply(200, bindings([
+          {
+            item: entity('Q10'), cls: entity('Q515'),
+            article: { value: 'https://es.wikipedia.org/wiki/Caracas' },
+            lang: { value: 'es' }
+          }
+        ]))
+        .post('/sparql', capture).reply(200, bindings([
+          {
+            item: entity('Q20'), cls: entity('Q4830453'),
+            article: { value: 'https://es.wikipedia.org/wiki/PDVSA' },
+            lang: { value: 'es' }
+          }
+        ]))
+        .post('/sparql', capture).reply(200, bindings([
+          // P276 returns an article P131 already found: dedup keeps one row.
+          {
+            item: entity('Q10'), cls: entity('Q515'),
+            article: { value: 'https://es.wikipedia.org/wiki/Caracas' },
+            lang: { value: 'es' }
+          }
+        ]))
+        .post('/sparql', capture).reply(200, bindings([
+          {
+            item: entity('Q30'), cls: entity('Q5'),
+            article: { value: 'https://es.wikipedia.org/wiki/Presidenta' },
+            lang: { value: 'es' }
+          }
+        ]))
+
+      const articles = await articlesByAdmin(
+        { qid: 'Q717', label: 'Venezuela', strategy: 'admin' },
+        { languages: ['es'] })
+
+      assert.equal(sent.length, 4, 'one query per is-here property')
+      assert.include(sent[0], 'wdt:P131* wd:Q717')
+      assert.include(sent[1], 'wdt:P159 ?place')
+      assert.include(sent[2], 'wdt:P276 ?place')
+      assert.include(sent[3], 'wdt:P39 ?pos')
+      for (const query of sent) {
+        assert.include(query, 'wd:Q717', 'every query is anchored at the region')
+      }
+
+      assert.equal(articles.length, 3, 'Caracas found twice is returned once')
+      const bySource = Object.fromEntries(articles.map(a => [a.title, a.source]))
+      assert.equal(bySource.Caracas, 'admin', 'P131 membership keeps the admin source tag')
+      assert.equal(bySource.PDVSA, 'P159')
+      assert.equal(bySource.Presidenta, 'P39')
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('queries only the requested properties when the option is given', async function() {
+      const sent = []
+      nock(WDQS).post('/sparql', body => { sent.push(body.query); return true })
+        .reply(200, bindings([]))
+
+      const articles = await articlesByAdmin(
+        { qid: 'Q717', strategy: 'admin' },
+        { languages: ['es'], properties: ['P131'] })
+
+      assert.equal(sent.length, 1, 'a pinned property list overrides the default')
+      assert.deepEqual(articles, [])
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
     it('returns article rows from a single unchunked query anchored at the region', async function() {
       const sent = []
       nock(WDQS).post('/sparql', body => { sent.push(body.query); return true }).reply(200, bindings([
@@ -373,7 +483,7 @@ describe('region', function() {
 
       const articles = await articlesByAdmin(
         { qid: 'Q664', label: 'New Zealand', strategy: 'admin' },
-        { languages: ['en', 'es'] })
+        { languages: ['en', 'es'], properties: ['P131'] })
 
       assert.equal(sent.length, 1, 'exactly one query - no per-sub-entity chunking')
       assert.include(sent[0], 'wd:Q664', 'the closure is anchored at the region itself')
@@ -402,7 +512,7 @@ describe('region', function() {
       ]))
 
       const articles = await articlesByAdmin(
-        { qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
+        { qid: 'Q62', strategy: 'admin' }, { languages: ['en'], properties: ['P131'] })
 
       assert.equal(articles[0].title, 'Café du Nord')
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
@@ -418,7 +528,7 @@ describe('region', function() {
       nock(WDQS).post('/sparql').reply(200, bindings([dupe, dupe]))
 
       const articles = await articlesByAdmin(
-        { qid: 'Q62', strategy: 'admin' }, { languages: ['en'] })
+        { qid: 'Q62', strategy: 'admin' }, { languages: ['en'], properties: ['P131'] })
 
       assert.equal(articles.length, 1)
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
@@ -437,7 +547,7 @@ describe('region', function() {
       ]))
 
       const articles = await articlesByAdmin(
-        { qid: 'Q1917571', strategy: 'admin' })
+        { qid: 'Q1917571', strategy: 'admin' }, { properties: ['P131'] })
 
       assert.equal(articles.length, 1)
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
@@ -460,7 +570,7 @@ describe('region', function() {
       ]))
 
       const articles = await articlesByAdmin(
-        { qid: 'Q1917571', strategy: 'admin' }, { languages: ['en'] })
+        { qid: 'Q1917571', strategy: 'admin' }, { languages: ['en'], properties: ['P131'] })
 
       // Only the good sitelink should be returned; the malformed one should be skipped
       assert.equal(articles.length, 1)
@@ -765,7 +875,8 @@ describe('region', function() {
       nock(WDQS).post('/sparql').reply(200, bindings([
         { cls: entity('Q62049'), label: { value: 'San Francisco' } }
       ]))
-      // closure (single unchunked query - no sub-entity discovery)
+      // membership: one query per is-here property (P131 finds Alpha, the
+      // pointer and office queries come back empty here)
       nock(WDQS).post('/sparql').reply(200, bindings([
         {
           item: entity('Q10'), cls: entity('Q515'),
@@ -773,6 +884,7 @@ describe('region', function() {
           lang: { value: 'en' }
         }
       ]))
+      nock(WDQS).post('/sparql').times(3).reply(200, bindings([]))
 
       const result = await articlesForRegion('Q62', { languages: ['en'] })
 
@@ -1018,7 +1130,8 @@ describe('region', function() {
         { cls: entity('Q515'), lang: { value: 'es' }, count: { value: '30' } }
       ]))
 
-      const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' })
+      const histogram = await regionHistogram(
+        { qid: 'Q62', strategy: 'admin' }, { properties: ['P131'] })
 
       assert.equal(sent.length, 1, 'exactly one query - no per-sub-entity chunking')
       assert.include(sent[0], 'wd:Q62', 'the histogram is anchored at the region itself')
@@ -1039,12 +1152,44 @@ describe('region', function() {
         { cls: entity('Q5'), lang: { value: 'en' }, count: { value: '7' } }
       ]))
 
-      const histogram = await regionHistogram({ qid: 'Q62', strategy: 'admin' })
+      const histogram = await regionHistogram(
+        { qid: 'Q62', strategy: 'admin' }, { properties: ['P131'] })
 
       assert.equal(histogram.cells.length, 2, 'Q515/en must appear as ONE merged cell')
       const q515 = histogram.cells.find(c => c.cls === 'Q515' && c.lang === 'en')
       assert.equal(q515.count, 150, '120 + 30 summed, not overwritten')
       assert.equal(histogram.total, 157)
+      assert.isFalse(histogram.partial)
+      assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
+    })
+
+    it('aggregates every is-here property and merges the cells', async function() {
+      // The estimate must widen with membership: if articlesByAdmin includes
+      // office holders and headquartered orgs, the create-form count has to
+      // count them too, or the max_articles gate undercounts. Overlap between
+      // properties makes this an over-estimate; the dry run stays the truth.
+      const sent = []
+      const capture = body => { sent.push(body.query); return true }
+      nock(WDQS)
+        .post('/sparql', capture).reply(200, bindings([
+          { cls: entity('Q515'), lang: { value: 'es' }, count: { value: '100' } }
+        ]))
+        .post('/sparql', capture).reply(200, bindings([
+          { cls: entity('Q4830453'), lang: { value: 'es' }, count: { value: '20' } }
+        ]))
+        .post('/sparql', capture).reply(200, bindings([
+          { cls: entity('Q515'), lang: { value: 'es' }, count: { value: '5' } }
+        ]))
+        .post('/sparql', capture).reply(200, bindings([
+          { cls: entity('Q5'), lang: { value: 'es' }, count: { value: '40' } }
+        ]))
+
+      const histogram = await regionHistogram({ qid: 'Q717', strategy: 'admin' })
+
+      assert.equal(sent.length, 4, 'one aggregation per is-here property')
+      const q515 = histogram.cells.find(c => c.cls === 'Q515' && c.lang === 'es')
+      assert.equal(q515.count, 105, 'cells for the same (cls, lang) merge across properties')
+      assert.equal(histogram.total, 165)
       assert.isFalse(histogram.partial)
       assert.isTrue(nock.isDone(), 'all mocked SPARQL requests were consumed')
     })

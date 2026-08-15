@@ -29,6 +29,7 @@ const {
   api, batches, EN_API, WD_API, PROJECT
 } = require('./reassess')
 const { sparqlRows, isRetryable } = require('../lib/sparql')
+const { memberPattern } = require('../lib/region')
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'reassess')
 const COUNTIES = ['Q62', 'Q107146', 'Q108058', 'Q108117', 'Q108137',
@@ -76,14 +77,24 @@ async function sparqlRowsWithRetry(query, maxAttempts = 5, retryDelayMs = 5000) 
 // ----------------------------------------------------------------- stages
 
 /**
+ * One candidate query: enwiki title projection over the shared membership
+ * pattern (lib/region.js memberPattern - the same patterns the place-bot
+ * platform matches topics with).
+ */
+function candidateQuery(via, county) {
+  return `SELECT DISTINCT ?item ?title WHERE {
+      ${memberPattern(via, county)}
+      ?article schema:about ?item ;
+      schema:isPartOf <https://en.wikipedia.org/> ; schema:name ?title . }`
+}
+
+/**
  * Enwiki articles for Bay-Area-connected items, minus the cohort.
  * Anchored per-county queries only - the unanchored nine-county union
  * times out on WDQS (learned the hard way in the claim-watch work).
  */
 async function stageCandidates() {
   const cohortTitles = new Set(requireMain('cohort').map(a => a.title))
-  const sitelink = `?article schema:about ?item ;
-      schema:isPartOf <https://en.wikipedia.org/> ; schema:name ?title .`
   const found = new Map() // title -> {qid, via:Set}
 
   function add(rows, via) {
@@ -99,26 +110,13 @@ async function stageCandidates() {
   let n = 0
   const total = COUNTIES.length * (PROPERTIES.length + 2)
   for (const county of COUNTIES) {
-    // the places themselves (with retry: old loop absorbed up to 5 failures)
-    add(await sparqlRowsWithRetry(`SELECT DISTINCT ?item ?title WHERE {
-      ?item wdt:P131+ wd:${county} . ${sitelink} }`), 'P131')
-    process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
-    // items pointing at those places (with retry)
-    for (const prop of PROPERTIES) {
-      add(await sparqlRowsWithRetry(`SELECT DISTINCT ?item ?title WHERE {
-        ?item wdt:${prop} ?place .
-        ?place wdt:P131* wd:${county} . ${sitelink} }`), prop)
+    // the places themselves, items pointing at them, and holders of offices
+    // with Bay Area jurisdiction (with retry: old loop absorbed 5 failures)
+    for (const via of ['P131', ...PROPERTIES, 'P39']) {
+      add(await sparqlRowsWithRetry(candidateQuery(via, county)), via)
       process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
       await sleep(250)
     }
-    // holders of offices with Bay Area jurisdiction (with retry)
-    add(await sparqlRowsWithRetry(`SELECT DISTINCT ?item ?title WHERE {
-      ?item wdt:P39 ?pos .
-      { ?pos wdt:P1001 wd:${county} }
-      UNION { ?j wdt:P131+ wd:${county} . ?pos wdt:P1001 ?j }
-      ${sitelink} }`), 'P39')
-    process.stdout.write(`\r  candidates: query ${++n}/${total}, ${found.size} titles`)
-    await sleep(250)
   }
   console.log()
 
@@ -348,3 +346,5 @@ async function main() {
 if (require.main === module) {
   main().catch(error => { console.error(error); process.exit(1) })
 }
+
+module.exports = { candidateQuery, PROPERTIES }

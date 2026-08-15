@@ -41,6 +41,8 @@ describe('resolveForConsole', function() {
       { item: entity('Q10'), cls: entity('Q515'),
         article: { value: 'https://en.wikipedia.org/wiki/Alpha' }, lang: { value: 'en' } }
     ]))
+    // the P159/P276/P39 membership queries come back empty
+    nock(WDQS).post('/sparql').times(3).reply(200, bindings([]))
 
     const result = await resolveForConsole('Q62', { languages: ['en'] })
 

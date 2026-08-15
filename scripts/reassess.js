@@ -381,13 +381,11 @@ async function stageLinksProseAll(universe) {
 }
 
 // Wikidata properties that say the SUBJECT IS in the Bay Area, as opposed to
-// merely having passed through it. Reagan worked at Fort Mason and Microsoft has
-// a Silicon Valley campus - both true, neither a Bay Area topic. Born/died/worked
-// (P19/P20/P937) account for ~10,900 of ~15,500 raw candidates and almost none
-// are plausible additions; this also matches the 2007 criteria, which put
-// "biographies of people originally from the SFBA that are not well connected to
-// it" at Low.
-const IS_HERE_PROPERTIES = ['P131', 'P159', 'P276', 'P39']
+// merely having passed through it. The set and its rationale live in
+// lib/region.js - the ranking universe and the place-bot membership rule are
+// one decision. This also matches the 2007 criteria, which put "biographies of
+// people originally from the SFBA that are not well connected to it" at Low.
+const { IS_HERE_PROPERTIES } = require('../lib/region')
 
 /**
  * The set of articles eligible for ranking: everything already tagged (minus
