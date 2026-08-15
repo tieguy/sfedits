@@ -30,6 +30,7 @@ const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser'
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
 const { passesMetadata, needsContentCheck, isCosmeticOnly, metadataDropReason } = require('./lib/edit-filters')
+const { filterBySignificance } = require('./lib/significance-stage')
 
 const path = require('path')
 
@@ -249,17 +250,26 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       }
     }
 
+    // SIGNIFICANCE STAGE: classify "did this edit change what a reader sees?"
+    // once per edit if any consumer opted in ('log' or true). Runs before the
+    // --noop return (verdicts observable in no-post runs) and before the diff
+    // fetch (dropped edits skip diff/image work). Conservative pass on any
+    // failure — see lib/significance-stage.js tests.
+    const consumersAfterSignificance = await filterBySignificance(edit, metadataFiltered, {
+      label: consumerLabel
+    })
+
     if (argv.noop) {
-      // Noop stops before the diff fetch, so metadata survivors are final here.
-      for (const consumer of metadataFiltered) {
+      // Noop stops before the diff fetch, so significance-filtered survivors are final here.
+      for (const consumer of consumersAfterSignificance) {
         console.log(`filter-pass: ${edit.page} for ${consumerLabel(consumer)}`)
       }
       return null
     }
 
     {
-      // Early return if no consumers survived metadata filtering
-      if (metadataFiltered.length === 0) {
+      // Early return if no consumers survived significance filtering
+      if (consumersAfterSignificance.length === 0) {
         return null
       }
 
@@ -275,11 +285,11 @@ async function sendStatus(account, statusData, edit, topicIds = [], thread = nul
       }
 
       // CONTENT STAGE: filter by cosmetic-only if any consumer needs it
-      let consumersAfterContent = metadataFiltered
-      const anyNeedsContentCheck = metadataFiltered.some(c => needsContentCheck(c.editFilters))
+      let consumersAfterContent = consumersAfterSignificance
+      const anyNeedsContentCheck = consumersAfterSignificance.some(c => needsContentCheck(c.editFilters))
       if (anyNeedsContentCheck && isCosmeticOnly(diffHtml)) {
         consumersAfterContent = []
-        for (const consumer of metadataFiltered) {
+        for (const consumer of consumersAfterSignificance) {
           if (!needsContentCheck(consumer.editFilters)) {
             consumersAfterContent.push(consumer)
           } else {
