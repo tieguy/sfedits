@@ -26,6 +26,15 @@ describeWithDb('topic-index', function() {
     if (pool) await pool.end()
   })
 
+  /** An edit shaped the way lib/edit-stream.js shapes enwiki edits. */
+  function enEdit(page) {
+    return {
+      wikipedia: 'English Wikipedia',
+      wikipediaUrl: 'https://en.wikipedia.org',
+      page
+    }
+  }
+
   async function seedTopic(titles) {
     const topic = await store.upsertTopic('Q62', { languages: ['en'] })
     await store.addSubscription(topic.id, {
@@ -45,7 +54,33 @@ describeWithDb('topic-index', function() {
     await index.refresh()
 
     assert.deepEqual(
-      index.topicsForEdit({ wikipedia: 'en', page: 'Alpha' }), [topic.id])
+      index.topicsForEdit(enEdit('Alpha')), [topic.id])
+  })
+
+  it('matches an edit shaped the way the stream shapes it', async function() {
+    // The store keys articles by language code ('es'); the live stream labels
+    // edits with a display name ('Spanish Wikipedia'). Matching must not
+    // depend on the label - only wikipediaUrl is common ground.
+    const topic = await store.upsertTopic('Q717', { languages: ['es'] })
+    await store.addSubscription(topic.id, {
+      ownerUser: 'Tester',
+      deliveryType: 'discord',
+      deliveryConfig: { webhook_url: 'https://discord.test/hook' }
+    })
+    await store.setTopicArticles(topic.id, [
+      { qid: 'Q1533', wikipedia: 'es', title: 'Caracas', source: 'admin' }
+    ])
+
+    const index = createTopicIndex(store)
+    await index.refresh()
+
+    assert.deepEqual(
+      index.topicsForEdit({
+        wikipedia: 'Spanish Wikipedia',
+        wikipediaUrl: 'https://es.wikipedia.org',
+        page: 'Caracas'
+      }),
+      [topic.id])
   })
 
   it('returns an empty array for an unwatched title', async function() {
@@ -53,8 +88,12 @@ describeWithDb('topic-index', function() {
     const index = createTopicIndex(store)
     await index.refresh()
 
-    assert.deepEqual(index.topicsForEdit({ wikipedia: 'en', page: 'Unwatched' }), [])
-    assert.deepEqual(index.topicsForEdit({ wikipedia: 'es', page: 'Alpha' }), [])
+    assert.deepEqual(index.topicsForEdit(enEdit('Unwatched')), [])
+    assert.deepEqual(index.topicsForEdit({
+      wikipedia: 'Spanish Wikipedia',
+      wikipediaUrl: 'https://es.wikipedia.org',
+      page: 'Alpha'
+    }), [])
   })
 
   it('returns every topic watching a shared title', async function() {
@@ -73,13 +112,13 @@ describeWithDb('topic-index', function() {
     await index.refresh()
 
     assert.deepEqual(
-      index.topicsForEdit({ wikipedia: 'en', page: 'Shared' }).sort(),
+      index.topicsForEdit(enEdit('Shared')).sort(),
       [a.id, b.id].sort())
   })
 
   it('matches before any refresh has happened without throwing', function() {
     const index = createTopicIndex(store)
-    assert.deepEqual(index.topicsForEdit({ wikipedia: 'en', page: 'Alpha' }), [])
+    assert.deepEqual(index.topicsForEdit(enEdit('Alpha')), [])
   })
 
   it('picks up new articles on refresh', async function() {
@@ -87,7 +126,7 @@ describeWithDb('topic-index', function() {
     const index = createTopicIndex(store)
     await index.refresh()
 
-    assert.deepEqual(index.topicsForEdit({ wikipedia: 'en', page: 'Gamma' }), [])
+    assert.deepEqual(index.topicsForEdit(enEdit('Gamma')), [])
 
     await store.setTopicArticles(topic.id, [
       { qid: 'Q100', wikipedia: 'en', title: 'Alpha', source: 'admin' },
@@ -95,7 +134,7 @@ describeWithDb('topic-index', function() {
     ])
     await index.refresh()
 
-    assert.deepEqual(index.topicsForEdit({ wikipedia: 'en', page: 'Gamma' }), [topic.id])
+    assert.deepEqual(index.topicsForEdit(enEdit('Gamma')), [topic.id])
   })
 
   it('skips the rebuild when the generation has not moved', async function() {
@@ -126,7 +165,7 @@ describeWithDb('topic-index', function() {
 
     assert.isFalse(result.ok)
     assert.deepEqual(
-      broken.topicsForEdit({ wikipedia: 'en', page: 'Alpha' }), [topic.id],
+      broken.topicsForEdit(enEdit('Alpha')), [topic.id],
       'a database blip must not silently empty the watchlist')
   })
 
@@ -139,7 +178,7 @@ describeWithDb('topic-index', function() {
     const index = createTopicIndex(store)
     await index.refresh()
 
-    assert.deepEqual(index.topicsForEdit({ wikipedia: 'en', page: 'Orphan' }), [],
+    assert.deepEqual(index.topicsForEdit(enEdit('Orphan')), [],
       'nobody is subscribed, so there is nothing to deliver')
   })
 })
