@@ -7,6 +7,7 @@ GEMINI.md
 REFACTORING_INVESTIGATION.md
 data/heartbeat-*
 data/reassess/
+data/edit-significance-validation/
 data/posted-log.jsonl
 *.png
 !docs/diff-rendering/*.png
