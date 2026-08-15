@@ -1,0 +1,4 @@
+{| class="wikitable"
+|-
+| 1||2
+|}

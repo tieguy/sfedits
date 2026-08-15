@@ -1,0 +1,7 @@
+{| class="wikitable"
+|+ Old caption text
+|-
+! Name
+|-
+| John
+|}

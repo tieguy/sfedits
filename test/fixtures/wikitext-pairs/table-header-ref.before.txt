@@ -1,0 +1,6 @@
+{| class="wikitable"
+|-
+! Statistic<ref>2020 census</ref> !! Value
+|-
+| Population || 50000
+|}

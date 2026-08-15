@@ -1,0 +1,5 @@
+A city.
+{| class="wikitable"
+|-
+| [http://b.example/archive City records] || 1900
+|}

@@ -1,0 +1,1 @@
+This is a reference.<ref>{{Cita web|título=New Title|url=http://example.com|acceso=2026-08-14}}</ref> More text here.

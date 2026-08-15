@@ -1,0 +1,4 @@
+{| class="wikitable"
+|-
+| align=left | Cell content
+|}

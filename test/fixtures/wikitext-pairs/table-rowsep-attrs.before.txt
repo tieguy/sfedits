@@ -1,0 +1,6 @@
+{| class="wikitable"
+|- class="odd"
+| Alpha || 100
+|- class="odd"
+| Beta || 200
+|}

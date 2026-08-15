@@ -216,6 +216,100 @@ describe('edit-significance classifyEdit', function () {
     assert.isTrue(v.substantive)
     assert.include(v.reasons, 'headings')
   })
+
+  it('flags a table caption change as substantive with reason "tables"', function () {
+    const { before, after } = loadPair('table-caption', 'table-caption')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'tables')
+  })
+
+  it('flags a mid-table header change as substantive with reason "tables"', function () {
+    const { before, after } = loadPair('table-mid-header', 'table-mid-header')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'tables')
+  })
+
+  it('flags a table header cell ref change as substantive with reason "references"', function () {
+    const { before, after } = loadPair('table-header-ref', 'table-header-ref')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'references')
+  })
+
+  it('flags a Spanish citation title change as substantive with reason "references"', function () {
+    const { before, after } = loadPair('es-citation', 'es-citation')
+    const v = classifyEdit(before, after, { lang: 'es' })
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'references')
+  })
+
+  it('flags a redirect retarget as substantive with reason "redirect"', function () {
+    const { before, after } = loadPair('redirect', 'redirect')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'redirect')
+  })
+
+  // Formatting-only edits that should NOT be substantive: verify whitespace
+  // and markup noise do not count as changes.
+
+  it('treats table cell-separator spacing change as not substantive', function () {
+    const { before, after } = loadPair('table-cell-spacing', 'table-cell-spacing')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  it('treats table header-separator spacing change as not substantive', function () {
+    const { before, after } = loadPair('table-header-spacing', 'table-header-spacing')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  it('treats reference template formatting change as not substantive', function () {
+    const { before, after } = loadPair('ref-formatting', 'ref-formatting')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  it('treats reference template parameter reorder as not substantive', function () {
+    const { before, after } = loadPair('ref-param-order', 'ref-param-order')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  it('treats table and cell attribute changes as not substantive', function () {
+    const { before, after } = loadPair('table-attrs', 'table-attrs')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  it('treats row-separator attribute changes as not substantive', function () {
+    const { before, after } = loadPair('table-rowsep-attrs', 'table-rowsep-attrs')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  it('treats an external-link retarget in a table cell as not substantive', function () {
+    const { before, after } = loadPair('table-extlink-retarget', 'table-extlink-retarget')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.include(v.ignored, 'external-links')
+  })
+
+  it('treats reference name attribute change as not substantive', function () {
+    const { before, after } = loadPair('ref-name-change', 'ref-name-change')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
 })
 
 describe('edit-significance extractChannels', function () {
