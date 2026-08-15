@@ -1,0 +1,7 @@
+{| class="wikitable"
+|-
+! scope="col" | Name
+! scope="col" | Value
+|-
+| Alpha || 100
+|}

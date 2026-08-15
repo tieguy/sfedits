@@ -304,6 +304,23 @@ describe('edit-significance classifyEdit', function () {
     assert.include(v.ignored, 'external-links')
   })
 
+  it('treats header-cell attribute changes as not substantive', function () {
+    const { before, after } = loadPair('table-headercell-attrs', 'table-headercell-attrs')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  // Routed through the references channel's empty-json wikitext fallback
+  // (Cita-family templates parse to empty json), so this pins the named
+  // parameter sort on the raw-wikitext path.
+  it('treats a Spanish citation named-parameter reorder as not substantive', function () {
+    const { before, after } = loadPair('es-cita-param-order', 'es-cita-param-order')
+    const v = classifyEdit(before, after)
+    assert.isFalse(v.substantive)
+    assert.deepEqual(v.reasons, [])
+  })
+
   it('treats reference name attribute change as not substantive', function () {
     const { before, after } = loadPair('ref-name-change', 'ref-name-change')
     const v = classifyEdit(before, after)
