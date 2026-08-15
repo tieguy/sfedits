@@ -60,6 +60,24 @@ describe('edit-collapser', function() {
       assert.isNull(postEdit.firstCall.args[2])
     })
 
+    it('counts buffered edits across windows, which a restart drops', async function() {
+      assert.equal(collapser.pendingCount(), 0)
+
+      collapser.add(makeEdit())
+      assert.equal(collapser.pendingCount(), 0, 'the leading edit posts, it does not buffer')
+
+      collapser.add(makeEdit({ url: 'https://en.wikipedia.org/w/index.php?diff=101&oldid=100' }))
+      collapser.add(makeEdit({ url: 'https://en.wikipedia.org/w/index.php?diff=102&oldid=101' }))
+      collapser.add(makeEdit({ page: 'Oakland' }))
+      collapser.add(makeEdit({ page: 'Oakland', url: 'https://en.wikipedia.org/w/index.php?diff=201&oldid=200' }))
+
+      assert.equal(collapser.pendingCount(), 3, 'two for San Francisco, one for Oakland')
+
+      clock.tick(WINDOW_MS)
+      await settle()
+      assert.equal(collapser.pendingCount(), 0, 'flushing empties the buffers')
+    })
+
     it('buffers edits arriving inside the window and flushes one combined post', async function() {
       collapser.add(makeEdit({ url: 'https://en.wikipedia.org/w/index.php?diff=101&oldid=100' }))
       const r2 = collapser.add(makeEdit({ url: 'https://en.wikipedia.org/w/index.php?diff=102&oldid=101' }))

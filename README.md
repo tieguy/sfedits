@@ -156,6 +156,52 @@ toolforge jobs logs autoupdate
 curl -s https://san-francisco-edit-stream.toolforge.org/changelog | jq '.deploys[:5]'
 ```
 
+### Why the bot stopped
+
+The bot handles `SIGTERM`/`SIGINT`/`SIGHUP`: it closes the EventStreams
+connection and the database pool, then exits 0, logging the signal, how long it
+had been up, and its memory use. A deploy — which ends with `toolforge jobs
+restart bot` — is therefore a *clean* exit, not a failure, so the job's `emails:
+onfailure` setting stops mailing out a redeploy. Without that handler, node
+running as PID 1 ignores `SIGTERM`, gets `SIGKILL`ed when the grace period
+expires, and the restart arrives in the inbox as:
+
+> Pod 'bot-…'. Phase: 'failed'. Exit code was '137'. With reason 'Error'.
+
+Each run is also recorded in `last-run-<process>.json` in the state directory
+(the tool's NFS home, alongside `changelog.json`, so it outlives the pod),
+refreshed with uptime and RSS about once a minute. On startup the bot prints how
+the previous run ended:
+
+```
+Starting sfedits bot (pid 1, node v22.x)
+Previous run: previous run stopped on SIGTERM after 3h0m (2026-08-15T01:02:35.000Z) - clean exit
+```
+
+A record still marked `running` means nothing was able to record the ending, so
+the process was killed outright — the startup line says so and reports the
+memory it was using when last seen, which distinguishes an out-of-memory kill
+from a platform kill. Edits still buffered in a collapse window get one
+best-effort flush on the way out instead of being dropped, and the count is
+logged.
+
+Exit codes in a job failure email:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean exit — handled a stop signal (routine redeploy/restart) |
+| 1 | Unhandled fatal error — check the log lines just before the exit |
+| 137 | `SIGKILL` — out of memory, or a stop signal went unhandled for the whole grace period |
+| 143 | `SIGTERM` the process did not handle |
+
+The `bot` job is capped at `mem: 1Gi` in `toolforge-jobs.yaml`; a 137 whose run
+record shows RSS near that ceiling is an OOM kill, not a deploy artifact.
+
+The `web` process does the same, in `last-run-web.json`: a restart closes the
+listener (letting in-flight requests finish) and drains the ToolsDB pool before
+exiting. It has no failure email to suppress — the payoff there is the clean
+stop and a record of why it stopped.
+
 ## Configuration
 
 **Structure:** `config.base.json` (committed) + `config.json` (gitignored, local
