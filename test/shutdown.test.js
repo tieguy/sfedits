@@ -72,7 +72,12 @@ describe('shutdown', function() {
 
   describe('runRecordPath', function() {
     it('follows SFEDITS_STATE_DIR', function() {
-      assert.equal(runRecordPath(), path.join(stateDir, 'last-run.json'))
+      assert.equal(runRecordPath(), path.join(stateDir, 'last-run-bot.json'))
+    })
+
+    it('keeps one record per process, not one they overwrite in turn', function() {
+      assert.notEqual(runRecordPath('bot'), runRecordPath('web'))
+      assert.equal(runRecordPath('web'), path.join(stateDir, 'last-run-web.json'))
     })
 
     it('uses the tool home when the build service provides one', function() {
@@ -82,7 +87,7 @@ describe('shutdown', function() {
       try {
         assert.equal(
           runRecordPath(),
-          '/data/project/san-francisco-edit-stream/data/last-run.json')
+          '/data/project/san-francisco-edit-stream/data/last-run-bot.json')
       } finally {
         if (saved === undefined) delete process.env.TOOL_DATA_DIR
         else process.env.TOOL_DATA_DIR = saved
@@ -230,6 +235,22 @@ describe('shutdown', function() {
         const record = JSON.parse(fs.readFileSync(runRecordPath(), 'utf8'))
         assert.equal(record.status, 'stopped')
         assert.equal(record.reason, 'SIGTERM')
+      } finally {
+        uninstall()
+      }
+    })
+
+    it('writes the shutdown under the process name it was given', async function() {
+      sinon.stub(process, 'exit')
+      sinon.stub(console, 'log')
+
+      const uninstall = installStopHandlers({ name: 'web' })
+      try {
+        process.emit('SIGTERM')
+        await new Promise(resolve => setImmediate(resolve))
+
+        assert.isTrue(fs.existsSync(runRecordPath('web')), 'no web record')
+        assert.isFalse(fs.existsSync(runRecordPath('bot')), 'the web stop overwrote the bot record')
       } finally {
         uninstall()
       }

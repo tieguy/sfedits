@@ -28,6 +28,12 @@ const { refreshTargetSets, DEFAULT_PROPERTIES } = require('../lib/wikidata-claim
 const { createTopicStore } = require('../lib/topic-store')
 const { createBot, estimateRegion, CreateError } = require('../lib/topic-create')
 const { wmFetchJson } = require('../lib/mw-api')
+const {
+  startRun,
+  touchRun,
+  explainPreviousRun,
+  installStopHandlers
+} = require('../lib/shutdown')
 
 const PORT = process.env.PORT || 8000
 const DATA_DIR = path.join(__dirname, '..', 'data')
@@ -694,6 +700,27 @@ function startCreation(config) {
     : 'topic_store configured but no web.invite_codes: /create stays closed')
 }
 
+/**
+ * Stop serving without severing what is in flight: refuse new connections,
+ * let the requests already in progress finish, then drain the database pool.
+ *
+ * @param {import('http').Server} server
+ */
+function shutdownCleanly(server) {
+  return new Promise(resolve => {
+    server.close(() => resolve())
+  }).then(async () => {
+    const store = app.locals.topicStore
+    if (!store) return
+    app.locals.topicStore = null
+    try {
+      await store.close()
+    } catch (error) {
+      console.error('Could not close the topic store:', error.message)
+    }
+  })
+}
+
 if (require.main === module) {
   refresh()
   try {
@@ -703,9 +730,24 @@ if (require.main === module) {
   }
   const timer = setInterval(refresh, REFRESH_HOURS * 60 * 60 * 1000)
   timer.unref()
-  app.listen(PORT, () => {
+
+  const server = app.listen(PORT, () => {
     console.log(`Public topics server on port ${PORT}`)
   })
+
+  // A deploy restarts the webservice too, and an unhandled SIGTERM here means
+  // the pod is SIGKILLed with requests still open and the pool still holding
+  // ToolsDB connections. The webservice does not send failure mail the way the
+  // bot job does, so the win is the clean stop and the record of it.
+  installStopHandlers({ name: 'web', cleanup: () => shutdownCleanly(server) })
+
+  console.log(`Starting sfedits web (pid ${process.pid}, node ${process.version})`)
+  console.log('Previous run:', explainPreviousRun(startRun('web')))
+
+  // Nothing here runs per-request, so keep the record's uptime and memory
+  // figures fresh on a timer instead; the write is throttled to once a minute.
+  const heartbeat = setInterval(() => touchRun('web'), 60 * 1000)
+  heartbeat.unref()
 }
 
-module.exports = { app, buildTopics, renderPage, renderCreatePage, renderChangelog, startCreation, searchPlaces, topicsNeedRetry }
+module.exports = { app, buildTopics, renderPage, renderCreatePage, renderChangelog, startCreation, searchPlaces, topicsNeedRetry, shutdownCleanly }

@@ -168,10 +168,10 @@ expires, and the restart arrives in the inbox as:
 
 > Pod 'bot-…'. Phase: 'failed'. Exit code was '137'. With reason 'Error'.
 
-Each run is also recorded in `last-run.json` in the state directory (the tool's
-NFS home, alongside `changelog.json`, so it outlives the pod), refreshed with
-uptime and RSS about once a minute. On startup the bot prints how the previous
-run ended:
+Each run is also recorded in `last-run-<process>.json` in the state directory
+(the tool's NFS home, alongside `changelog.json`, so it outlives the pod),
+refreshed with uptime and RSS about once a minute. On startup the bot prints how
+the previous run ended:
 
 ```
 Starting sfedits bot (pid 1, node v22.x)
@@ -196,6 +196,11 @@ Exit codes in a job failure email:
 
 The `bot` job is capped at `mem: 1Gi` in `toolforge-jobs.yaml`; a 137 whose run
 record shows RSS near that ceiling is an OOM kill, not a deploy artifact.
+
+The `web` process does the same, in `last-run-web.json`: a restart closes the
+listener (letting in-flight requests finish) and drains the ToolsDB pool before
+exiting. It has no failure email to suppress — the payoff there is the clean
+stop and a record of why it stopped.
 
 ## Configuration
 

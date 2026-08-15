@@ -617,7 +617,7 @@ async function main() {
         // Filename kept as 'irc' for healthcheck compatibility; the feed
         // is EventStreams now
         writeHeartbeat('irc')
-        touchRun()
+        touchRun('bot')
         if (argv.verbose) {
           console.log(JSON.stringify(edit))
         }
@@ -646,10 +646,10 @@ if (require.main === module) {
   // the job emails out a bare "exit code 137 / reason 'Error'" for what was a
   // routine restart. Handling it exits 0 and says so; an unexplained 137 then
   // means something really did go wrong, and the next start explains what.
-  installStopHandlers({ cleanup: shutdownCleanly })
+  installStopHandlers({ name: 'bot', cleanup: shutdownCleanly })
 
   console.log(`Starting sfedits bot (pid ${process.pid}, node ${process.version})`)
-  console.log('Previous run:', explainPreviousRun(startRun()))
+  console.log('Previous run:', explainPreviousRun(startRun('bot')))
 
   main().catch(error => {
     console.error('Fatal error:', error)

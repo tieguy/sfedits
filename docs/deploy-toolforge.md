@@ -439,8 +439,9 @@ toolforge jobs run migrate --command "node scripts/migrate.js" \
   next start's `Previous run:` line in `toolforge jobs logs bot`. A run recorded
   as stopped on SIGTERM was a clean restart; a run still marked `running` was
   killed outright, and the RSS it reports against the job's `mem: 1Gi` says
-  whether that was an OOM kill. The record is `last-run.json` in the tool home's
-  `data/`, next to `changelog.json`.
+  whether that was an OOM kill. The record is `last-run-bot.json` in the tool
+  home's `data/`, next to `changelog.json`; the webservice keeps its own
+  `last-run-web.json` and prints the same line in `toolforge jobs logs web`.
 - **`/create` says it is not enabled.** `web.invite_codes` empty or absent, or
   no `topic_store`. An unconfigured deployment closes creation rather than
   opening it, on purpose.

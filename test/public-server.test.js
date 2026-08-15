@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { buildTopics, renderPage, topicsNeedRetry, app } = require('../public/server')
+const { buildTopics, renderPage, topicsNeedRetry, app, shutdownCleanly } = require('../public/server')
 
 describe('public-server', function() {
 
@@ -324,6 +324,42 @@ describe('public-server', function() {
       const res = await fetch(`${base}/`)
       assert.equal(res.status, 503)
       app.locals.topics = saved
+    })
+  })
+
+  describe('shutdownCleanly', function() {
+    // A deploy restarts the webservice with SIGTERM. Stopping has to close the
+    // listener and drain the ToolsDB pool, rather than leaving both for the
+    // SIGKILL that follows.
+    it('closes the listener and the topic store', async function() {
+      const server = app.listen(0)
+      await new Promise(resolve => server.once('listening', resolve))
+      const port = server.address().port
+
+      let closed = false
+      app.locals.topicStore = { close: async () => { closed = true } }
+
+      await shutdownCleanly(server)
+
+      assert.isTrue(closed, 'the pool was left open')
+      assert.isNull(app.locals.topicStore)
+      assert.isFalse(server.listening)
+      let refused = false
+      try {
+        await fetch(`http://127.0.0.1:${port}/`)
+      } catch {
+        refused = true
+      }
+      assert.isTrue(refused, 'still accepting connections after shutdown')
+    })
+
+    it('stops cleanly when there is no topic store', async function() {
+      const server = app.listen(0)
+      await new Promise(resolve => server.once('listening', resolve))
+      app.locals.topicStore = null
+
+      await shutdownCleanly(server)
+      assert.isFalse(server.listening)
     })
   })
 })
