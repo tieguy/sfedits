@@ -55,6 +55,7 @@ async function main() {
     let got = 0
     let rccontinue
     let exhausted = false // slice ran out of rows before filling its quota
+    let truncatedByTarget = false // global target hit mid-slice
     while (got < perDay && edits.length < target) {
       const params = {
         action: 'query', list: 'recentchanges',
@@ -74,10 +75,13 @@ async function main() {
           ts: rc.timestamp, user: rc.user, tags: rc.tags || [], comment: rc.comment || ''
         })
         got++
-        if (got >= perDay || edits.length >= target) break
+        if (got >= perDay) break
+        if (edits.length >= target) { truncatedByTarget = true; break }
       }
       rccontinue = resp.continue?.rccontinue
-      if (!rccontinue) { exhausted = true; break }
+      // A page with no continuation only proves the slice is exhausted if we
+      // actually consumed it to the end — not if the global target cut us off.
+      if (!rccontinue) { exhausted = !truncatedByTarget; break }
     }
     // A slice cut short by the global target is NOT done: leaving it out of
     // doneSlices lets a re-run with a larger target fill it, preserving the
