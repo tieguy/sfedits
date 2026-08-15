@@ -433,6 +433,14 @@ toolforge jobs run migrate --command "node scripts/migrate.js" \
 
 ## Things that will go wrong
 
+- **A job failure email for exit code 137 right after a deploy.** `toolforge
+  jobs restart bot` stops the pod with SIGTERM; the bot handles it and exits 0,
+  so a redeploy should no longer mail anything. If a 137 does arrive, read the
+  next start's `Previous run:` line in `toolforge jobs logs bot`. A run recorded
+  as stopped on SIGTERM was a clean restart; a run still marked `running` was
+  killed outright, and the RSS it reports against the job's `mem: 1Gi` says
+  whether that was an OOM kill. The record is `last-run.json` in the tool home's
+  `data/`, next to `changelog.json`.
 - **`/create` says it is not enabled.** `web.invite_codes` empty or absent, or
   no `topic_store`. An unconfigured deployment closes creation rather than
   opening it, on purpose.

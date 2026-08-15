@@ -30,6 +30,12 @@ const { EditCollapser, DEFAULT_WINDOW_MINUTES } = require('./lib/edit-collapser'
 const { startSweeper } = require('./lib/revdel-check')
 const { loadConfig } = require('./lib/config')
 const { passesMetadata, needsContentCheck, isCosmeticOnly, metadataDropReason } = require('./lib/edit-filters')
+const {
+  startRun,
+  touchRun,
+  explainPreviousRun,
+  installStopHandlers
+} = require('./lib/shutdown')
 
 const path = require('path')
 
@@ -523,6 +529,44 @@ function checkConfig(config, error) {
   }
 }
 
+// The live EventStreams connection, kept module-level so shutdown can close it
+// rather than leaving the stream for Wikimedia to time out.
+let editStream = null
+
+/**
+ * Release what a restart would otherwise sever mid-flight: the SSE connection
+ * and the database pool.
+ *
+ * Buffered edits get one best-effort flush rather than being dropped, which is
+ * what EditCollapser.flushAll is for. Those posts are fire-and-forget, so a
+ * flush that outruns the shutdown grace period is cut off — same outcome as the
+ * drop it replaces, and the log line says how many were in flight either way.
+ */
+async function shutdownCleanly() {
+  const pending = Array.from(collapsers.values())
+    .reduce((total, collapser) => total + collapser.pendingCount(), 0)
+  if (pending > 0) {
+    console.log(`Flushing ${pending} buffered edit(s) still inside a collapse window`)
+    for (const collapser of collapsers.values()) {
+      collapser.flushAll()
+    }
+  }
+
+  if (editStream) {
+    editStream.stop()
+    editStream = null
+  }
+
+  if (topicStore) {
+    try {
+      await topicStore.close()
+    } catch (error) {
+      console.error('Could not close the topic store:', error.message)
+    }
+    topicStore = null
+  }
+}
+
 async function main() {
   const config = getConfig()
 
@@ -568,10 +612,12 @@ async function main() {
       }
 
       const wikipedia = new EditStream()
+      editStream = wikipedia
       return wikipedia.listen(edit => {
         // Filename kept as 'irc' for healthcheck compatibility; the feed
         // is EventStreams now
         writeHeartbeat('irc')
+        touchRun()
         if (argv.verbose) {
           console.log(JSON.stringify(edit))
         }
@@ -594,6 +640,17 @@ if (require.main === module) {
     console.error('Unhandled rejection (continuing):', error)
   })
 
+  // Every deploy ends with `toolforge jobs restart bot`, which stops the pod
+  // with SIGTERM. Node running as PID 1 has no default handler for it, so
+  // without this the process is SIGKILLed when the grace period expires and
+  // the job emails out a bare "exit code 137 / reason 'Error'" for what was a
+  // routine restart. Handling it exits 0 and says so; an unexplained 137 then
+  // means something really did go wrong, and the next start explains what.
+  installStopHandlers({ cleanup: shutdownCleanly })
+
+  console.log(`Starting sfedits bot (pid ${process.pid}, node ${process.version})`)
+  console.log('Previous run:', explainPreviousRun(startRun()))
+
   main().catch(error => {
     console.error('Fatal error:', error)
     process.exit(1)
@@ -602,6 +659,7 @@ if (require.main === module) {
 
 module.exports = {
   main,
+  shutdownCleanly,
   getConfig,
   getStatus,
   getArticleUrl,
