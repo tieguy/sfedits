@@ -99,8 +99,8 @@ reader-visible changes rendered through templates are dropped by the
 `template-bag` policy — measured at 4 of 2,006 prose-labeled edits across the
 validation cohorts, and accepted by operator decision (2026-08-15) as the
 cost of filtering template churn, the dominant noise class. Every such drop
-carries `ignored: [template-bag]`, so log-mode measures the live rate; the
-decision is revisited against the enforcement-gate review if the live rate
-exceeds the cohort measurement. A side effect of the references marker
+carries `ignored: [template-bag]` in its logged verdict, so the live rate is
+measurable from the bot log; the decision is revisited if that rate exceeds
+the cohort measurement. A side effect of the references marker
 count: duplicate-footnote-marker cleanups classify substantive (measured at
 2-3 of 3,711 cohort edits) — an accepted over-delivery.

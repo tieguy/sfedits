@@ -128,6 +128,23 @@ required only if their corresponding stanzas are added to `config.base.json`.
 
 Confirm afterwards with `toolforge envvars list` (it shows names, not values).
 
+### The substantive-edit filter (`substantive_only`)
+
+Each entry in `accounts[0].deliveries` takes an `edit_filters.substantive_only`
+key with three states: `false` (off, the default) | `"log"` (classify every
+candidate edit and log the verdict, never drop) | `true` (enforce — edits the
+classifier rules not substantive are not posted). Per-delivery
+`substantive_channels` overrides the channel policy
+(`{"references": "ignored"}`-style; invalid values are dropped and an
+unrecognized policy counts as substantive). Reference:
+`docs/substantive-edit-filter.md`.
+
+Every classified edit logs `substantive-verdict: <page> substantive=<bool>
+reasons=[...] ignored=[...]` in the bot log; every enforced drop additionally
+logs `filtered: <page> for <delivery> (substantive_only: <channels>)`.
+**Rollback is config-only**: set the key to `"log"` (keep verdicts, stop
+dropping) or delete it, commit, push — no envvar involved.
+
 ### Changing config later
 
 The non-secret config lives in `config.base.json` in the repo. Edit it and push;
