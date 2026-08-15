@@ -2,6 +2,15 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use ed3d-plan-and-execute:executing-an-implementation-plan to implement this plan task-by-task.
 
+> **Execution record — do not re-execute the embedded code as written.** This
+> phase was executed and then amended through review: the shipped classifier
+> has 11 channels (tables and redirect were added as substantive channels, the
+> media/references/tables extractions were enriched, and raw-wikitext
+> comparisons are canonicalized). The authoritative channel table is in
+> `docs/design-plans/2026-08-14-substantive-edit-filter.md`; the shipped code
+> is `lib/edit-significance.js` with its test suite. The code blocks and test
+> counts below describe the plan as first written, not the final module.
+
 **Goal:** `lib/edit-significance.js` — a pure module answering "did this edit change what a reader sees?" from two wikitexts, with fixture tests.
 
 **Architecture:** wtf_wikipedia parses both revisions; named "channels" (prose, infobox-values, references, media, tables, headings, template-bag, links, categories, external-links) are extracted from each parse and compared. Any changed channel whose policy is `substantive` makes the edit substantive. No network, no config, no delivery knowledge.

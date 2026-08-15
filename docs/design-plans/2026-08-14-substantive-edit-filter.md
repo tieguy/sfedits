@@ -51,7 +51,7 @@ The rollout is staged rather than switched on directly. Before any pipeline wiri
 
 ## Architecture
 
-The bot currently forwards every non-bot, non-minor edit on a watchlist article. Measured over 30 days of the live top-500 watchlist (complete census, 2026-07-15 → 2026-08-14): 40.6 such edits/day survive the metadata filters, and 43% of them change no prose — mostly template churn (~28% of survivors), plus category/wikilink/formatting gnoming. This design adds a content-level filter that drops edits which don't change what a reader sees, cutting the feed to a projected ~26–28 edits/day of substantive changes.
+The bot currently forwards every non-bot, non-minor edit on a watchlist article. Measured over 30 days of the live top-500 watchlist (complete census, 2026-07-15 → 2026-08-14): 40.6 such edits/day survive the metadata filters. Two related but distinct measured quantities: 43% of survivors change no prose (mostly template churn, ~28% of survivors, plus category/wikilink/formatting gnoming), while an estimated ~35% classify not-substantive once non-prose substantive channels (references, infobox values, media, tables, headings, redirects) are credited — the smaller set, and the one the log-mode measurement is checked against. This design adds a content-level filter that drops edits which don’t change what a reader sees, cutting the feed to a projected ~26–28 edits/day (40.6 × (1 − 0.35)) of substantive changes.
 
 **Classifier module — `lib/edit-significance.js`.** Self-contained: takes two wikitexts, returns a verdict. No knowledge of deliveries, accounts, config files, or the network. This boundary is deliberate so a later extraction to a standalone `wtf-plugin-diff` npm package is a file move (see Additional Considerations).
 

@@ -304,6 +304,24 @@ describe('edit-significance classifyEdit', function () {
     assert.include(v.ignored, 'external-links')
   })
 
+  // Regression: a stray {{ with no closing braces above a pipe-heavy table
+  // must not trigger catastrophic regex backtracking in canonicalizeWikitext.
+  // Before the fix this case ran for minutes; mocha's default timeout fails it.
+  it('classifies a table containing a stray {{ without hanging', function () {
+    const rows = Array.from({ length: 6 }, (_, i) => `|-\n| a${i} || b || c || d || e`).join('\n')
+    const table = '{| class="wikitable"\n|-\n| {{ stray || x || y || z || w\n' + rows + '\n|}'
+    const v = classifyEdit(table + '\nProse one.', table + '\nProse two.')
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'prose')
+  })
+
+  it('treats an unrecognized channel policy value as substantive, never ignored', function () {
+    const { before, after } = loadPair('ref-added')
+    const v = classifyEdit(before, after, { channels: { references: 'subtantive' } })
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'references')
+  })
+
   it('treats header-cell attribute changes as not substantive', function () {
     const { before, after } = loadPair('table-headercell-attrs', 'table-headercell-attrs')
     const v = classifyEdit(before, after)

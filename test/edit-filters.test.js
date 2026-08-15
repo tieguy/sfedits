@@ -270,6 +270,12 @@ describe('edit-filters', function() {
       assert.isNull(normalizeEditFilters({ substantive_channels: 'prose' }).substantive_channels)
     })
 
+    it('drops invalid channel policy values during normalization', function () {
+      const f = normalizeEditFilters({ substantive_channels: { prose: 'subtantive', references: 'ignored' } })
+      assert.deepEqual(f.substantive_channels, { references: 'ignored' })
+      assert.isNull(normalizeEditFilters({ substantive_channels: { prose: 'junk' } }).substantive_channels)
+    })
+
     it('needsSignificanceCheck is true for log and true, false otherwise', function () {
       assert.isFalse(needsSignificanceCheck(null))
       assert.isFalse(needsSignificanceCheck({ substantive_only: false }))
