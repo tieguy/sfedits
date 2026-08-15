@@ -4,7 +4,7 @@
 
 **Goal:** `lib/edit-significance.js` — a pure module answering "did this edit change what a reader sees?" from two wikitexts, with fixture tests.
 
-**Architecture:** wtf_wikipedia parses both revisions; named "channels" (prose, infobox-values, references, media, headings, template-bag, links, categories, external-links) are extracted from each parse and compared. Any changed channel whose policy is `substantive` makes the edit substantive. No network, no config, no delivery knowledge.
+**Architecture:** wtf_wikipedia parses both revisions; named "channels" (prose, infobox-values, references, media, tables, headings, template-bag, links, categories, external-links) are extracted from each parse and compared. Any changed channel whose policy is `substantive` makes the edit substantive. No network, no config, no delivery knowledge.
 
 **Tech Stack:** Node 22 (CommonJS), wtf_wikipedia ^10.4.2 (already a dependency), mocha + chai `assert`, filesystem fixtures.
 

@@ -432,7 +432,7 @@ EOF
 // labels. The GATE is directional (design §Phase 2): of edits mwedittypes
 // labels prose-touching (Word/Sentence/Paragraph/Character), >=95% must
 // classify substantive. The reverse bucket (we say substantive, no prose
-// key) is EXPECTED — infobox values, references, media and headings live
+// key) is EXPECTED — infobox values, references, media, tables and headings live
 // under non-prose mwedittypes keys — so it is characterized, not gated.
 // Usage: node scripts/analysis/edit-significance/validate.js <cohort> [lang]
 const fs = require('fs')

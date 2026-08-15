@@ -2,14 +2,14 @@
 
 ## Summary
 
-This design adds a content-level filter to the bot's delivery pipeline so it can skip edits that don't change what a reader sees — template churn, category tweaks, wikilink reshuffling — before they reach Discord, Mastodon, or Bluesky. The core is a new, self-contained module (`lib/edit-significance.js`) that takes the wikitext of two revisions, extracts several independently-classified "channels" (prose, infobox values, references, media, and headings count as substantive by default; templates, links, categories, and external links are ignored by default), and compares each channel across revisions to produce a verdict: did anything substantive change? The module has no knowledge of the bot's network layer, config, or delivery accounts, so it can later be extracted into a standalone package without disturbing the rest of the codebase.
+This design adds a content-level filter to the bot's delivery pipeline so it can skip edits that don't change what a reader sees — template churn, category tweaks, wikilink reshuffling — before they reach Discord, Mastodon, or Bluesky. The core is a new, self-contained module (`lib/edit-significance.js`) that takes the wikitext of two revisions, extracts several independently-classified "channels" (prose, infobox values, references, media, tables, and headings count as substantive by default; templates, links, categories, and external links are ignored by default), and compares each channel across revisions to produce a verdict: did anything substantive change? The module has no knowledge of the bot's network layer, config, or delivery accounts, so it can later be extracted into a standalone package without disturbing the rest of the codebase.
 
 The rollout is staged rather than switched on directly. Before any pipeline wiring, the classifier's verdicts are checked offline against edits a third-party tool (mwedittypes) has already labeled, across three test sets spanning English and Spanish Wikipedia, requiring that at least 95% of the edits labeled prose-touching per set classify as substantive. Once validated, the classifier is wired into the bot's existing per-delivery content-filter stage behind a new opt-in flag (`substantive_only`), following the same pattern as the current `cosmetic_only` filter. It first runs in log-only mode — classifying and logging every candidate edit but dropping nothing — so real-world verdicts can be reviewed against the live stream before the filter is allowed to actually drop anything. Any fetch or parse failure defaults to letting the edit through (a "conservative pass" policy), so the filter can only ever remove noise, never silently swallow a real edit.
 
 ## Definition of Done
 
 - A content-level edit classifier (`lib/edit-significance.js`) answers "did this edit change what a reader sees?" from the wikitext of two revisions, with per-channel policy and a `lang` option.
-- The classifier is validated offline against three mwedittypes-labeled cohorts (SFBA top-500, recent-window enwiki, recent-window eswiki). The gate is directional: of the edits mwedittypes labels as prose-touching (Word/Sentence/Paragraph/Character), ≥95% per cohort must classify substantive. The reverse direction (we say substantive, mwedittypes has no prose key) is expected by design — infobox values, references, media and headings live under non-prose keys there — so it is characterized and hand-reviewed, not gated. Disagreements are reviewed by hand and the results written up in a dated analysis doc.
+- The classifier is validated offline against three mwedittypes-labeled cohorts (SFBA top-500, recent-window enwiki, recent-window eswiki). The gate is directional: of the edits mwedittypes labels as prose-touching (Word/Sentence/Paragraph/Character), ≥95% per cohort must classify substantive. The reverse direction (we say substantive, mwedittypes has no prose key) is expected by design — infobox values, references, media, tables and headings live under non-prose keys there — so it is characterized and hand-reviewed, not gated. Disagreements are reviewed by hand and the results written up in a dated analysis doc.
 - A new per-delivery `edit_filters` option (`substantive_only`) plumbs the verdict into the existing content-filter stage, opt-in and off by default, with a conservative-pass failure policy.
 - The filter ships in log-only mode first (classify and log, drop nothing), then is enabled per delivery in `config.base.json` after live verdicts are reviewed. Both deploy steps require explicit go, since pushes to `fork/integration` deploy.
 - Rate-targeted watchlist sizing and the eswiki feed (LUI-166) are explicitly out of scope; this build makes them possible, not real.
@@ -68,19 +68,22 @@ classifyEdit(prevWikitext, currWikitext, { channels, lang = 'en' })
 
 Each **channel** is a named extraction from the wtf_wikipedia parse of both revisions, compared for change:
 
-| Channel | Extraction | Default policy |
-|---|---|---|
-| `prose` | normalized `doc.text()` | substantive |
-| `infobox-values` | per-infobox key→value maps from `doc.infoboxes()` | substantive |
-| `references` | `doc.references()` | substantive |
-| `media` | `doc.images()` | substantive |
-| `headings` | section titles | substantive |
-| `template-bag` | unrendered template list from `doc.templates()` | ignored |
-| `links` | internal wikilink targets | ignored |
-| `categories` | `doc.categories()` | ignored |
-| `external-links` | external link targets | ignored |
+| Channel | Extraction | Default policy | Order handling |
+|---|---|---|---|
+| `prose` | normalized `doc.text()` | substantive | N/A (text only) |
+| `infobox-values` | per-infobox key→value maps from `doc.infoboxes()` | substantive | N/A (comparison is per-key) |
+| `references` | `doc.references()` | substantive | Sorted (unordered set) |
+| `media` | `doc.images()` with file, caption, and alt text | substantive | Sorted (unordered set) |
+| `tables` | `doc.tables()` | substantive | Document order (structural) |
+| `headings` | section titles | substantive | Document order (structural) |
+| `template-bag` | unrendered template list from `doc.templates()` | ignored | Sorted |
+| `links` | internal wikilink targets | ignored | Sorted |
+| `categories` | `doc.categories()` | ignored | Sorted |
+| `external-links` | external link targets | ignored | Sorted |
 
 Whitespace/formatting/punctuation differences never count (full community consensus that these are cosmetic; see Existing Patterns). Templates that wtf renders into text (`{{convert}}` and similar) are caught by the `prose` channel automatically. Policy (which channels count) lives in config; mechanics live in the module.
+
+**Order policy:** References and media are compared as unordered sets (sorted before stringification) because wtf's extraction order tracks wikitext position, and a pure position move of a reference or image without any prose/heading/table change is a gnoming-grade edit. Heading and table order is part of the page's visible structure in the rendered output, so swapping section order or table sequence counts as substantive.
 
 **Fetch helper — `lib/revision-pair.js`.** One batched Action API request per edit (`revids=old|new`, `rvprop=content|tags`) through `actionSession()` from `lib/mw-api.js`, using the revids that `parseDiffParams()` (`lib/compare-diff.js`) already extracts from the edit's diff URL, and the wiki host carried by the edit event. A separate module (rather than inline in `page-watch.js`) so the fetch is unit-testable with nock. The same response delivers change tags, which the pipeline currently never sees; tags are logged as annotation only (no filtering decisions — see the revert note below).
 
