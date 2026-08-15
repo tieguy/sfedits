@@ -341,6 +341,15 @@ describe('edit-significance classifyEdit', function () {
     assert.include(v.reasons, 'headings')
   })
 
+  // A named-ref reuse is a visible footnote marker; wtf's parse drops
+  // self-closing reuses, so the raw-text marker count carries the change.
+  it('flags removal of a named-ref reuse as substantive via references', function () {
+    const { before, after } = loadPair('ref-reuse-removed', 'ref-reuse-removed')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'references')
+  })
+
   it('treats header-cell attribute changes as not substantive', function () {
     const { before, after } = loadPair('table-headercell-attrs', 'table-headercell-attrs')
     const v = classifyEdit(before, after)

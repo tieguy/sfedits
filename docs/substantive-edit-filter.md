@@ -95,9 +95,10 @@ ones. `fallback` marks a verdict that could not be computed (`missing-content`,
 ## Known limitations
 
 Recorded with evidence in `docs/2026-08-14-edit-significance-validation.md`:
-one reader-visible change class reports in neither `reasons` nor `ignored`
-(a deleted named-ref reuse, which removes a footnote marker), and
 reader-visible changes rendered through templates are dropped by the
 `template-bag` policy (measured at 4 of 2,006 prose-labeled edits across the
-validation cohorts). Neither affects the validation gate; both become real
-skips only if `substantive_only` enforces.
+validation cohorts). This does not affect the validation gate; it becomes a
+real skip only if `substantive_only` enforces. A side effect of the
+references marker count: duplicate-footnote-marker cleanups classify
+substantive (measured at 2-3 of 3,711 cohort edits) — an accepted
+over-delivery.
