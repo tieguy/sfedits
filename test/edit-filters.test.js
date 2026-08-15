@@ -299,5 +299,12 @@ describe('edit-filters', function() {
         { substantive_only: true }))
       assert.isNull(significanceDropReason(null, { substantive_only: true }))
     })
+
+    it('significanceDropReason is robust when verdict lacks ignored field', function () {
+      // Malformed verdict missing the ignored field should not throw
+      const malformedVerdict = { substantive: false, reasons: ['template-bag'] }
+      assert.equal(significanceDropReason(malformedVerdict, { substantive_only: true }),
+        'substantive_only: no-change')
+    })
   })
 })

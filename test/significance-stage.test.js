@@ -103,4 +103,40 @@ describe('significance-stage', function () {
     await filterBySignificance(EDIT, [consumer('discord', { substantive_only: 'log' })], d)
     assert.isTrue(d.logs.some(l => l.includes('tags=[mw-undo]')))
   })
+
+  it('logs a warning when two opted-in consumers have differing substantive_channels', async function () {
+    const d = deps({ fetchRevisionPair: async () => GNOME_PAIR })
+    const consumers = [
+      consumer('discord', { substantive_only: true, substantive_channels: { 'template-bag': 'substantive' } }),
+      consumer('mastodon', { substantive_only: true, substantive_channels: { references: 'ignored' } })
+    ]
+    await filterBySignificance(EDIT, consumers, d)
+    assert.isTrue(d.logs.some(l => l.includes('CHANNEL OVERRIDE CONFLICT:')))
+    assert.isTrue(d.logs.some(l => l.includes('discord, mastodon')))
+    assert.isTrue(d.logs.some(l => l.includes("applying the first configured policy (discord's)")))
+  })
+
+  it('does not warn when identical channel policies differ only in key order', async function () {
+    const d = deps({ fetchRevisionPair: async () => GNOME_PAIR })
+    const consumers = [
+      consumer('discord', { substantive_only: true, substantive_channels: { references: 'ignored', media: 'ignored' } }),
+      consumer('mastodon', { substantive_only: true, substantive_channels: { media: 'ignored', references: 'ignored' } })
+    ]
+    await filterBySignificance(EDIT, consumers, d)
+    assert.isFalse(d.logs.some(l => l.includes('CHANNEL OVERRIDE CONFLICT:')))
+  })
+
+  it('applies the first opted-in consumer\'s channel policy when channels differ', async function () {
+    const d = deps({ fetchRevisionPair: async () => GNOME_PAIR })
+    const customChannels = { 'template-bag': 'substantive' }
+    const consumers = [
+      consumer('discord', { substantive_only: true, substantive_channels: customChannels }),
+      consumer('mastodon', { substantive_only: true, substantive_channels: { references: 'ignored' } })
+    ]
+    const kept = await filterBySignificance(EDIT, consumers, d)
+    // With 'template-bag' as substantive (via first consumer's channels), the gnome pair becomes substantive
+    // So neither consumer should be dropped
+    assert.deepEqual(kept.map(c => c.subType), ['discord', 'mastodon'])
+    assert.isTrue(d.logs.some(l => l.includes('substantive=true')))
+  })
 })

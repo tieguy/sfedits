@@ -1100,6 +1100,13 @@ Spanish Wikipedia prose-labeled share: 561 prose of 997 compared edits (56.3%). 
 |------|------|---------------|---------------|
 | 2026-08-14 | 682/690 (98.8%) | 743/755 (98.4%) | 554/561 (98.8%) |
 
+Live pipeline observation, 2026-08-14: a `node page-watch.js --noop --verbose`
+run with a local log-only overlay produced a verdict through the full
+page-watch wiring (metadata filter → significance stage → verdict log) on a
+live edit: `substantive-verdict: San Jose International Airport
+substantive=true reasons=[tables] ignored=[] tags=[mobile edit,mobile web
+edit]`.
+
 Measurements taken with classifier code from this branch, after canonicalization fixes (cell/header separator normalization, table attribute stripping correctness, whitespace/markup normalization in raw-wikitext comparison, parameter sorting). Verdicts generated at classifier commit (see Provenance section).
 
 ---
