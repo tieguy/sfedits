@@ -26,9 +26,9 @@
         "identifier": "top500.thebay.wiki"
       },
       "deliveries": [
-        { "type": "discord", "edit_filters": { "bots": false, "minor": false } },
-        { "type": "mastodon", "edit_filters": { "bots": false, "minor": false } },
-        { "type": "bluesky", "edit_filters": { "bots": false, "minor": false } }
+        { "type": "discord", "edit_filters": { "bots": false, "minor": false, "substantive_only": "log" } },
+        { "type": "mastodon", "edit_filters": { "bots": false, "minor": false, "substantive_only": "log" } },
+        { "type": "bluesky", "edit_filters": { "bots": false, "minor": false, "substantive_only": "log" } }
       ],
       "wikidata_claims": {
         "properties": ["P19", "P20", "P131", "P159", "P276", "P937", "P39"],
