@@ -101,6 +101,83 @@ describe('fan-out', function() {
       assert.isTrue(scope.isDone(), `webhook ${i} did not receive the post`))
   })
 
+  it('never delivers a topic-only edit to the account\'s own platforms', async function() {
+    // The incident this pins: on 2026-08-15 the SF account posted a Venezuela
+    // topic edit to its public Discord/Mastodon/Bluesky feeds, because config
+    // deliveries were attached to every edit that reached sendStatus. Account
+    // channels belong to the account's watchlist; topic matches belong to
+    // subscriptions. An edit only a topic matched must reach only subscribers.
+    const subHook = nock('https://discord.com')
+      .post('/api/webhooks/5/sub').query(true).reply(200, { id: '1' })
+    const accountHook = nock('https://discord.com')
+      .post('/api/webhooks/9/account').query(true).reply(200, { id: '2' })
+
+    const pageWatch = loadPageWatch()
+
+    nock('https://es.wikipedia.org')
+      .get('/w/index.php')
+      .query(true)
+      .reply(200, '<script>RLCONF={"wgPageName":"Planetario_Humboldt"};</script>')
+
+    pageWatch._setTopicStateForTest({
+      subscriptionsForTopic: async () => [subscription(5, '/api/webhooks/5/sub')]
+    }, null)
+
+    // The account watches enwiki pages; this edit is not on any of its lists.
+    const account = {
+      discord: { webhook_url: 'https://discord.com/api/webhooks/9/account' },
+      deliveries: [{ type: 'discord' }],
+      watchlist: { 'English Wikipedia': { 'Alpha': true } }
+    }
+    const edit = {
+      wikipedia: 'Spanish Wikipedia',
+      page: 'Planetario Humboldt',
+      user: 'Editor',
+      url: 'https://es.wikipedia.org/w/index.php?diff=123&oldid=456'
+    }
+
+    await pageWatch.sendStatus(
+      account, pageWatch.getStatus(edit, edit.user, '{{page}} edited'), edit, [1])
+
+    assert.isTrue(subHook.isDone(), 'the subscription must receive the post')
+    assert.isFalse(accountHook.isDone(),
+      'the account\'s own channel must NOT receive a topic-only edit')
+    nock.cleanAll()
+  })
+
+  it('still delivers a watched edit to the account\'s platforms', async function() {
+    // Companion regression pin for the gate above: watched edits keep flowing
+    // to the account's channels exactly as before.
+    const accountHook = nock('https://discord.com')
+      .post('/api/webhooks/9/account').query(true).reply(200, { id: '2' })
+
+    const pageWatch = loadPageWatch()
+
+    nock('https://en.wikipedia.org')
+      .get('/w/index.php')
+      .query(true)
+      .reply(200, '<script>RLCONF={"wgPageName":"Alpha"};</script>')
+
+    pageWatch._setTopicStateForTest({ subscriptionsForTopic: async () => [] }, null)
+
+    const account = {
+      discord: { webhook_url: 'https://discord.com/api/webhooks/9/account' },
+      deliveries: [{ type: 'discord' }],
+      watchlist: { 'English Wikipedia': { 'Alpha': true } }
+    }
+    const edit = {
+      wikipedia: 'English Wikipedia',
+      page: 'Alpha',
+      user: 'Editor',
+      url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
+    }
+
+    await pageWatch.sendStatus(
+      account, pageWatch.getStatus(edit, edit.user, '{{page}} edited'), edit, [])
+
+    assert.isTrue(accountHook.isDone(), 'watched edits still post to the account')
+  })
+
   it('skips rendering when no topic matched and no account platform is set',
     async function() {
       const pageWatch = loadPageWatch()

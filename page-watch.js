@@ -118,30 +118,36 @@ function getStatus(edit, name, template) {
 async function resolveConsumers(account, edit, topicIds = []) {
   const consumers = []
 
-  // Start with config deliveries
-  let configDeliveries = resolveConfigDeliveries(account)
-  if (configDeliveries.length === 0) {
-    // Warn and fall back to legacy per-stanza behavior
-    console.warn('[resolveConsumers] account.deliveries is absent or empty - falling back to legacy per-stanza behavior')
-    configDeliveries = []
-    if (account.bluesky) {
-      configDeliveries.push({ type: 'bluesky', credentials: account.bluesky })
+  // The account's own channels are for the account's own watchlist, decided
+  // here (not by the caller) so no call path can forget it: an edit that only
+  // a topic matched must reach only that topic's subscribers. This gate was
+  // missing once and the account posted a Venezuela topic edit to its public
+  // SF feeds.
+  if (isWatched(account, edit)) {
+    let configDeliveries = resolveConfigDeliveries(account)
+    if (configDeliveries.length === 0) {
+      // Warn and fall back to legacy per-stanza behavior
+      console.warn('[resolveConsumers] account.deliveries is absent or empty - falling back to legacy per-stanza behavior')
+      configDeliveries = []
+      if (account.bluesky) {
+        configDeliveries.push({ type: 'bluesky', credentials: account.bluesky })
+      }
+      if (account.mastodon) {
+        configDeliveries.push({ type: 'mastodon', credentials: account.mastodon })
+      }
+      if (account.discord) {
+        configDeliveries.push({ type: 'discord', credentials: account.discord })
+      }
     }
-    if (account.mastodon) {
-      configDeliveries.push({ type: 'mastodon', credentials: account.mastodon })
-    }
-    if (account.discord) {
-      configDeliveries.push({ type: 'discord', credentials: account.discord })
-    }
-  }
 
-  for (const delivery of configDeliveries) {
-    consumers.push({
-      type: 'config',
-      subType: delivery.type,
-      editFilters: delivery.edit_filters || null,
-      delivery
-    })
+    for (const delivery of configDeliveries) {
+      consumers.push({
+        type: 'config',
+        subType: delivery.type,
+        editFilters: delivery.edit_filters || null,
+        delivery
+      })
+    }
   }
 
   // Load subscriptions for matched topics

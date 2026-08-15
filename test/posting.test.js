@@ -306,6 +306,7 @@ describe('posting flow', function() {
         .reply(200, '<script>RLCONF={"wgPageName":"Test_Article"};</script>')
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: { identifier: 'test.bsky.social', password: 'pass' },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         discord: { webhook_url: 'https://discord.com/api/webhooks/account-hook' },
@@ -321,7 +322,7 @@ describe('posting flow', function() {
         page: 'Test Article',
         user: 'User',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456',
-        wikipedia: 'en'
+        wikipedia: 'English Wikipedia'
       }
 
       const statusData = pageWatch.getStatus(fakeEdit, fakeEdit.user, fakeAccount.template)
@@ -405,6 +406,7 @@ describe('posting flow', function() {
 
       // Create test data
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: {
           identifier: 'testuser.bsky.social',
           password: 'fake-password',
@@ -418,6 +420,7 @@ describe('posting flow', function() {
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -496,11 +499,13 @@ describe('posting flow', function() {
         })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { [longTitle]: true } },
         bluesky: { identifier: 'test.bsky.social', password: 'fake', service: 'https://bsky.social' },
         template: '{{page}} Wikipedia article edited by {{name}} {{&url}}',
         pii_blocking: { enabled: false }
       }
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: longTitle,
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -556,12 +561,14 @@ describe('posting flow', function() {
         .reply(200, { accessJwt: 'x', refreshJwt: 'y', did: 'did:plc:x', handle: 'x.bsky.social' })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: { identifier: 'testuser.bsky.social', password: 'p', service: 'https://bsky.social' },
         mastodon: { access_token: 't', instance: 'https://mastodon.example.com' },
         template: '{{page}} edited by {{name}} {{&url}}'
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Scott Wiener',
         user: 'MatrixBot',
         url: 'https://en.wikipedia.org/w/index.php?diff=1331882607&oldid=1082626579'
@@ -630,6 +637,7 @@ describe('posting flow', function() {
         .reply(200, { id: 'discord-msg-123' })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         discord: { webhook_url: 'https://discord.com/api/webhooks/account-hook' },
@@ -642,6 +650,7 @@ describe('posting flow', function() {
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -719,6 +728,7 @@ describe('posting flow', function() {
         .reply(200, { id: 'discord-msg-456' })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         discord: { webhook_url: 'https://discord.com/api/webhooks/account-hook' },
@@ -731,6 +741,7 @@ describe('posting flow', function() {
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -801,12 +812,14 @@ describe('posting flow', function() {
         })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' },
         deliveries: [{ type: 'bluesky' }],
         template: '{{page}} edited'
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=789&oldid=788'
@@ -865,6 +878,7 @@ describe('posting flow', function() {
         .reply(200, { id: '109383210193324631' })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         discord: { webhook_url: 'https://evil.example/api/webhooks/1/t' }, // fails allowlist
         deliveries: [
@@ -875,6 +889,7 @@ describe('posting flow', function() {
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -948,6 +963,7 @@ describe('posting flow', function() {
       })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         deliveries: [{ type: 'mastodon' }],
         template: '{{page}} edited'
@@ -955,6 +971,7 @@ describe('posting flow', function() {
 
       // Edit with TWO collapsed URLs
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         collapsedUrls: [
@@ -1025,12 +1042,14 @@ describe('posting flow', function() {
 
       // Account has legacy stanzas but no deliveries array
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         template: '{{page}} edited'
         // NOTE: no deliveries key
       }
 
       const fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -1118,6 +1137,7 @@ describe('posting flow', function() {
         .reply(200, { id: '109383210193324632' })
 
       const fakeAccount = {
+        watchlist: { 'English Wikipedia': { 'Test Article': true, 'Scott Wiener': true } },
         bluesky: { identifier: 'test.bsky.social', password: 'pass', service: 'https://bsky.social' },
         mastodon: { access_token: 'token', instance: 'https://mastodon.example.com' },
         deliveries: [
@@ -1129,6 +1149,7 @@ describe('posting flow', function() {
 
       // Case 1: Non-collapsed edit
       let fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456'
@@ -1151,6 +1172,7 @@ describe('posting flow', function() {
 
       // Case 2: Collapsed burst (collapsedCount > 1)
       fakeEdit = {
+        wikipedia: 'English Wikipedia',
         page: 'Test Article',
         user: 'TestUser',
         url: 'https://en.wikipedia.org/w/index.php?diff=123&oldid=456',
