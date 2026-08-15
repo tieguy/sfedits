@@ -1,19 +1,19 @@
 const { describe, it } = require('mocha')
 const { assert } = require('chai')
-const { normalizeEditFilters, passesMetadata, needsContentCheck, isCosmeticOnly, passesContent } = require('../lib/edit-filters')
+const { normalizeEditFilters, passesMetadata, needsContentCheck, isCosmeticOnly, passesContent, needsSignificanceCheck, significanceDropReason } = require('../lib/edit-filters')
 
 describe('edit-filters', function() {
 
   describe('normalizeEditFilters', function() {
     it('fills defaults for null/undefined/empty filters', function() {
-      assert.deepEqual(normalizeEditFilters(null), { bots: true, minor: true, min_delta: 0, cosmetic_only: false })
-      assert.deepEqual(normalizeEditFilters(undefined), { bots: true, minor: true, min_delta: 0, cosmetic_only: false })
-      assert.deepEqual(normalizeEditFilters({}), { bots: true, minor: true, min_delta: 0, cosmetic_only: false })
+      assert.deepEqual(normalizeEditFilters(null), { bots: true, minor: true, min_delta: 0, cosmetic_only: false, substantive_only: false, substantive_channels: null })
+      assert.deepEqual(normalizeEditFilters(undefined), { bots: true, minor: true, min_delta: 0, cosmetic_only: false, substantive_only: false, substantive_channels: null })
+      assert.deepEqual(normalizeEditFilters({}), { bots: true, minor: true, min_delta: 0, cosmetic_only: false, substantive_only: false, substantive_channels: null })
     })
 
     it('ignores unknown keys', function() {
       const result = normalizeEditFilters({ bots: true, unknown_key: 'ignored', min_delta: 50 })
-      assert.deepEqual(result, { bots: true, minor: true, min_delta: 50, cosmetic_only: false })
+      assert.deepEqual(result, { bots: true, minor: true, min_delta: 50, cosmetic_only: false, substantive_only: false, substantive_channels: null })
     })
 
     it('respects bots: false to drop bots', function() {
@@ -247,6 +247,57 @@ describe('edit-filters', function() {
       const edit = { robot: false, minor: false, delta: 100 }
       const filters = { bots: true, minor: true, min_delta: 50 }
       assert.isNull(metadataDropReason(edit, filters))
+    })
+  })
+
+  describe('substantive_only normalization and decisions', function () {
+    it('defaults substantive_only to false and substantive_channels to null', function () {
+      const f = normalizeEditFilters({})
+      assert.equal(f.substantive_only, false)
+      assert.isNull(f.substantive_channels)
+    })
+
+    it('normalizes the three states and rejects junk values', function () {
+      assert.equal(normalizeEditFilters({ substantive_only: true }).substantive_only, true)
+      assert.equal(normalizeEditFilters({ substantive_only: 'log' }).substantive_only, 'log')
+      assert.equal(normalizeEditFilters({ substantive_only: 'yes' }).substantive_only, false)
+      assert.equal(normalizeEditFilters({ substantive_only: 1 }).substantive_only, false)
+    })
+
+    it('passes substantive_channels through as an object, else null', function () {
+      const f = normalizeEditFilters({ substantive_channels: { references: 'ignored' } })
+      assert.deepEqual(f.substantive_channels, { references: 'ignored' })
+      assert.isNull(normalizeEditFilters({ substantive_channels: 'prose' }).substantive_channels)
+    })
+
+    it('needsSignificanceCheck is true for log and true, false otherwise', function () {
+      assert.isFalse(needsSignificanceCheck(null))
+      assert.isFalse(needsSignificanceCheck({ substantive_only: false }))
+      assert.isTrue(needsSignificanceCheck({ substantive_only: 'log' }))
+      assert.isTrue(needsSignificanceCheck({ substantive_only: true }))
+    })
+
+    it('significanceDropReason drops only enforcing consumers on a non-substantive verdict', function () {
+      const verdict = { substantive: false, reasons: [], ignored: ['template-bag'] }
+      assert.isNull(significanceDropReason(verdict, { substantive_only: false }))
+      assert.isNull(significanceDropReason(verdict, { substantive_only: 'log' }))
+      assert.equal(significanceDropReason(verdict, { substantive_only: true }),
+        'substantive_only: template-bag')
+    })
+
+    it('significanceDropReason never drops on substantive, fallback, or missing verdicts', function () {
+      assert.isNull(significanceDropReason({ substantive: true, reasons: ['prose'], ignored: [] },
+        { substantive_only: true }))
+      assert.isNull(significanceDropReason(
+        { substantive: true, reasons: [], ignored: [], fallback: 'missing-content' },
+        { substantive_only: true }))
+      // Defense-in-depth clause, tested non-vacuously: a (contract-violating)
+      // fallback verdict with substantive:false must STILL never drop — the
+      // fallback check cannot be absorbed by the substantive check.
+      assert.isNull(significanceDropReason(
+        { substantive: false, reasons: [], ignored: ['template-bag'], fallback: 'parse-error' },
+        { substantive_only: true }))
+      assert.isNull(significanceDropReason(null, { substantive_only: true }))
     })
   })
 })
