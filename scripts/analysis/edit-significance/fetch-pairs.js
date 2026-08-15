@@ -50,8 +50,13 @@ async function main() {
     if (done % 200 < 10) console.log(`${done}/${toFetch.length}`)
   }
   if (marked.length > 0) {
-    console.log(`marked empty (revdeleted/withheld), excluded from later comparison: ${marked.length} revisions: ${marked.join(', ')}`)
+    console.log(`withheld this run (revdeleted/suppressed), marked empty: ${marked.length} revisions: ${marked.join(', ')}`)
   }
+  // Cohort-wide total (markers from earlier runs included): these revids are
+  // excluded from later comparison, so the shrinking denominator stays visible.
+  const emptyTotal = fs.readdirSync(cache)
+    .filter(f => fs.statSync(path.join(cache, f)).size === 0).length
+  if (emptyTotal > 0) console.log(`empty markers in cache (all runs): ${emptyTotal}`)
   console.log(`done: ${toFetch.length} fetched`)
   process.exit(0)
 }

@@ -8,7 +8,8 @@ Cohort layout (all under data/edit-significance-validation/, gitignored):
     <cohort>/edits.json        [{title, revid, parentid, ts, user, tags, comment}]
     <cohort>/pairs-cache/      one <revid>.txt wikitext file per revision
     <cohort>/labels.jsonl      {"revid", "title", "types": {mwedittypes diff}} per line
-    <cohort>/verdicts.jsonl    {"revid", "substantive", "reasons", "ignored"} per line
+    <cohort>/verdicts.jsonl    {"revid", "substantive", "reasons", "ignored",
+                                "fallback"?, "error"?} per line
 
 Cohorts: sfba (imported from the 2026-08-14 analysis run), enwiki-random,
 eswiki-random. The "-random" cohorts are sliced samples across a ~29-day

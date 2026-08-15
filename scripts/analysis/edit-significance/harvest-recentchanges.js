@@ -54,6 +54,7 @@ async function main() {
     if (meta.doneSlices.includes(rcstart)) continue
     let got = 0
     let rccontinue
+    let exhausted = false // slice ran out of rows before filling its quota
     while (got < perDay && edits.length < target) {
       const params = {
         action: 'query', list: 'recentchanges',
@@ -76,9 +77,12 @@ async function main() {
         if (got >= perDay || edits.length >= target) break
       }
       rccontinue = resp.continue?.rccontinue
-      if (!rccontinue) break
+      if (!rccontinue) { exhausted = true; break }
     }
-    meta.doneSlices.push(rcstart)
+    // A slice cut short by the global target is NOT done: leaving it out of
+    // doneSlices lets a re-run with a larger target fill it, preserving the
+    // even time-of-day coverage the 23-hour stride exists for.
+    if (got >= perDay || exhausted) meta.doneSlices.push(rcstart)
     fs.writeFileSync(outPath, JSON.stringify(edits))
     fs.writeFileSync(metaPath, JSON.stringify(meta))
     console.log(`day-offset ${day}: +${got}, total ${edits.length}/${target}`)
