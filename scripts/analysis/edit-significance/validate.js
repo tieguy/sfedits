@@ -39,6 +39,8 @@ function main() {
   let proseLabeled = 0
   let proseCaught = 0
   let proseCaughtByFallback = 0
+  let refLabeled = 0
+  let refCaught = 0
   const fallbackCounts = {} // all fallback verdicts across the cohort, by kind
   let bothNot = 0
   const missedProse = []   // mwedittypes says prose, we say not substantive — the gated failure mode
@@ -73,6 +75,13 @@ function main() {
     } else {
       bothNot++
     }
+    // Reference-recall: track Reference-labeled edits and whether classifier caught them
+    if (Object.keys(label.types).includes('Reference')) {
+      refLabeled++
+      if (v.reasons && v.reasons.includes('references')) {
+        refCaught++
+      }
+    }
   }
   fs.writeFileSync(path.join(dir, 'verdicts.jsonl'), verdictLines.join('\n') + '\n')
 
@@ -104,6 +113,13 @@ function main() {
   const pass = caughtPct >= 95
   console.log(`\nGATE (design, directional; including fallback verdicts): caught/prose-labeled = ${proseCaught}/${proseLabeled} ` +
     `= ${caughtPct.toFixed(1)}% >= 95% -> ${pass ? 'PASS' : 'FAIL'}`)
+
+  // Reference-recall metric
+  if (refLabeled > 0) {
+    const refRecallPct = refCaught / refLabeled * 100
+    console.log(`reference-recall=${refCaught}/${refLabeled} (${refRecallPct.toFixed(1)}%)`)
+  }
+
   process.exit(pass ? 0 : 1)
 }
 main()
