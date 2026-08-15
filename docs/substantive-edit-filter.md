@@ -96,9 +96,11 @@ ones. `fallback` marks a verdict that could not be computed (`missing-content`,
 
 Recorded with evidence in `docs/2026-08-14-edit-significance-validation.md`:
 reader-visible changes rendered through templates are dropped by the
-`template-bag` policy (measured at 4 of 2,006 prose-labeled edits across the
-validation cohorts). This does not affect the validation gate; it becomes a
-real skip only if `substantive_only` enforces. A side effect of the
-references marker count: duplicate-footnote-marker cleanups classify
-substantive (measured at 2-3 of 3,711 cohort edits) — an accepted
-over-delivery.
+`template-bag` policy — measured at 4 of 2,006 prose-labeled edits across the
+validation cohorts, and accepted by operator decision (2026-08-15) as the
+cost of filtering template churn, the dominant noise class. Every such drop
+carries `ignored: [template-bag]`, so log-mode measures the live rate; the
+decision is revisited against the enforcement-gate review if the live rate
+exceeds the cohort measurement. A side effect of the references marker
+count: duplicate-footnote-marker cleanups classify substantive (measured at
+2-3 of 3,711 cohort edits) — an accepted over-delivery.
