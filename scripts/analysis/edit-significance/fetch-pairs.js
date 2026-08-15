@@ -26,6 +26,7 @@ async function main() {
 
   const session = await actionSession(host, 'edit-significance-validation')
   let done = 0
+  const marked = [] // revisions the API withheld (revdeleted/suppressed)
   for (let i = 0; i < toFetch.length; i += 10) {
     const batch = toFetch.slice(i, i + 10)
     const resp = await session.request({
@@ -40,10 +41,16 @@ async function main() {
     // Revisions the API refused (revdeleted/suppressed): empty marker, not a refetch loop.
     for (const id of batch) {
       const f = path.join(cache, `${id}.txt`)
-      if (!fs.existsSync(f)) fs.writeFileSync(f, '')
+      if (!fs.existsSync(f)) {
+        fs.writeFileSync(f, '')
+        marked.push(id)
+      }
     }
     done += batch.length
     if (done % 200 < 10) console.log(`${done}/${toFetch.length}`)
+  }
+  if (marked.length > 0) {
+    console.log(`marked empty (revdeleted/withheld), excluded from later comparison: ${marked.length} revisions: ${marked.join(', ')}`)
   }
   console.log(`done: ${toFetch.length} fetched`)
   process.exit(0)

@@ -13,11 +13,12 @@ const DATA_ROOT = path.join(__dirname, '../../../data/edit-significance-validati
 const PROSE_KEYS = new Set(['Word', 'Sentence', 'Paragraph', 'Character'])
 // mwedittypes keys that map directly onto our substantive non-prose
 // channels — used to characterize (not gate) the we-say-substantive-only
-// bucket. Template is deliberately NOT here: template churn is an ignored
-// channel, so a substantive verdict on a Template-keyed edit is only
-// expected when wtf rendered the template into prose/infobox values —
-// those are counted separately so a real over-trigger class can't hide.
-const MAPPED_KEYS = new Set(['Reference', 'Media', 'Heading'])
+// bucket. Template and Text Formatting are deliberately NOT here: template
+// churn is an ignored channel, so a substantive verdict on a Template-keyed
+// edit is only expected when wtf rendered the template into prose/infobox
+// values — those are counted separately so a real over-trigger class can't hide.
+// Text Formatting has no matching channel in the classifier.
+const MAPPED_KEYS = new Set(['Reference', 'Media', 'Heading', 'Table'])
 
 function main() {
   const cohort = process.argv[2]
@@ -32,11 +33,13 @@ function main() {
     labels.set(rec.revid, rec)
   }
 
-  const out = fs.createWriteStream(path.join(dir, 'verdicts.jsonl'))
+  const verdictLines = []
   let n = 0
   let skipped = 0
   let proseLabeled = 0
   let proseCaught = 0
+  let proseCaughtByFallback = 0
+  const fallbackCounts = {} // all fallback verdicts across the cohort, by kind
   let bothNot = 0
   const missedProse = []   // mwedittypes says prose, we say not substantive — the gated failure mode
   const extraSubstantive = [] // we say substantive, mwedittypes has no prose key — characterized only
@@ -50,13 +53,18 @@ function main() {
     } catch { skipped++; continue }
     if (!prev || !curr) { skipped++; continue }
     const v = classifyEdit(prev, curr, { lang })
-    out.write(JSON.stringify({ revid: e.revid, ...v }) + '\n')
+    verdictLines.push(JSON.stringify({ revid: e.revid, ...v }))
     n++
+    if (v.fallback) fallbackCounts[v.fallback] = (fallbackCounts[v.fallback] || 0) + 1
     const prose = Object.keys(label.types).some(k => PROSE_KEYS.has(k))
     if (prose) {
       proseLabeled++
-      if (v.substantive) proseCaught++
-      else missedProse.push({ revid: e.revid, title: e.title, ignored: v.ignored, types: Object.keys(label.types) })
+      if (v.substantive) {
+        proseCaught++
+        if (v.fallback) proseCaughtByFallback++
+      } else {
+        missedProse.push({ revid: e.revid, title: e.title, ignored: v.ignored, types: Object.keys(label.types) })
+      }
     } else if (v.substantive) {
       const keys = Object.keys(label.types)
       const mapped = keys.some(k => MAPPED_KEYS.has(k))
@@ -66,7 +74,7 @@ function main() {
       bothNot++
     }
   }
-  out.end()
+  fs.writeFileSync(path.join(dir, 'verdicts.jsonl'), verdictLines.join('\n') + '\n')
 
   console.log(`cohort=${cohort} lang=${lang} compared=${n} skipped=${skipped}`)
   if (proseLabeled === 0) {
@@ -74,13 +82,17 @@ function main() {
     process.exit(1)
   }
   const caughtPct = proseCaught / proseLabeled * 100
-  console.log(`prose-labeled=${proseLabeled}  caught=${proseCaught} (${caughtPct.toFixed(1)}%)  missed=${missedProse.length}`)
+  const caughtWithoutFallback = proseCaught - proseCaughtByFallback
+  const caughtWithoutFallbackPct = caughtWithoutFallback / proseLabeled * 100
+  console.log(`prose-labeled=${proseLabeled}  caught=${proseCaught} (${caughtPct.toFixed(1)}%)  caught-excluding-fallback=${caughtWithoutFallback} (${caughtWithoutFallbackPct.toFixed(1)}%)  fallback-only=${proseCaughtByFallback}  missed=${missedProse.length}`)
+  const fallbackSummary = Object.entries(fallbackCounts).map(([k, c]) => `${k}=${c}`).join(' ')
+  console.log(`fallback-verdicts (conservative passes, all compared edits): ${fallbackSummary || 'none'}`)
   console.log(`both-not-substantive=${bothNot}`)
   const mappedCount = extraSubstantive.filter(d => d.mapped).length
   const templateOnlyCount = extraSubstantive.filter(d => d.templateOnly).length
   const unexplained = extraSubstantive.length - mappedCount - templateOnlyCount
   console.log(`we-say-substantive-only=${extraSubstantive.length} ` +
-    `(${mappedCount} carry mwedittypes Reference/Media/Heading keys — expected by design; ` +
+    `(${mappedCount} carry mwedittypes Reference/Media/Heading/Table keys — expected by design; ` +
     `${templateOnlyCount} carry only Template keys — expected ONLY when wtf renders the template, review a sample; ` +
     `${unexplained} carry neither — review every one)`)
   console.log('\nsample missed-prose (GATED — every one is a potential classifier bug; up to 15):')
@@ -90,7 +102,7 @@ function main() {
   console.log('\nsample we-say-substantive-only with neither prose nor mapped nor Template keys (up to 15):')
   for (const d of extraSubstantive.filter(x => !x.mapped && !x.templateOnly).slice(0, 15)) console.log(' ', JSON.stringify(d))
   const pass = caughtPct >= 95
-  console.log(`\nGATE (design, directional): caught/prose-labeled = ${proseCaught}/${proseLabeled} ` +
+  console.log(`\nGATE (design, directional; including fallback verdicts): caught/prose-labeled = ${proseCaught}/${proseLabeled} ` +
     `= ${caughtPct.toFixed(1)}% >= 95% -> ${pass ? 'PASS' : 'FAIL'}`)
   process.exit(pass ? 0 : 1)
 }

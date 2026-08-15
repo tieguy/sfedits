@@ -4,6 +4,8 @@
 // over 24+ slices the cohort covers every time of day AND every day of week
 // (measurement hygiene: gnoming rates vary diurnally with bot/tool
 // schedules and editor geography). Checkpoints edits.json per slice; resumable.
+// Resume: stores absolute ISO timestamps of completed rcstart values in
+// meta.doneSlices, so the window is preserved across invocations.
 // Usage: node scripts/analysis/edit-significance/harvest-recentchanges.js <host> <cohort> <count> [--days 30]
 //   e.g. node .../harvest-recentchanges.js en.wikipedia.org enwiki-random 1500
 // recentchanges rows carry both revid and old_revid, so no per-title history
@@ -29,24 +31,30 @@ async function main() {
   fs.mkdirSync(dir, { recursive: true })
   const outPath = path.join(dir, 'edits.json')
 
-  // Resume: existing edits count toward the target; already-covered days
-  // (tracked in edits-meta.json) are skipped.
+  // Resume: existing edits count toward the target; already-covered slices
+  // (tracked in edits-meta.json as absolute ISO timestamps) are skipped.
   const metaPath = path.join(dir, 'edits-meta.json')
   const edits = fs.existsSync(outPath) ? JSON.parse(fs.readFileSync(outPath)) : []
-  const meta = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath)) : { doneDays: [] }
+  const meta = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath)) : { startedAt: null, doneSlices: [] }
   const seen = new Set(edits.map(e => e.revid))
   const perDay = Math.ceil(target / days)
 
   const session = await actionSession(host, 'edit-significance-validation')
-  const now = Date.now()
+  // Establish the anchor timestamp. On first run, record the current time and
+  // use it for all slices. On resume, reuse the recorded anchor so the window
+  // is preserved across invocations.
+  if (!meta.startedAt) {
+    meta.startedAt = new Date().toISOString()
+  }
+  const startedAtTime = new Date(meta.startedAt).getTime()
   for (let day = 0; day < days && edits.length < target; day++) {
-    if (meta.doneDays.includes(day)) continue
     // 23-hour stride: each slice starts an hour later in the day than the
     // last, so time-of-day precesses across the full clock over the window.
-    const rcstart = new Date(now - day * 23 * 3600 * 1000).toISOString()
+    const rcstart = new Date(startedAtTime - day * 23 * 3600 * 1000).toISOString()
+    if (meta.doneSlices.includes(rcstart)) continue
     let got = 0
     let rccontinue
-    while (got < perDay) {
+    while (got < perDay && edits.length < target) {
       const params = {
         action: 'query', list: 'recentchanges',
         rcstart,
@@ -56,7 +64,7 @@ async function main() {
       }
       if (rccontinue) params.rccontinue = rccontinue
       const resp = await session.request(params)
-      for (const rc of resp.query.recentchanges) {
+      for (const rc of resp.query?.recentchanges || []) {
         if (!rc.old_revid) continue // page creations have no pair
         if (seen.has(rc.revid)) continue
         seen.add(rc.revid)
@@ -70,12 +78,12 @@ async function main() {
       rccontinue = resp.continue?.rccontinue
       if (!rccontinue) break
     }
-    meta.doneDays.push(day)
+    meta.doneSlices.push(rcstart)
     fs.writeFileSync(outPath, JSON.stringify(edits))
     fs.writeFileSync(metaPath, JSON.stringify(meta))
     console.log(`day-offset ${day}: +${got}, total ${edits.length}/${target}`)
   }
-  console.log(`done: ${edits.length} edits -> ${cohort}/edits.json (${meta.doneDays.length} day slices)`)
+  console.log(`done: ${edits.length} edits -> ${cohort}/edits.json (${meta.doneSlices.length} slices)`)
   process.exit(0)
 }
 main().catch(e => { console.error(e); process.exit(1) })
