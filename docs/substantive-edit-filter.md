@@ -74,9 +74,14 @@ ones. `fallback` marks a verdict that could not be computed (`missing-content`,
   Embedded link targets are stripped from table cells and infobox values,
   because a link retarget with unchanged display text belongs to the `links`
   policy.
-- `MAX_INPUT_CHARS` (1.5MB) and the deliberately sequential parses are memory
+- `MAX_INPUT_CHARS` (800KB) and the deliberately sequential parses are memory
   guards — two concurrent parses of pathological pages are an OOM risk on the
-  deployed bot.
+  deployed bot, which shares its host with other services. The cap is sized
+  from measured data (2026-08-15): the largest mainspace article on all of
+  English Wikipedia is 772KB (Wiki Replicas, 7,225,055 pages; p99.9 is
+  205KB), the largest revision across the three validation cohorts is 507KB,
+  and MediaWiki's `maxarticlesize` hard cap is 2048KB. Oversize input
+  conservative-passes, so the cap can only over-deliver, never drop.
 
 ## Operational notes
 
