@@ -322,6 +322,16 @@ describe('edit-significance classifyEdit', function () {
     assert.include(v.reasons, 'references')
   })
 
+  // The references channel compares canonicalized wikitext alongside wtf's
+  // json, so free text sitting beside a citation template inside a <ref> —
+  // which renders in the footnote — is visible even when the json is unchanged.
+  it('flags removal of free text beside a citation template in a ref', function () {
+    const { before, after } = loadPair('ref-trailing-text', 'ref-trailing-text')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'references')
+  })
+
   it('treats header-cell attribute changes as not substantive', function () {
     const { before, after } = loadPair('table-headercell-attrs', 'table-headercell-attrs')
     const v = classifyEdit(before, after)

@@ -19,10 +19,10 @@ Wikipedia articles tagged with San Francisco Bay Area task-force designation, sa
 | Caught (our classifier) | 682 |
 | **Caught %** | **98.8%** |
 | **GATE** | **✓ PASS** (682/690 ≥ 95%) |
-| Both-not-substantive | 286 |
+| Both-not-substantive | 284 |
 
-We-say-substantive-only breakdown (243 total):
-- Carry mwedittypes Reference/Media/Heading/Table: **132** (expected by design)
+We-say-substantive-only breakdown (245 total):
+- Carry mwedittypes Reference/Media/Heading/Table: **134** (expected by design)
 - Carry only Template: **110** (expected when wtf_wikipedia renders template into infobox values/prose)
 - Carry neither: **1** (requires review)
 
@@ -96,13 +96,13 @@ Secondary metric: for edits mwedittypes labels with Reference key, what share di
 
 | Cohort | Reference-labeled (mwedittypes) | Caught with reasons=['references'] | % |
 |--------|-----------------|--------|-------|
-| SFBA | 321 | 296 | 92.2% |
-| Enwiki-random | 315 | 280 | 88.9% |
+| SFBA | 321 | 298 | 92.8% |
+| Enwiki-random | 315 | 282 | 89.5% |
 | Eswiki-random | 176 | 150 | 85.2% |
 
-The gap between the prose gate (98–99%) and reference recall (85.2–92.2%) has not
-been systematically diagnosed: the 86 uncaught Reference-labeled edits
-(25 SFBA + 35 enwiki + 26 eswiki) have not been classified one by one. Spot
+The gap between the prose gate (98–99%) and reference recall (85.2–92.8%) has not
+been systematically diagnosed: the 82 uncaught Reference-labeled edits
+(23 SFBA + 33 enwiki + 26 eswiki) have not been classified one by one. Spot
 checks during review found two contributing mechanisms: mwedittypes' Reference
 key can fire on edits whose only change is prose near reference markup, and
 changes confined to a ref's `name=` attribute are canonicalized away by design
@@ -1100,6 +1100,12 @@ Spanish Wikipedia prose-labeled share: 561 prose of 997 compared edits (56.3%). 
 |------|------|---------------|---------------|
 | 2026-08-14 | 682/690 (98.8%) | 743/755 (98.4%) | 554/561 (98.8%) |
 
+Classifier changes of 2026-08-15 (input cap resized to 800KB from measured
+article-size data; references channel compares canonicalized wikitext alongside
+json): all three gates reproduce unchanged; reference recall rose to 92.8%
+(SFBA) and 89.5% (enwiki); every number in this document reflects the
+post-change classifier.
+
 Live pipeline observation, 2026-08-14: a `node page-watch.js --noop --verbose`
 run with a local log-only overlay produced a verdict through the full
 page-watch wiring (metadata filter → significance stage → verdict log) on a
@@ -1113,7 +1119,7 @@ Measurements taken with classifier code from this branch, after canonicalization
 
 ## Provenance
 
-Verdicts, bucket counts, and reference-recall figures were generated with `lib/edit-significance.js` as of commit **0a613f4** ("fix: close classifier blind spots without breaking the whitespace rule") — the most recent commit touching that file at or before this document's latest revision. All three cohorts were validated with that classifier build on 2026-08-14.
+Verdicts, bucket counts, and reference-recall figures were generated with `lib/edit-significance.js` as committed alongside this revision of the document — the most recent commit touching that file at or before this document's latest revision. All three cohorts were validated with that classifier build on 2026-08-15.
 
 ---
 
@@ -1127,16 +1133,16 @@ The 27 missed-prose disagreements (8 SFBA + 12 enwiki + 7 eswiki), each reviewed
 - **3 link-markup edits with identical display text** (Peter Thiel, Ukraine's 12th electoral district, Condado de la Quintería; the TIFF entry combines this with table reflow). The `links` channel reports each in `ignored`; the links policy treats them as gnoming. In the Condado entry the reader does lose one interwiki link — that loss is the accepted cost of the links policy.
 - **4 reader-visible changes rendered through templates**, all enwiki (Greater Kuala Lumpur map legend, Kushta IPA transcription, Hugo (name) list entry via `{{anbl}}`, 2026 FIA F3 footnote via `{{efn}}`). Each surfaces in `ignored: [template-bag]` and is dropped by the template policy. This is the measured cost of that policy in these cohorts: 4 of 2,006 prose-labeled edits (0.2%). A consumer with `substantive_only` enforcing would not post these four edits.
 
-Among the 30 reviewed disagreements, none shows a reader-visible change with both `reasons` and `ignored` empty. Across all 3,711 compared edits, however, 162 not-substantive verdicts carry nothing in either list (70 SFBA + 52 enwiki + 40 eswiki, measured 2026-08-14), and 48 of those bear a mapped mwedittypes key (Reference/Media/Heading/Table) without a prose key — a population the gated review does not cover. A 12-entry sample of those 48 (4 per cohort, reviewed against divergence windows) found: 9 correct verdicts (changes inside HTML comments, ref `name=` attributes, image-size parameters, link markup with identical display text), and **three narrow miss classes** where a reader-visible change goes entirely unreported:
+Among the 30 reviewed disagreements, none shows a reader-visible change with both `reasons` and `ignored` empty. Across all 3,711 compared edits, 160 not-substantive verdicts carry nothing in either list (68 SFBA + 52 enwiki + 40 eswiki, measured 2026-08-15), and 46 of those bear a mapped mwedittypes key (Reference/Media/Heading/Table) without a prose key — a population the gated review does not cover. A 12-entry sample of that population (4 per cohort, reviewed against divergence windows, drawn before the reference-wikitext fix) found: 9 correct verdicts (changes inside HTML comments, ref `name=` attributes, image-size parameters, link markup with identical display text), and three narrow miss classes where a reader-visible change went entirely unreported. One is closed; **two remain**:
 
-- free text inside a `<ref>` beside a citation template (SFBA 1366782965, Stanford: junk text removed from a rendered footnote) — the references channel compares only the template's json when the json is non-empty;
+- **closed 2026-08-15**: free text inside a `<ref>` beside a citation template (SFBA 1366782965, Stanford: junk text removed from a rendered footnote). The references channel now compares canonicalized wikitext alongside the json, so this class flags through `references`; gates are unchanged and reference recall rose (SFBA 296→298, enwiki 280→282 of the same denominators);
 - a heading **level** change (SFBA 1368532464, Google: `==` → `===`) — the headings channel compares titles, not depth;
 - removal of a named-ref backref (eswiki 174841544: a `<ref name=":27" />` reuse deleted, so a footnote marker disappears from a sentence) — the references list dedupes by citation.
 
-The remaining 36 of the 48 were not individually reviewed. All three miss classes are false negatives (conservative direction for the gate, which they do not affect, but real skips if `substantive_only` enforces). They are recorded here as known limitations pending a decision on whether to close them before enforcement.
+The rest of the population was not individually reviewed. The two open miss classes are false negatives (conservative direction for the gate, which they do not affect, but real skips if `substantive_only` enforces). They are recorded here as known limitations pending a decision on whether to close them before enforcement.
 
 The three "carry neither" entries (1 SFBA, 2 eswiki) are genuine catches: a paragraph reorder, a stray rendered `|}` removed, and a bare-URL removal — each visible to readers, each labeled by mwedittypes without a prose key.
 
-Template-only verdicts fire through the channels templates render into (27 of 30 sampled: infobox-values). Reference recall (85.2–92.2%) is the secondary, ungated metric; its gap from the prose gate is not yet diagnosed (see that section).
+Template-only verdicts fire through the channels templates render into (27 of 30 sampled: infobox-values). Reference recall (85.2–92.8%) is the secondary, ungated metric; its gap from the prose gate is not yet diagnosed (see that section).
 
 Spanish Wikipedia edits gate at the same level as the English cohorts (98.8% vs 98.4–98.8%), and prose-labeled shares are 56.3% (eswiki), 56.6% (SFBA), 50.5% (enwiki-random). No language-specific parsing defect appeared in the reviewed entries; Spanish citation templates are compared through the references channel's raw-content fallback.

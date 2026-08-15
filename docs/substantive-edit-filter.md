@@ -95,9 +95,9 @@ ones. `fallback` marks a verdict that could not be computed (`missing-content`,
 ## Known limitations
 
 Recorded with evidence in `docs/2026-08-14-edit-significance-validation.md`:
-three reader-visible change classes report in neither `reasons` nor `ignored`
-(free text inside a `<ref>` beside a citation template; a heading *level*
-change; a deleted named-ref reuse), and reader-visible changes rendered through
-templates are dropped by the `template-bag` policy (measured at 4 of 2,006
-prose-labeled edits across the validation cohorts). None affects the
-validation gate; all become real skips only if `substantive_only` enforces.
+two reader-visible change classes report in neither `reasons` nor `ignored`
+(a heading *level* change; a deleted named-ref reuse), and reader-visible
+changes rendered through templates are dropped by the `template-bag` policy
+(measured at 4 of 2,006 prose-labeled edits across the validation cohorts).
+None affects the validation gate; all become real skips only if
+`substantive_only` enforces.

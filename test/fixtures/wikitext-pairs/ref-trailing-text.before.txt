@@ -1,0 +1,4 @@
+'''Testville''' is a city.<ref>{{cite web|url=http://a.example.com|title=City records}}|stray text that renders in the footnote</ref>
+
+== History ==
+Founded long ago.
