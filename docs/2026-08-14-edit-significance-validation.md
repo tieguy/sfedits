@@ -19,10 +19,10 @@ Wikipedia articles tagged with San Francisco Bay Area task-force designation, sa
 | Caught (our classifier) | 682 |
 | **Caught %** | **98.8%** |
 | **GATE** | **✓ PASS** (682/690 ≥ 95%) |
-| Both-not-substantive | 284 |
+| Both-not-substantive | 283 |
 
-We-say-substantive-only breakdown (245 total):
-- Carry mwedittypes Reference/Media/Heading/Table: **134** (expected by design)
+We-say-substantive-only breakdown (246 total):
+- Carry mwedittypes Reference/Media/Heading/Table: **135** (expected by design)
 - Carry only Template: **110** (expected when wtf_wikipedia renders template into infobox values/prose)
 - Carry neither: **1** (requires review)
 
@@ -67,10 +67,10 @@ Recent-window sample across 30 days of es.wikipedia.org mainspace human edits (n
 | Caught (our classifier) | 554 |
 | **Caught %** | **98.8%** |
 | **GATE** | **✓ PASS** (554/561 ≥ 95%) |
-| Both-not-substantive | 200 |
+| Both-not-substantive | 199 |
 
-We-say-substantive-only breakdown (236 total):
-- Carry mwedittypes Reference/Media/Heading/Table: **134** (expected by design)
+We-say-substantive-only breakdown (237 total):
+- Carry mwedittypes Reference/Media/Heading/Table: **135** (expected by design)
 - Carry only Template: **100** (expected when wtf_wikipedia renders template)
 - Carry neither: **2** (requires review)
 
@@ -1102,7 +1102,7 @@ Spanish Wikipedia prose-labeled share: 561 prose of 997 compared edits (56.3%). 
 
 Classifier changes of 2026-08-15 (input cap resized to 800KB from measured
 article-size data; references channel compares canonicalized wikitext alongside
-json): all three gates reproduce unchanged; reference recall rose to 92.8%
+json; headings include depth): all three gates reproduce unchanged; reference recall rose to 92.8%
 (SFBA) and 89.5% (enwiki); every number in this document reflects the
 post-change classifier.
 
@@ -1133,13 +1133,13 @@ The 27 missed-prose disagreements (8 SFBA + 12 enwiki + 7 eswiki), each reviewed
 - **3 link-markup edits with identical display text** (Peter Thiel, Ukraine's 12th electoral district, Condado de la Quintería; the TIFF entry combines this with table reflow). The `links` channel reports each in `ignored`; the links policy treats them as gnoming. In the Condado entry the reader does lose one interwiki link — that loss is the accepted cost of the links policy.
 - **4 reader-visible changes rendered through templates**, all enwiki (Greater Kuala Lumpur map legend, Kushta IPA transcription, Hugo (name) list entry via `{{anbl}}`, 2026 FIA F3 footnote via `{{efn}}`). Each surfaces in `ignored: [template-bag]` and is dropped by the template policy. This is the measured cost of that policy in these cohorts: 4 of 2,006 prose-labeled edits (0.2%). A consumer with `substantive_only` enforcing would not post these four edits.
 
-Among the 30 reviewed disagreements, none shows a reader-visible change with both `reasons` and `ignored` empty. Across all 3,711 compared edits, 160 not-substantive verdicts carry nothing in either list (68 SFBA + 52 enwiki + 40 eswiki, measured 2026-08-15), and 46 of those bear a mapped mwedittypes key (Reference/Media/Heading/Table) without a prose key — a population the gated review does not cover. A 12-entry sample of that population (4 per cohort, reviewed against divergence windows, drawn before the reference-wikitext fix) found: 9 correct verdicts (changes inside HTML comments, ref `name=` attributes, image-size parameters, link markup with identical display text), and three narrow miss classes where a reader-visible change went entirely unreported. One is closed; **two remain**:
+Among the 30 reviewed disagreements, none shows a reader-visible change with both `reasons` and `ignored` empty. Across all 3,711 compared edits, 159 not-substantive verdicts carry nothing in either list (67 SFBA + 52 enwiki + 40 eswiki, measured 2026-08-15), and 45 of those bear a mapped mwedittypes key (Reference/Media/Heading/Table) without a prose key — a population the gated review does not cover. A 12-entry sample of that population (4 per cohort, reviewed against divergence windows, drawn before the reference-wikitext fix) found: 9 correct verdicts (changes inside HTML comments, ref `name=` attributes, image-size parameters, link markup with identical display text), and three narrow miss classes where a reader-visible change went entirely unreported. Two are closed; **one remains**:
 
 - **closed 2026-08-15**: free text inside a `<ref>` beside a citation template (SFBA 1366782965, Stanford: junk text removed from a rendered footnote). The references channel now compares canonicalized wikitext alongside the json, so this class flags through `references`; gates are unchanged and reference recall rose (SFBA 296→298, enwiki 280→282 of the same denominators);
-- a heading **level** change (SFBA 1368532464, Google: `==` → `===`) — the headings channel compares titles, not depth;
+- **closed 2026-08-15**: a heading **level** change (SFBA 1368532464, Google: `==` → `===`). The headings channel now includes depth, so hierarchy and TOC moves flag through `headings`; gates unchanged, and the Google edit itself now flags;
 - removal of a named-ref backref (eswiki 174841544: a `<ref name=":27" />` reuse deleted, so a footnote marker disappears from a sentence) — the references list dedupes by citation.
 
-The rest of the population was not individually reviewed. The two open miss classes are false negatives (conservative direction for the gate, which they do not affect, but real skips if `substantive_only` enforces). They are recorded here as known limitations pending a decision on whether to close them before enforcement.
+The rest of the population was not individually reviewed. The open miss class is a false negative (conservative direction for the gate, which they do not affect, but real skips if `substantive_only` enforces). They are recorded here as known limitations pending a decision on whether to close them before enforcement.
 
 The three "carry neither" entries (1 SFBA, 2 eswiki) are genuine catches: a paragraph reorder, a stray rendered `|}` removed, and a bare-URL removal — each visible to readers, each labeled by mwedittypes without a prose key.
 

@@ -332,6 +332,15 @@ describe('edit-significance classifyEdit', function () {
     assert.include(v.reasons, 'references')
   })
 
+  // Depth is part of a heading: a level change moves the section in the
+  // visible hierarchy and the table of contents.
+  it('flags a heading level change as substantive with reason "headings"', function () {
+    const { before, after } = loadPair('heading-level', 'heading-level')
+    const v = classifyEdit(before, after)
+    assert.isTrue(v.substantive)
+    assert.include(v.reasons, 'headings')
+  })
+
   it('treats header-cell attribute changes as not substantive', function () {
     const { before, after } = loadPair('table-headercell-attrs', 'table-headercell-attrs')
     const v = classifyEdit(before, after)
