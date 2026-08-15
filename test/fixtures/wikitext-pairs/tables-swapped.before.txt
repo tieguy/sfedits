@@ -1,0 +1,11 @@
+Article text.
+
+{| class="wikitable"
+|-
+| Row 1
+|}
+
+{| class="wikitable"
+|-
+| Row 2
+|}

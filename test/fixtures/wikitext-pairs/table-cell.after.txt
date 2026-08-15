@@ -1,0 +1,8 @@
+{| class="wikitable"
+|-
+! Population
+|-
+| 50000
+|}
+
+Some text about the city.

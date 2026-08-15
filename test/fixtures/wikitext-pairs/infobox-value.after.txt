@@ -1,0 +1,6 @@
+'''Testville''' is a city in [[Example County]]. {{Infobox settlement|name=Testville|population=2000}} It has a long [[history]].<ref>{{cite web|url=http://a.example.com|title=City records}}</ref>
+
+== History ==
+Founded long ago near the [[Green River]]. [[File:oldtown.jpg|thumb|Old town]]
+
+[[Category:Cities]]

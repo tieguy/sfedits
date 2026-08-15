@@ -1,0 +1,3 @@
+'''Villaprueba''' es una ciudad. {{Ficha de localidad|nombre=Villaprueba|población=2000}} Tiene historia.
+
+[[Categoría:Ciudades]]

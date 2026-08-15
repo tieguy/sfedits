@@ -1,0 +1,9 @@
+Some text.
+{| class="wikitable"
+|-
+! Name
+! links
+|-
+| Page A
+| http://new.example.com
+|}

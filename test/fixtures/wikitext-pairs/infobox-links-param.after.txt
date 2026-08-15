@@ -1,0 +1,2 @@
+{{Infobox|links=http://new.example.com}}
+Some text here.

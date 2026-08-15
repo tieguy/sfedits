@@ -1,0 +1,7 @@
+Article text.
+
+== First Section ==
+Content of first section.
+
+== Second Section ==
+Content of second section.
