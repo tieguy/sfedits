@@ -63,10 +63,12 @@ async function buildTopics(config, { dataDir }) {
   if (account.watchlist_source) {
     const source = account.watchlist_source
     let articles = []
+    let fetchError = null
     try {
       articles = (await fetchSourceTitles(source)).sort()
     } catch (error) {
       console.error('Topics: dynamic list fetch failed:', error.message)
+      fetchError = error.message
     }
     dynamic = {
       // A published title list has no project name and no importance filter;
@@ -74,7 +76,8 @@ async function buildTopics(config, { dataDir }) {
       project: source.project || null,
       titles_url: source.titles_url || null,
       importance: source.importance || null,
-      articles
+      articles,
+      ...(fetchError ? { error: fetchError } : {})
     }
   }
 
@@ -632,6 +635,22 @@ app.get('/toolinfo.json', (req, res) => {
   })
 })
 
+/**
+ * True when the snapshot is missing or its dynamic list fetch failed — the
+ * state a deploy rollout leaves behind when the fresh pod fetches its own
+ * public URL before the front proxy routes to it.
+ */
+function topicsNeedRetry(topics) {
+  return !topics || Boolean(topics.dynamic && topics.dynamic.error)
+}
+
+// An incomplete snapshot retries on a short backoff rather than waiting out
+// the daily refresh timer.
+const RETRY_INITIAL_MS = 30 * 1000
+const RETRY_MAX_MS = 15 * 60 * 1000
+let retryDelayMs = RETRY_INITIAL_MS
+let retryTimer = null
+
 async function refresh() {
   try {
     const config = loadConfig()
@@ -639,6 +658,19 @@ async function refresh() {
     console.log(`✓ Topics refreshed: ${app.locals.topics.dynamic?.articles.length ?? 0} dynamic articles`)
   } catch (error) {
     console.error('Topics refresh failed (keeping previous data):', error.message)
+  }
+  if (topicsNeedRetry(app.locals.topics)) {
+    if (!retryTimer) {
+      console.log(`Topics incomplete; retrying in ${Math.round(retryDelayMs / 1000)}s`)
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        refresh()
+      }, retryDelayMs)
+      retryTimer.unref()
+      retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_MS)
+    }
+  } else {
+    retryDelayMs = RETRY_INITIAL_MS
   }
 }
 
@@ -676,4 +708,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { app, buildTopics, renderPage, renderCreatePage, renderChangelog, startCreation, searchPlaces }
+module.exports = { app, buildTopics, renderPage, renderCreatePage, renderChangelog, startCreation, searchPlaces, topicsNeedRetry }

@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { buildTopics, renderPage, app } = require('../public/server')
+const { buildTopics, renderPage, topicsNeedRetry, app } = require('../public/server')
 
 describe('public-server', function() {
 
@@ -128,6 +128,71 @@ describe('public-server', function() {
       assert.deepEqual(topics.staticWatchlist['English Wikipedia'], ['Cat'])
       assert.isNull(topics.dynamic)
       assert.isNull(topics.claims)
+    })
+
+    it('marks dynamic.error when the title list fetch fails', async function() {
+      nock('https://san-francisco-edit-stream.toolforge.org')
+        .get('/watchlist-500.json')
+        .reply(503)
+      mockSparql()
+
+      const listConfig = {
+        accounts: [{
+          watchlist_source: {
+            titles_url: 'https://san-francisco-edit-stream.toolforge.org/watchlist-500.json'
+          },
+          wikidata_claims: { properties: ['P19'] }
+        }]
+      }
+      const topics = await buildTopics(listConfig, { dataDir: tmpDir })
+
+      assert.deepEqual(topics.dynamic.articles, [])
+      assert.include(topics.dynamic.error, '503')
+    })
+
+    it('leaves dynamic.error unset when the fetch succeeds', async function() {
+      nock('https://san-francisco-edit-stream.toolforge.org')
+        .get('/watchlist-500.json')
+        .reply(200, { count: 1, titles: ['Ohlone'] })
+      mockSparql()
+
+      const listConfig = {
+        accounts: [{
+          watchlist_source: {
+            titles_url: 'https://san-francisco-edit-stream.toolforge.org/watchlist-500.json'
+          },
+          wikidata_claims: { properties: ['P19'] }
+        }]
+      }
+      const topics = await buildTopics(listConfig, { dataDir: tmpDir })
+
+      assert.notProperty(topics.dynamic, 'error')
+    })
+  })
+
+  // A deploy rollout can beat the front proxy: the fresh pod's startup
+  // refresh fetches its own public URL, gets a 503, and without a retry the
+  // coverage page shows zero articles until the daily refresh.
+  describe('topicsNeedRetry', function() {
+    it('wants a retry when no snapshot was ever built', function() {
+      assert.isTrue(topicsNeedRetry(null))
+      assert.isTrue(topicsNeedRetry(undefined))
+    })
+
+    it('wants a retry when the dynamic fetch failed', function() {
+      assert.isTrue(topicsNeedRetry({
+        dynamic: { titles_url: 'https://example.org/x.json', articles: [], error: 'Title list fetch returned 503' }
+      }))
+    })
+
+    it('is satisfied by a healthy snapshot', function() {
+      assert.isFalse(topicsNeedRetry({
+        dynamic: { titles_url: 'https://example.org/x.json', articles: ['Ohlone'] }
+      }))
+    })
+
+    it('is satisfied when there is no dynamic source at all', function() {
+      assert.isFalse(topicsNeedRetry({ dynamic: null }))
     })
   })
 
