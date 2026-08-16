@@ -123,6 +123,41 @@ describe('discord-platform', function() {
       assert.include(bodyText, 'files[0]')
     })
 
+    it('clips the attachment description to Discord\'s 1024-char limit', async function() {
+      // The alt-text generator allows 1200 chars (fine for Mastodon and
+      // Bluesky), but Discord rejects attachment descriptions over 1024 with
+      // 400 {"attachments": ["0"]}. Measured live 2026-08-15: every diff big
+      // enough to max out the alt text bounced off subscription delivery.
+      let capturedBody = null
+      nock('https://discord.com')
+        .post('/api/webhooks/123/token', function(body) {
+          capturedBody = body
+          return true
+        })
+        .query({ wait: 'true' })
+        .reply(200, { id: 'fake-message-id' })
+
+      await discordPlatform.post({
+        account: { webhook_url: 'https://discord.com/api/webhooks/123/token' },
+        text: 'x',
+        screenshot: testScreenshot,
+        metadata: {
+          page: 'Estado Bolívar',
+          name: 'User',
+          pageUrl: 'https://es.wikipedia.org/wiki/Estado_Bolívar',
+          userUrl: 'https://es.wikipedia.org/wiki/Special:Contributions/User',
+          altText: 'x'.repeat(1200)
+        }
+      })
+
+      const payloadJson = /name="payload_json"\r?\n\r?\n(.*?)\r?\n--/s
+        .exec(String(capturedBody))
+      assert.ok(payloadJson, 'payload_json part must be present')
+      const payload = JSON.parse(payloadJson[1])
+      assert.isAtMost(payload.attachments[0].description.length, 1024,
+        'Discord rejects attachment descriptions over 1024 characters')
+    })
+
     it('disables mentions in the payload', async function() {
       let capturedBody = null
       nock('https://discord.com')
