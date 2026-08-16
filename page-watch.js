@@ -204,8 +204,16 @@ async function deliverToTopics(subscriptions, payload) {
       continue
     }
 
+    // Name the page and the attachment size: intermittent rejections (the
+    // 2026-08-15 "400 attachments" run) are undiagnosable from the status
+    // code alone, and the log line is the only evidence trail.
+    let imageBytes = 'unknown'
+    try {
+      imageBytes = fs.statSync(payload.screenshot).size
+    } catch {}
     console.error(
-      `Subscription ${result.subscriptionId} delivery failed: ${result.error}`)
+      `Subscription ${result.subscriptionId} delivery failed for ` +
+      `"${payload.metadata?.page}" (image ${imageBytes} bytes): ${result.error}`)
 
     if (subscriptionHealth.record(result.subscriptionId, result)) {
       try {

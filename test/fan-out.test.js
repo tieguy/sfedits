@@ -214,6 +214,32 @@ describe('fan-out', function() {
     assert.isTrue(live.isDone(), 'a dead webhook must not silence the next subscriber')
   })
 
+  it('a delivery failure log names the page and the image size', async function() {
+    // Three "400 attachments" failures on 2026-08-15 could not be attributed
+    // to an edit because the failure line carried neither page nor payload
+    // detail. The log line is the only evidence trail for intermittent
+    // delivery rejections, so it must say what was being delivered.
+    nock('https://discord.com').post('/api/webhooks/9/dead').query(true)
+      .reply(400, '{"attachments": ["0"]}')
+
+    const pageWatch = loadPageWatch()
+    const errors = []
+    const original = console.error
+    console.error = (...args) => { errors.push(args.join(' ')) }
+    try {
+      await pageWatch.deliverToTopics(
+        [subscription(1, '/api/webhooks/9/dead')],
+        { text: 'x', screenshot: screenshotPath, metadata: { page: 'Municipio Roscio' } })
+    } finally {
+      console.error = original
+    }
+
+    const line = errors.find(e => e.includes('delivery failed'))
+    assert.exists(line, 'the failure must be logged')
+    assert.include(line, 'Municipio Roscio', 'the failing page must be named')
+    assert.match(line, /\d+ bytes/, 'the attachment size must be recorded')
+  })
+
   it('returns deliver() result with task 2 contract (ok, type, postId, subscriptionId)', async function() {
     // Task 2 contract verification: deliver() result structure
     nock('https://discord.com')
