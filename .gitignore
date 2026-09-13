@@ -17,3 +17,9 @@ data/fonts/
 *.bak
 data/watchlist-*.json
 data/wikidata-claim-targets.json
+
+# local artifacts and re-downloadable data
+.lavish/
+data/dumps/
+data/gemini-pii-checks.log
+data/reassess-backup-*/
