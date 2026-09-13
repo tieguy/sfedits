@@ -1,0 +1,41 @@
+# =============================================================================
+# CORRECTION — apply before anything else. Prepared 2026-07-31.
+#
+# THE ERROR
+#   Last night's batch put Connie Chan's candidacy on Q110933376.
+#   Q110933376 is a WIKIMEDIA DISAMBIGUATION PAGE (P31 = Q4167410), not a
+#   person. The QID was resolved from the enwiki title "Connie Chan", which is
+#   itself a disambiguation page. The validation step only compared the LABEL,
+#   which reads "Connie Chan" on both items, so it could not catch this.
+#
+#   Verified 2026-07-31:
+#     Q110933376  "Connie Chan"  P31 = Wikimedia disambiguation page
+#     Q105663114  "Connie Chan"  P31 = human; P39 = member of the San Francisco
+#                                Board of Supervisors, since 2021-01-08;
+#                                enwiki = "Connie Chan (politician)"
+#
+#   Scott Wiener (Q7437504) is unaffected and correct.
+#
+# LESSON, now enforced in the reconciliation design: never accept a name->QID
+# match on label alone. Require P31 = Q5 (human) at minimum, and corroborating
+# evidence (P39 / P106 / enwiki article) before writing anything.
+# =============================================================================
+
+# C1  Remove the wrongly-placed statement from the disambiguation item.
+#     (Leading "-" is QuickStatements' remove operator. If this does not match
+#     cleanly, delete the single P3602 statement by hand at
+#     https://www.wikidata.org/wiki/Q110933376 — it is the only one there.)
+-Q110933376	P3602	Q131470954	P768	Q2681039
+
+# C2  Add it to the correct person: Connie Chan the SF supervisor.
+#     Same source, same district, same shape as the Wiener statement.
+Q105663114	P3602	Q131470954	P768	Q2681039	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-31T00:00:00Z/11
+
+# VERIFY AFTERWARDS — this query should return exactly Chan and Wiener:
+#
+#   SELECT ?p ?pLabel WHERE {
+#     ?p p:P3602 ?st . ?st ps:P3602 wd:Q131470954 ; pq:P768 wd:Q2681039 .
+#     ?p wdt:P31 wd:Q5 .
+#     SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+#   }
+

@@ -1,0 +1,188 @@
+# =============================================================================
+# 2026 Bay Area Elections Bot - QuickStatements batch (CA-11 pilot)
+#
+# Prepared 2026-07-30. NOT YET APPLIED - review before running.
+# Paste into https://quickstatements.toolforge.org/  ("V1" / commands format).
+#
+# FORMAT: TAB-delimited. Do not let an editor convert tabs to spaces.
+#   col1 = item to edit    col2 = property    col3 = value
+#   further PAIRS on the same line are QUALIFIERS (Pxxx value)
+#   further pairs prefixed S are REFERENCES    (Sxxx value)
+# Lines starting with # are comments; QuickStatements ignores them.
+#
+# =============================================================================
+# THE SOURCE, AND WHY THIS ONE
+#
+# Cited: the certified STATEMENT OF VOTE (SOV) for the June 2, 2026 primary,
+# United States Representative section, published by the CA Secretary of State.
+#   https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf
+#
+# Downloaded and read on 2026-07-30. Page 79, "11th Congressional District",
+# entirely within San Francisco. Certified results:
+#
+#     Scott Wiener        (DEM)   95,816   40.7%   <- 1st, advances
+#     Connie Chan         (DEM)   69,899   29.7%   <- 2nd, advances
+#     Saikat Chakrabarti  (DEM)   42,060   17.9%
+#     Marie Hurabiell     (DEM)    9,410    4.0%
+#     David Ganezer       (REP)    9,299    4.0%
+#     Jingchao Xiong      (REP)    4,238    1.8%
+#     Gregory M Haynes    (DEM)    2,025    0.9%
+#     John "Gus" Buffler  (DEM)      942    0.4%
+#     Nathan Deer         (NPP)      649    0.3%
+#     Keith Freedman      (DEM)      591    0.3%
+#     Omed Hamid          (DEM)      401    0.2%
+#     Michael A Petrelis  (GRN W/I)    7    0.0%
+#
+# Under California's top-two primary the two highest vote-getters advance to
+# the general regardless of party. This document therefore proves that Chan
+# and Wiener specifically are the November candidates.
+#
+# NOT used: the Certified List of Candidates
+#   (.../statewide-elections/2026-primary/cert-list-candidates.pdf)
+# It lists all 11 primary candidates and does NOT distinguish the two who
+# advanced - it would support a candidacy statement for Hurabiell or Ganezer
+# equally well. It is a valid supporting source but not a discriminating one.
+# It may be added as an additional reference; it must not be the only one.
+#
+# NO PUBLICATION DATE (P577) is asserted for the SOV. The certification date
+# is not stated in any extractable text in the published PDFs, and it has not
+# been verified. P813 (retrieved) is stated and is true.
+#
+# =============================================================================
+# VALIDATION MANIFEST
+# Every ID below was resolved against live Wikidata on 2026-07-30 (label and,
+# for properties, datatype). None are from memory.
+#
+#   PROPERTIES                              datatype          used as
+#   P155   follows                          item              statement
+#   P361   part of                          item              statement
+#   P541   office contested                 item              statement
+#   P585   point in time                    time              statement
+#   P768   electoral district               item              qualifier
+#   P1001  applies to jurisdiction          item              statement
+#   P3602  candidacy in election            item              statement
+#   P102   member of political party        item              qualifier (opt)
+#   P1111  votes received                   quantity          qualifier (opt)
+#   P854   reference URL                    url               reference
+#   P1476  title                            monolingual text  reference
+#   P813   retrieved                        time              reference
+#
+#   ITEMS
+#   Q99         California
+#   Q2681039    California's 11th congressional district
+#   Q7437504    Scott Wiener
+#   Q13218630   United States representative        (the office)
+#   Q29552      Democratic Party  (American political party, P17=United States)
+#   Q62287339   Saikat Chakrabarti
+#   Q110933376  Connie Chan
+#   Q116006860  2024 United States House of Representatives elections in California
+#   Q131470954  2026 United States House of Representatives elections in California
+#   Q132767622  2026 United States House of Representatives elections  (national)
+#
+#   CONSTRAINT CHECK: P768, P102 and P1111 all appear in P3602's "allowed
+#   qualifiers" constraint. P768 verified in wide real-world use as a P3602
+#   qualifier (German and Czech election data).
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# BLOCK A - Tier 0: repair the "spine" of the election item.
+#
+# Q131470954 currently carries only P17 (country) and P31 (instance of), which
+# makes it invisible to any query that doesn't already know its QID. These five
+# statements bring it to parity with Q116006860, the 2024 equivalent, which
+# already has all of them.
+#
+# The argument for any reviewer who asks: this is not new modelling, it is what
+# the 2024 item already has. Deliberately unreferenced - structural statements,
+# not claims about people.
+# -----------------------------------------------------------------------------
+
+# A1  The election takes place on 3 November 2026.
+#     Trailing /11 is QuickStatements' precision code for "day".
+Q131470954	P585	+2026-11-03T00:00:00Z/11
+
+# A2  Its jurisdiction is California - i.e. these are California's seats.
+#     This is the statement that makes the item findable by a geographic query.
+Q131470954	P1001	Q99
+
+# A3  The office being contested is "United States representative".
+Q131470954	P541	Q13218630
+
+# A4  This item is part of the national 2026 US House elections.
+Q131470954	P361	Q132767622
+
+# A5  It follows the 2024 California House elections in the series.
+Q131470954	P155	Q116006860
+
+
+# -----------------------------------------------------------------------------
+# BLOCK B - Tier 1: the two CA-11 candidacy edges. THE POINT OF THE EXERCISE.
+#
+# These are what the bot's watchlist query actually reads. Without them the
+# bot watches nothing.
+#
+# MODELLING: regular US House races hang the candidacy off the STATEWIDE item
+# with a P768 electoral-district qualifier. No per-district items exist for
+# regular races in any cycle - only for special elections - so creating one
+# would break precedent.
+# -----------------------------------------------------------------------------
+
+# B1  Connie Chan is a candidate in the 2026 California US House elections,
+#     in the 11th congressional district, per the certified Statement of Vote
+#     (2nd place, 69,899 votes, advances under top-two).
+Q110933376	P3602	Q131470954	P768	Q2681039	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+
+# B2  Scott Wiener - same statement, same district, same source
+#     (1st place, 95,816 votes, advances under top-two).
+Q7437504	P3602	Q131470954	P768	Q2681039	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+
+
+# -----------------------------------------------------------------------------
+# BLOCK C - OPTIONAL. Party affiliation as a qualifier.
+# The SOV states both candidates ran as DEM on the page already cited, so this
+# is sourced detail for free. Adds "which party did they run as" without
+# touching either person's top-level P102 statement.
+#
+# These REPLACE B1/B2 rather than adding to them - running both would create
+# duplicate statements.
+# -----------------------------------------------------------------------------
+
+# Q110933376	P3602	Q131470954	P768	Q2681039	P102	Q29552	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+# Q7437504	P3602	Q131470954	P768	Q2681039	P102	Q29552	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+
+
+# -----------------------------------------------------------------------------
+# BLOCK D - OPTIONAL, AND READ THE CAVEAT.
+# Vote counts as a P1111 qualifier. Directly sourced from the cited SOV.
+#
+# CAVEAT: these are PRIMARY vote counts, but the statement points at
+# Q131470954, which covers the whole 2026 cycle. A reader could reasonably
+# misread them as general-election results. Consider holding these until after
+# November, when the general-election counts are the unambiguous ones.
+# -----------------------------------------------------------------------------
+
+# Q110933376	P3602	Q131470954	P768	Q2681039	P1111	69899	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+# Q7437504	P3602	Q131470954	P768	Q2681039	P1111	95816	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+
+
+# -----------------------------------------------------------------------------
+# BLOCK E - OPTIONAL. Saikat Chakrabarti (Q62287339) placed 3rd with 42,060
+# votes (17.9%) and did NOT advance. Include only if you want eliminated
+# primary candidates modelled at all. Omitted from the MVP roster in the
+# design plan - and note the bot would then watch his article too.
+# -----------------------------------------------------------------------------
+
+# Q62287339	P3602	Q131470954	P768	Q2681039	S854	"https://elections.cdn.sos.ca.gov/sov/2026-primary/sov/76-us-rep.pdf"	S1476	en:"Statement of Vote, June 2, 2026 Primary Election: United States Representative"	S813	+2026-07-30T00:00:00Z/11
+
+
+# =============================================================================
+# FOLLOW-UP (late August 2026): when the SoS publishes the general-election
+# Certified List of Candidates, add it as a SECOND reference on B1/B2. Do not
+# replace the SOV - Wikidata statements accumulate references.
+#
+# DO NOT USE P143 ("imported from Wikimedia project") as a reference on any of
+# these. The bot's watchlist is derived from Wikidata; sourcing Wikidata back
+# to Wikipedia closes the loop and lets an enwiki vandal edit the watchlist.
+# =============================================================================
+
